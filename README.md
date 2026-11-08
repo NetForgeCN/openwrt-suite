@@ -133,10 +133,14 @@ bash openwrt-suite/build/compile.sh
 ### feeds 顺序与包名冲突
 
 OpenWrt 的 `feeds install -a` 对同名包按 feeds.conf 中的**出现顺序**取先到者。
-官方 packages feed 也有 `nqptp`、`v2ray-geodata`、`ddns-go` 等同名包，
+官方 packages feed 也有 `nqptp`、`v2ray-geodata`、`ddns-go`、`dae` 等同名包，
 `diy/00-feeds-order.sh` 把 `src-git suite ...` 插到所有官方 feed 之前，
-因此 nqptp（luci-app-airplay2 依赖）、v2ray-geodata 始终使用本仓库版本，
-无需任何卸载/删除特判。
+因此这些包始终使用本仓库版本，无需任何卸载/删除特判。
+
+**外加一道保险**：`scripts/feeds` 的 `install -a` 会跳过「已安装」的源包名，
+所以旧构建树里残留的官方版本链接**不会被自动纠正**。`compile.sh` 在每个包安装后
+会逐包解析 `package/feeds/*/` 链接的真实指向：凡是指向非 `feeds/suite` 的（包括
+悬空的旧链接），一律清掉并从 suite 重装，最后再复核一遍，不一致直接报错退出。
 
 ### 纯快照同步
 

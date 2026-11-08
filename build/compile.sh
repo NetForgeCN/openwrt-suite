@@ -256,6 +256,69 @@ update_feeds() {
     ./scripts/feeds install -a
 }
 
+# 解析符号链接的真实绝对路径（macOS 无 readlink -f）。
+# 注意：必须先取 readlink 再 cd，且子 shell 内关闭 ERR trap 避免刷错误日志。
+resolve_link() {
+    local link="$1" target
+    target="$(readlink "$link" 2>/dev/null || true)"
+    [[ -n "$target" ]] || return 0
+    ( trap - ERR; cd "$(dirname "$link")" 2>/dev/null && cd "$target" 2>/dev/null && pwd -P ) 2>/dev/null || true
+}
+
+# 校验同名包来源：feeds install -a 会跳过「已安装」的源包名，
+# 因此旧构建树里残留的官方 nqptp / v2ray-geodata 等链接不会被自动纠正，
+# 这里逐个检查、强制改用 suite 版本，然后二次复核。
+verify_feed_priority() {
+    log "校验第三方包来源（防止被官方同名包抢占）"
+
+    local suite_feeds_dir pkg link real fixed=0 total=0 bad=""
+    suite_feeds_dir="$(cd "$WORKDIR/feeds/suite" 2>/dev/null && pwd -P || true)"
+    [[ -n "$suite_feeds_dir" ]] || die "找不到 $WORKDIR/feeds/suite（feeds update 未成功？）"
+
+    shopt -s nullglob
+
+    # 第一遍：纠正
+    for d in "$WORKDIR"/feeds/suite/packages/*/; do
+        [[ -d "$d" ]] || continue
+        pkg="$(basename "$d")"
+        total=$((total + 1))
+
+        for link in package/feeds/*/"$pkg"; do
+            [[ -e "$link" || -L "$link" ]] || continue
+            real="$(resolve_link "$link")"
+
+            [[ -n "$real" && "$real" == "$suite_feeds_dir"/* ]] && continue   # 已指向 feeds/suite
+
+            warn "包 $pkg 当前指向 $(basename "$(dirname "$link")") feed，改用 suite 版本"
+            rm -f -- package/feeds/*/"$pkg"                        # 清掉错误/悬空链接
+            rm -f -- tmp/.packageinfo 2>/dev/null || true          # 让 feeds 重新扫描索引
+            ./scripts/feeds install -p suite "$pkg" ||
+                die "从 suite feed 重新安装 $pkg 失败"
+            fixed=1
+        done
+    done
+
+    # 第二遍：复核
+    for d in "$WORKDIR"/feeds/suite/packages/*/; do
+        [[ -d "$d" ]] || continue
+        pkg="$(basename "$d")"
+        for link in package/feeds/*/"$pkg"; do
+            [[ -e "$link" || -L "$link" ]] || continue
+            real="$(resolve_link "$link")"
+            [[ -n "$real" && "$real" == "$suite_feeds_dir"/* ]] || bad="$bad $pkg"
+        done
+    done
+
+    shopt -u nullglob
+
+    [[ -z "$bad" ]] || die "以下包仍未来自 suite feed：$bad"
+    if ((fixed == 1)); then
+        log "已纠正同名包来源（共检查 ${total} 个包目录）"
+    else
+        log "同名包来源正确（共检查 ${total} 个包目录，全部指向 feeds/suite）"
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # 步骤 4：官方 feed 补丁（Rust LLVM / Golang GOAMD64）
 # ---------------------------------------------------------------------------
@@ -444,6 +507,7 @@ main() {
     prepare_suite
     configure_feeds
     update_feeds
+    verify_feed_priority
     feed_patches
     prepare_config
     kernel_patches
@@ -475,4 +539,7 @@ main() {
     log "脚本执行结束"
 }
 
-main "$@"
+# 仅在直接执行时进入主流程（被 source 时可单独调用其中的函数做测试）
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
