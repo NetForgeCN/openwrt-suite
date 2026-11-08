@@ -1,0 +1,100 @@
+Subject: [PATCH] Allow generating the AirPlay 2 plist data without host plistutil/xxd
+
+Upstream requires the host programs plistutil and xxd to convert
+plists/get_info_response.xml into a C byte array. Neither is available
+in a cross-compilation environment such as the OpenWrt build system,
+and the libplist package in the OpenWrt feeds has no host build.
+
+Use python3 (which the OpenWrt build system requires anyway) to build
+the binary property list, and keep plistutil+xxd as a fallback.
+configure.ac now accepts either of the two paths.
+
+---
+
+--- a/configure.ac
++++ b/configure.ac
+@@ -452,10 +452,22 @@
+ if test "x$with_airplay_2" = "xyes" ; then
+   using_ffmpeg=true
+   AC_DEFINE([CONFIG_AIRPLAY_2], 1, [Build for AirPlay 2])
+-  AC_CHECK_PROG(PLISTUTIL_CHECK,plistutil,yes)
+-  AS_IF([test x"$PLISTUTIL_CHECK" != x"yes"], [AC_MSG_ERROR([plistutil can not be found. Please install plistutil for building for AirPlay 2. Maybe it's in the apt package libplist-utils.])])
+-  AC_CHECK_PROG(XXD_CHECK,xxd,yes)
+-  AS_IF([test x"$XXD_CHECK" != x"yes"], [AC_MSG_ERROR([xxd can not be found. Please install xxd for building for AirPlay 2.])])
++  # Generating the AirPlay 2 property list data needs a host-side property
++  # list converter. plistutil/xxd are not available in a cross-compilation
++  # environment, so python3 -- always present in an OpenWrt build -- is used
++  # instead whenever it is available.
++  AC_CHECK_PROG([PYTHON_CHECK],[python3],[yes],[no])
++  AC_CHECK_PROG([PLISTUTIL_CHECK],[plistutil],[yes],[no])
++  AC_CHECK_PROG([XXD_CHECK],[xxd],[yes],[no])
++  AC_MSG_CHECKING([for a way to generate the AirPlay 2 property list data])
++  if test "x$PYTHON_CHECK" = "xyes" ; then
++    AC_MSG_RESULT([python3])
++  elif test "x$PLISTUTIL_CHECK" = "xyes" && test "x$XXD_CHECK" = "xyes" ; then
++    AC_MSG_RESULT([plistutil and xxd])
++  else
++    AC_MSG_RESULT([none])
++    AC_MSG_ERROR([Building for AirPlay 2 needs python3, or both plistutil and xxd, on the build host.])
++  fi
+   LIBPLIST_PACKAGE=libplist
+   PKG_CHECK_EXISTS(libplist-2.0, LIBPLIST_PACKAGE=libplist-2.0)
+   PKG_CHECK_MODULES([libplist_2_7_0], [${LIBPLIST_PACKAGE} >= 2.7.0], [AC_DEFINE([HAVE_LIBPLIST_GE_2_7_0], 1, [libplist >= 2.7.0])],[:])
+
+--- a/xml_plist_codegen.sh
++++ b/xml_plist_codegen.sh
+@@ -23,6 +23,53 @@
+ printf "// This file was automatically generated from $INPUT_FILE_NAME.\n\n" >> $2/$BASE_FILENAME.c
+ printf "#include \"$BASE_FILENAME.h\"\n\n" >> $2/$BASE_FILENAME.c
+ printf "unsigned char ${BASE_FILENAME}_plist[] = {\n" >> $2/$BASE_FILENAME.c
+-plistutil -i $1 | xxd -i >> $2/$BASE_FILENAME.c
++# Convert the XML property list to a binary property list and emit it as a C
++# byte array. Upstream uses `plistutil -i ... | xxd -i` here, but neither
++# plistutil nor xxd is available in a cross-compilation environment such as
++# the OpenWrt build system. python3 (required by OpenWrt anyway) is used
++# instead, falling back to the upstream pipeline if python3 is missing.
++if command -v python3 > /dev/null 2>&1 ; then
++  python3 - "$1" >> $2/$BASE_FILENAME.c <<'PLEOF'
++import plistlib
++import re
++import sys
++
++def load_plist(data):
++    try:
++        return plistlib.loads(data)
++    except Exception:
++        pass
++    # libplist tolerates a stray closing tag in the XML (the upstream
++    # plists/get_info_response.xml has one) while strict parsers reject the
++    # file outright. Drop each closing tag in turn until the document parses.
++    text = data.decode("utf-8")
++    best = None
++    for m in re.finditer(r"</\s*[A-Za-z0-9_.-]+\s*>", text):
++        candidate = text[:m.start()] + text[m.end():]
++        try:
++            plist = plistlib.loads(candidate.encode("utf-8"))
++        except Exception:
++            continue
++        if not isinstance(plist, dict):
++            continue
++        # Several candidate deletions may parse; the correct one is the one
++        # that keeps the most entries in the top-level dictionary, i.e. the
++        # one that drops the tag closing the root dict prematurely.
++        if best is None or len(plist) > len(best):
++            best = plist
++    if best is not None:
++        return best
++    raise ValueError("cannot parse the property list: %s" % sys.argv[1])
++
++with open(sys.argv[1], "rb") as f:
++    plist = load_plist(f.read())
++
++blob = plistlib.dumps(plist, fmt=plistlib.FMT_BINARY)
++for i in range(0, len(blob), 12):
++    sys.stdout.write("  " + ", ".join("0x%02x" % b for b in blob[i:i + 12]) + ",\n")
++PLEOF
++else
++  plistutil -i $1 | xxd -i >> $2/$BASE_FILENAME.c
++fi
+ printf "  };\n\n" >> $2/$BASE_FILENAME.c
+ printf "size_t ${BASE_FILENAME}_plist_len = sizeof(${BASE_FILENAME}_plist);\n" >> $2/$BASE_FILENAME.c

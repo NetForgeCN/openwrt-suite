@@ -1,0 +1,302 @@
+#!/usr/bin/lua
+-- SPDX-License-Identifier: GPL-3.0-only
+local nixio = require "nixio"
+local fs = require "nixio.fs"
+local json = require "luci.jsonc"
+local policy = require "open_nexttrace.policy"
+local resolver = require "open_nexttrace.resolver"
+local BASE = "/tmp/open-nexttrace"
+local CORE = "/usr/bin/nexttrace"
+local LIMIT = 128 * 1024
+local MAX_SECONDS = 180
+
+local function read(path, limit)
+    local f = io.open(path, "rb")
+    if not f then return "" end
+    local value = f:read(limit or LIMIT) or ""
+    f:close()
+    return value
+end
+
+local function write(path, value)
+    local f = assert(io.open(path, "wb"))
+    assert(f:write(value))
+    assert(f:close())
+end
+
+local function state()
+    return json.parse(read(BASE .. "/state.json")) or { status = "idle" }
+end
+
+local function save(value)
+    write(BASE .. "/state.tmp", json.stringify(value))
+    assert(fs.rename(BASE .. "/state.tmp", BASE .. "/state.json"))
+end
+
+local function setup()
+    nixio.umask("0077") -- Task data is readable only by root.
+    if not fs.lstat(BASE) then fs.mkdir(BASE, "0700") end
+    local stat = fs.lstat(BASE)
+    if not stat or stat.type ~= "dir" or stat.uid ~= 0 then
+        error("追踪临时目录不可用", 0)
+    end
+    assert(fs.chmod(BASE, "0700"))
+end
+
+local function locked(fn, wait)
+    local lock = assert(nixio.open(BASE .. "/control.lock", "w", "0600"))
+    if not lock:lock(wait and "lock" or "tlock") then
+        lock:close()
+        return { error = "任务状态正在更新，请重试" }
+    end
+    local ok, result = pcall(fn, lock)
+    lock:close()
+    if not ok then error(result, 0) end
+    return result
+end
+
+-- The process start time prevents PID reuse from making a stale job look live.
+local function identity(pid)
+    if type(pid) ~= "number" then return nil end
+    local rest = read("/proc/" .. pid .. "/stat", 4096):match("^%d+ %(.+%) (.+)$")
+    if not rest then return nil end
+    local fields = {}
+    for field in rest:gmatch("%S+") do fields[#fields + 1] = field end
+    if fields[1] == "Z" then return nil end
+    return fields[20] -- /proc stat field 22, after pid and comm
+end
+
+local function current()
+    local s = state()
+    if s.status == "running" and (not s.identity or identity(s.pid) ~= s.identity) then
+        s.status, s.error = "error", "追踪进程意外退出，可重新开始"
+        save(s)
+    end
+    return s
+end
+
+local function interfaces()
+    local conn = require("ubus").connect()
+    if not conn then error("无法连接 OpenWrt ubus", 0) end
+    local dump = conn:call("network.interface", "dump", {})
+    conn:close()
+    if not dump then error("无法读取网络接口，请确认 netifd 正常运行", 0) end
+    return policy.interfaces(dump)
+end
+
+local function detach()
+    assert(nixio.setsid())
+    local null = assert(nixio.open("/dev/null", "r+"))
+    nixio.dup(null, nixio.stdin)
+    nixio.dup(null, nixio.stdout)
+    nixio.dup(null, nixio.stderr)
+    null:close()
+    nixio.signal(nixio.const.SIGCHLD, "dfl")
+    nixio.chdir("/")
+end
+
+local function supervise(id, argv, resolution)
+    local child
+    local ok, failure = pcall(function()
+        -- Wait for start() to publish the PID and release the control lock.
+        local s = locked(function() return state() end, true)
+        if s.id ~= id then error("任务已被替换") end
+        if resolution then
+            local address = resolver.resolve(nixio, resolution)
+            argv[#argv] = address
+            locked(function()
+                local current_state = state()
+                if current_state.id == id then
+                    current_state.resolved_target = address
+                    current_state.dns_server = resolution.server
+                    current_state.dns_source = resolution.source ~= "" and resolution.source or nil
+                    save(current_state)
+                end
+            end, true)
+        end
+        local output = assert(nixio.open(BASE .. "/stdout", "w", "0600"))
+        local errors = assert(nixio.open(BASE .. "/stderr", "w", "0600"))
+        child = assert(nixio.fork())
+        if child == 0 then
+            nixio.dup(output, nixio.stdout)
+            nixio.dup(errors, nixio.stderr)
+            output:close()
+            errors:close()
+            nixio.exec(CORE, unpack(argv))
+            os.exit(127)
+        end
+        output:close()
+        errors:close()
+        local status, message, code = "done", nil, 0
+        local started = nixio.sysinfo().uptime
+        while true do
+            local pid, reason, value = nixio.waitpid(child, "nohang")
+            if pid == child then
+                child = nil
+                code = value
+                if reason ~= "exited" or value ~= 0 then status = "error" end
+                break
+            end
+            -- nixio returns false (not zero) while the child is still running.
+            if pid == nil then error("无法读取追踪进程状态") end
+            if read(BASE .. "/cancel", 64) == id then
+                status = "stopped"
+            elseif nixio.sysinfo().uptime - started >= MAX_SECONDS then
+                status, message = "error", "追踪超过 180 秒，已停止；可减少跳数或超时时间后重试"
+            elseif (fs.stat(BASE .. "/stdout", "size") or 0) > LIMIT or
+                (fs.stat(BASE .. "/stderr", "size") or 0) > LIMIT then
+                status, message = "error", "核心输出超过限制，已停止"
+            end
+            if status ~= "done" then
+                -- Only signal our own unreaped child; no PID files or killall.
+                nixio.kill(child, 15)
+                nixio.nanosleep(0, 200000000)
+                if nixio.waitpid(child, "nohang") ~= child then
+                    nixio.kill(child, 9)
+                    nixio.waitpid(child)
+                end
+                child = nil
+                break
+            end
+            nixio.nanosleep(0, 200000000)
+        end
+        locked(function()
+            s = state()
+            if s.id == id then
+                s.status, s.error, s.exit_code, s.finished = status, message, code, os.time()
+                save(s)
+            end
+        end, true)
+    end)
+    if not ok then
+        if child and child > 0 then nixio.kill(child, 9); nixio.waitpid(child) end
+        pcall(function()
+            locked(function()
+                local s = state()
+                if s.id == id then
+                    s.status, s.error, s.finished = "error", tostring(failure), os.time()
+                    save(s)
+                end
+            end, true)
+        end)
+    end
+    os.exit(0)
+end
+
+local methods = {}
+
+function methods.resolve(input)
+    local literal = policy.target(input.target)
+    local family = input.family or "auto"
+    if family ~= "auto" and family ~= "4" and family ~= "6" then
+        error("不支持的地址类型", 0)
+    end
+    if literal then return { addresses = {input.target} } end
+    local resolution = policy.resolver(input, interfaces())
+    local addresses
+    if resolution then
+        addresses = resolver.resolve_all(nixio, resolution)
+    else
+        local entries = nixio.getaddrinfo(input.target, family == "4" and "inet" or
+            (family == "6" and "inet6" or "any"))
+        addresses = {}
+        local seen = {}
+        for _, entry in ipairs(entries or {}) do
+            if (entry.family == "inet" or entry.family == "inet6") and
+                type(entry.address) == "string" and not seen[entry.address] then
+                addresses[#addresses + 1] = entry.address
+                seen[entry.address] = true
+            end
+        end
+    end
+    if #addresses == 0 then error("域名没有可用的解析地址", 0) end
+    return { addresses = addresses }
+end
+
+function methods.info()
+    return {
+        available = fs.access(CORE, "x") == true,
+        version = read("/usr/share/open-nexttrace/version", 64):gsub("%s+$", ""),
+        interfaces = interfaces(), max_seconds = MAX_SECONDS
+    }
+end
+
+function methods.status(input)
+    local s = current()
+    if input.id and input.id ~= "" and input.id ~= s.id then
+        return { error = "任务已被其他会话替换", status = "replaced" }
+    end
+    if s.id then
+        s.output = read(BASE .. "/stdout")
+        s.diagnostics = read(BASE .. "/stderr", 8192)
+        -- Some upstream setup errors are printed on stdout, even with --raw.
+        local messages = {}
+        for line in s.output:gmatch("[^\r\n]+") do
+            if not line:match("^%d+|") then messages[#messages + 1] = line end
+        end
+        s.diagnostics = (s.diagnostics .. "\n" .. table.concat(messages, "\n")):sub(1, 16384)
+        if s.status == "done" and not s.output:match("%d+|[^\n]*\n") then
+            s.status, s.error = "error", "核心未返回探测记录，请查看日志"
+        end
+    end
+    return s
+end
+
+function methods.stop(input)
+    local s = current()
+    if not input.id or input.id ~= s.id then return { error = "任务不存在或已被替换" } end
+    if s.status == "running" then write(BASE .. "/cancel", s.id) end
+    return { success = true }
+end
+
+function methods.start(input, lock)
+    if current().status == "running" then return { error = "已有追踪正在运行，请先停止当前任务" } end
+    if not fs.access(CORE, "x") then return { error = "未安装 NextTrace 核心，请安装 open-nexttrace-core" } end
+    local network_interfaces = interfaces()
+    local argv = policy.build(input, network_interfaces)
+    local resolution = policy.resolver(input, network_interfaces)
+    -- Fixed executable and fixed arguments only. Cache is tied to the binary
+    -- identity so package upgrades cannot retain outdated CLI capabilities.
+    local fingerprint = tostring(fs.stat(CORE, "size")) .. ":" .. tostring(fs.stat(CORE, "mtime"))
+    local capability = json.parse(read(BASE .. "/capabilities.json", 1024))
+    if not capability or capability.fingerprint ~= fingerprint then
+        local help = assert(io.popen(CORE .. " --help 2>/dev/null", "r"))
+        local usage = help:read(32768) or ""
+        help:close()
+        if not usage:find("--raw", 1, true) then error("核心无法运行或不支持 RAW 输出，请检查 CPU 架构", 0) end
+        capability = { fingerprint = fingerprint, traceroute = usage:find("--traceroute", 1, true) ~= nil }
+        write(BASE .. "/capabilities.json", json.stringify(capability))
+    end
+    if capability.traceroute then table.insert(argv, 1, "--traceroute") end
+    local random = read("/dev/urandom", 16)
+    assert(#random == 16, "无法生成任务编号")
+    local id = random:gsub(".", function(c) return string.format("%02x", c:byte()) end)
+    for _, name in ipairs({ "stdout", "stderr", "cancel" }) do write(BASE .. "/" .. name, "") end
+    local pid = assert(nixio.fork())
+    if pid == 0 then
+        lock:close() -- POSIX record locks are not inherited by fork().
+        detach()
+        supervise(id, argv, resolution)
+    end
+    -- rpcd may include ubus_rpc_session. Never persist or return that token.
+    local options = {}
+    for _, key in ipairs({"target", "protocol", "family", "device", "max_hops", "queries", "timeout", "port", "provider", "rdns"}) do
+        options[key] = input[key]
+    end
+    local s = { id = id, pid = pid, identity = identity(pid), status = "running", started = os.time(), options = options }
+    save(s)
+    return s
+end
+
+if arg[1] == "list" then
+    io.write('{"info":{},"status":{"id":""},"resolve":{"target":"","family":"","dns_server":"","dns_port":0,"dns_source":""},"stop":{"id":""},"start":{"target":"","protocol":"","family":"","device":"","max_hops":0,"queries":0,"timeout":0,"port":0,"provider":"","rdns":true,"dns_server":"","dns_port":0,"dns_source":""}}')
+elseif arg[1] == "call" then
+    local ok, result = pcall(function()
+        local input = json.parse(io.read(8192) or "")
+        if type(input) ~= "table" then return { error = "无效的请求" } end
+        if not methods[arg[2]] then return { error = "未知的方法" } end
+        setup()
+        return locked(function(lock) return methods[arg[2]](input, lock) end)
+    end)
+    io.write(json.stringify(ok and result or { error = tostring(result) }))
+end

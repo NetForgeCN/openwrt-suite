@@ -1,0 +1,68 @@
+.ont-app { --ont-accent: #287fc1; --ont-border: #dce3e9; --ont-soft: #f5f8fa; color: inherit; }
+.ont-app *, .ont-app *::before, .ont-app *::after { box-sizing: border-box; }
+.ont-app .ont-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 18px; }
+.ont-app .ont-heading h2 { margin: 0 0 5px; padding: 0; font-size: 25px; font-weight: 650; border: 0; }
+.ont-app .ont-heading p { margin: 0; color: #77828d; font-size: 13px; }
+.ont-version { font-size: 12px; border: 1px solid var(--ont-border); border-radius: 5px; padding: 5px 9px; white-space: nowrap; }
+.ont-toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; padding: 16px; border: 1px solid var(--ont-border); border-radius: 7px 7px 0 0; background: var(--ont-soft); }
+.ont-app .ont-field { display: flex; flex-direction: column; gap: 6px; margin: 0; min-width: 90px; font-size: 12px; }
+.ont-app .ont-field > span { color: #687582; }
+.ont-app input[type=text], .ont-app input[type=number], .ont-app select { height: 36px; min-height: 36px; width: 100%; min-width: 0; margin: 0; border: 1px solid #b9c5d0; border-radius: 4px; padding: 6px 9px; font-size: 13px; box-shadow: none; }
+.ont-app input:focus, .ont-app select:focus { outline: 2px solid #8ac1e5; outline-offset: 1px; }
+.ont-app .ont-target { flex: 1 1 260px; }
+.ont-target-inputs { display: flex; gap: 8px; width: 100%; min-width: 0; }
+.ont-app .ont-target-inputs > input { flex: 1 1 0; }
+.ont-app .ont-target-ip { flex: 0 0 160px; max-width: 42%; }
+.ont-app .ont-target-ip[hidden] { display: none; }
+.ont-app .ont-dns, .ont-app .ont-provider { flex: 0 1 145px; min-width: 125px; }
+.ont-app .ont-device { flex: 0 1 260px; min-width: 215px; }
+.ont-actions { display: flex; gap: 8px; }
+.ont-app .ont-actions button { height: 36px; padding: 0 16px; white-space: nowrap; }
+.ont-app .ont-start { color: #fff; background: var(--ont-accent); border-color: var(--ont-accent); }
+.ont-app .ont-stop-active:not(:disabled) { color: #fff; background: #cf3e3e; border-color: #cf3e3e; }
+.ont-app button { cursor: pointer; }
+.ont-app button:disabled { cursor: default; opacity: .5; }
+.ont-app .ont-settings { border: 1px solid var(--ont-border); border-top: 0; padding: 9px 16px; border-radius: 0 0 7px 7px; }
+.ont-settings summary, .ont-log summary { cursor: pointer; font-size: 13px; }
+.ont-settings-grid { display: grid; grid-template-columns: 1.5fr repeat(4, 1fr) 1fr auto; gap: 14px; align-items: end; margin: 14px 0; }
+.ont-app .ont-settings input[type=checkbox] { align-self: start; margin: 10px 0; width: 16px; height: 16px; }
+.ont-muted { color: #77828d; font-size: 12px; }
+.ont-app .ont-statusbar { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; padding: 14px 0 10px; font-size: 13px; min-height: 49px; }
+.ont-statusbar > .cbi-button { margin-left: auto; }
+.ont-running::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #287fc1; margin-right: 7px; animation: ont-pulse 1.4s infinite; }
+@keyframes ont-pulse { 50% { opacity: .3; } }
+.ont-error { color: #c54b38; }
+.ont-results { max-height: 420px; min-height: 215px; overflow: auto; border: 1px solid var(--ont-border); border-radius: 5px; }
+.ont-app .ont-table { width: 100%; border-collapse: collapse; margin: 0; font-size: 12px; }
+.ont-app .ont-table th { background: var(--ont-soft); color: #687582; text-align: left; font-weight: 500; position: sticky; top: 0; z-index: 1; white-space: nowrap; border-bottom: 1px solid var(--ont-border); padding: 10px; }
+.ont-app .ont-table td { padding: 10px; border-bottom: 1px solid var(--ont-border); vertical-align: middle; }
+.ont-table tr:last-child td { border-bottom: 0; }
+.ont-table tbody tr { cursor: pointer; }
+.ont-table tbody tr:hover, .ont-table tbody tr.ont-selected { background: #eaf4fc; }
+.ont-table .ont-hop { color: #768595; width: 32px; text-align: center; }
+.ont-table .ont-ip { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; white-space: nowrap; color: #236496; }
+.ont-table .ont-rtt { min-width: 150px; white-space: nowrap; position: relative; font-variant-numeric: tabular-nums; }
+.ont-rtt span { position: relative; z-index: 0; }
+.ont-rtt i { height: 3px; position: absolute; bottom: 4px; left: 10px; max-width: calc(100% - 20px); border-radius: 3px; background: #92c7e8; }
+.ont-host { max-width: 260px; overflow-wrap: anywhere; }
+.ont-asn { color: #697784; white-space: nowrap; }
+.ont-timeout { color: #9ba4ac; }
+.ont-table .ont-empty { text-align: center; height: 210px; color: #8b97a3; cursor: default; }
+.ont-map-panel { margin-top: 16px; border: 1px solid var(--ont-border); border-radius: 5px; overflow: hidden; }
+.ont-map-heading { display: flex; gap: 12px; align-items: center; padding: 10px 14px; font-size: 13px; border-bottom: 1px solid var(--ont-border); }
+.ont-map-heading span { font-size: 12px; color: #77828d; }
+.ont-map-heading button { margin-left: auto; }
+.ont-map { display: block; width: 100%; height: 380px; border: 0; background: #e8f0f3; }
+.ont-app .ont-map-note { margin: 0; padding: 8px 14px; color: #84909c; font-size: 11px; line-height: 1.6; }
+.ont-log { margin-top: 12px; }
+.ont-diagnostics { max-height: 180px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 12px; }
+@media (max-width: 1100px) { .ont-settings-grid { grid-template-columns: repeat(3, 1fr); } .ont-app .ont-device { flex: 1 1 215px; } }
+@media (max-width: 600px) { .ont-app .ont-heading { align-items: start; } .ont-version { font-size: 10px; } .ont-toolbar { gap: 10px; padding: 12px; } .ont-app .ont-target { flex-basis: 100%; } .ont-app .ont-field { flex-grow: 1; } .ont-app .ont-device { flex-basis: 100%; } .ont-actions { width: 100%; } .ont-actions button { flex: 1; } .ont-settings-grid { grid-template-columns: repeat(2, 1fr); } .ont-map-heading span { display: none; } .ont-map { height: 300px; } }
+@media (prefers-reduced-motion: reduce) { .ont-running::before { animation: none; } }
+@media (prefers-color-scheme: dark) {
+    .ont-app { --ont-border: #414950; --ont-soft: #272d32; }
+    .ont-app .ont-toolbar, .ont-app .ont-table th { color: #dce3e9; }
+    .ont-app input, .ont-app select { background: #20272c; color: #e1e7ec; }
+    .ont-table tbody tr:hover, .ont-table tbody tr.ont-selected { background: #213b4e; }
+    .ont-table .ont-ip { color: #79bbed; }
+}

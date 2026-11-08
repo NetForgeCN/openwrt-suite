@@ -1,0 +1,30 @@
+{
+	"luci-app-kixdns": {
+		"description": "Grant access to LuCI app kixdns",
+		"read": {
+			"ubus": {
+				"file": [ "read", "stat", "exec" ],
+				"service": [ "list" ]
+			},
+			"file": {
+				"/etc/kixdns": [ "list" ],
+				"/etc/kixdns/*": [ "read" ],
+				"/tmp/kixdns.log": [ "read" ],
+				"/usr/libexec/kixdns-tail-log": [ "exec" ],
+				"/usr/libexec/kixdns-status": [ "exec" ],
+				"/usr/libexec/kixdns-stats snapshot": [ "exec" ],
+				"/usr/libexec/kixdns-stats snapshot *": [ "exec" ]
+			},
+			"uci": [ "kixdns" ]
+		},
+		"write": {
+			"file": {
+				"/etc/kixdns/*": [ "write" ],
+				"/usr/libexec/kixdns-stats classify": [ "exec" ],
+				"/usr/libexec/kixdns-stats clear": [ "exec" ],
+				"/etc/init.d/kixdns": [ "exec" ]
+			},
+			"uci": [ "kixdns" ]
+		}
+	}
+}

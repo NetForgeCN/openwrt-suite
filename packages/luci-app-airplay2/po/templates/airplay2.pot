@@ -1,0 +1,135 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PACKAGE package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PACKAGE VERSION\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-03-14 08:33+0800\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=CHARSET\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: htdocs/luci-static/resources/view/airplay2.js:43
+msgid "RUNNING"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:45
+msgid "NOT RUNNING"
+msgstr ""
+
+#: root/usr/share/luci/menu.d/luci-app-airplay2.json:3
+#: htdocs/luci-static/resources/view/airplay2.js:102
+msgid "Airplay 2"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:103
+msgid "AirPlay 2 is a simple and easy-to-use AirPlay audio player."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:115
+msgid "Collecting data..."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:124
+msgid "Enabled"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:127
+msgid "Airplay Name"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:130
+msgid "Interpolation"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:132
+msgid "Internal Basic Resampler"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:133
+msgid "High quality SoX Resampler"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:135
+msgid "Port"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:139
+msgid "Alsa Output Device"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:141
+msgid "default"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:142
+msgid "Default Bluetooth Audio (BlueALSA)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:153
+msgid "Alsa Mixer Control Name"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:155
+msgid "default (software volume)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:156
+msgid "PCM"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:157
+msgid "Speaker"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:159
+msgid "Alsa Output Rate"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:161
+msgid "auto"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:162
+msgid "44.1kHz"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:163
+msgid "88.2kHz"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:164
+msgid "176.4kHz"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:165
+msgid "352.8kHz"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:167
+msgid "Alsa Buffer Length"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:170
+msgid "Session timeout"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:173
+msgid "Allow session interruption"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:175
+msgid "Not allow"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airplay2.js:176
+msgid "Allow"
+msgstr ""

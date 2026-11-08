@@ -1,0 +1,18 @@
+{
+  "admin/network/open_nexttrace": {
+    "title": "Open NextTrace",
+    "order": 90,
+    "action": { "type": "firstchild" },
+    "depends": { "acl": ["luci-app-open_nexttrace"] }
+  },
+  "admin/network/open_nexttrace/trace": {
+    "title": "路由追踪",
+    "order": 1,
+    "action": { "type": "view", "path": "open_nexttrace/main" }
+  },
+  "admin/network/open_nexttrace/settings": {
+    "title": "设置",
+    "order": 2,
+    "action": { "type": "view", "path": "open_nexttrace/settings" }
+  }
+}

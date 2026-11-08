@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Open NextTrace 路由地图</title>
+  <link rel="stylesheet" href="vendor/leaflet.css">
+  <style>
+    html,body,#map { width:100%;height:100%;margin:0;font:12px system-ui,sans-serif; }
+    #map { background:#e8f0f3; }
+    #hint { position:absolute;bottom:26px;left:50%;transform:translateX(-50%);z-index:500;background:rgba(255,255,255,.94);padding:8px 14px;border-radius:5px;box-shadow:0 1px 5px #0002;max-width:80%;text-align:center;color:#637786;pointer-events:none; }
+    .ont-popup { min-width:170px;line-height:1.7;overflow-wrap:anywhere; }
+    .ont-popup strong { display:block;color:#287fc1;margin-bottom:3px; }
+    .ont-label { background:#fff;color:#24669b;border:1px solid #93bddd;border-radius:4px;box-shadow:none;font-size:10px;padding:1px 4px; }
+  </style>
+</head>
+<body>
+  <div id="map" aria-label="路由节点地图"></div>
+  <div id="hint">等待有地理坐标的路由节点</div>
+  <script src="vendor/leaflet.js"></script>
+  <script src="map.js"></script>
+</body>
+</html>

@@ -1,0 +1,435 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: luci-app-kixdns\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: zh_Hans\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgid "KixDNS"
+msgstr "KixDNS"
+
+msgid "KixDNS is an asynchronous, non-recursive DNS forwarding server written in Rust."
+msgstr "KixDNS 是使用 Rust 编写的异步、非递归 DNS 转发服务器。"
+
+msgid "Overview"
+msgstr "概览"
+
+msgid "Config Editor"
+msgstr "配置编辑器"
+
+msgid "Log"
+msgstr "日志"
+
+msgid "Service Status"
+msgstr "服务状态"
+
+msgid "Status"
+msgstr "状态"
+
+msgid "CPU Usage"
+msgstr "CPU 占用"
+
+msgid "Memory Usage"
+msgstr "内存占用"
+
+msgid "Runtime"
+msgstr "运行时长"
+
+msgid "Core Version"
+msgstr "核心版本"
+
+msgid "RUNNING"
+msgstr "运行中"
+
+msgid "NOT RUNNING"
+msgstr "未运行"
+
+msgid "General Settings"
+msgstr "基本设置"
+
+msgid "Enable"
+msgstr "启用"
+
+msgid "Start KixDNS automatically at system startup."
+msgstr "在系统启动时自动启动 KixDNS。"
+
+msgid "Start"
+msgstr "启动"
+
+msgid "Restart"
+msgstr "重启"
+
+msgid "Stop"
+msgstr "停止"
+
+msgid "KixDNS started."
+msgstr "KixDNS 已启动。"
+
+msgid "KixDNS restarted."
+msgstr "KixDNS 已重启。"
+
+msgid "KixDNS stopped."
+msgstr "KixDNS 已停止。"
+
+msgid "Service action failed"
+msgstr "服务操作失败"
+
+msgid "DNS Hijack"
+msgstr "DNS 劫持"
+
+msgid ""
+"Redirect all DNS requests (port 53, UDP/TCP) from LAN clients to KixDNS via "
+"nftables. The redirect target port is taken from <code>bind_udp</code> in the "
+"pipeline config."
+msgstr ""
+"通过 nftables 将局域网客户端的所有 DNS 请求（53 端口，UDP/TCP）重定向到 "
+"KixDNS。重定向目标端口取自 pipeline 配置中的 <code>bind_udp</code>。"
+
+msgid "Listener label"
+msgstr "监听器标签"
+
+msgid "Value passed to --listener-label for pipeline selection."
+msgstr "传递给 --listener-label 的值，用于 pipeline 选择。"
+
+msgid "UDP workers"
+msgstr "UDP 工作线程数"
+
+msgid "Number of UDP worker threads. Leave empty to use the number of CPU cores."
+msgstr "UDP 工作线程数量。留空则使用 CPU 核心数。"
+
+msgid "auto"
+msgstr "自动"
+
+msgid "GeoIP download URL"
+msgstr "GeoIP 下载 URL"
+
+msgid ""
+"Download a V2Ray GeoIP database to <code>/etc/kixdns/geoip.dat</code> before each service "
+"start. Leave empty to disable downloading."
+msgstr ""
+"每次服务启动前将 V2Ray GeoIP 数据库下载到 <code>/etc/kixdns/geoip.dat</code>。"
+"留空则不下载。"
+
+msgid "Configuration download URL"
+msgstr "配置文件下载 URL"
+
+msgid ""
+"KixDNS always uses the local <code>/etc/kixdns/pipeline.json</code>. The remote file is "
+"downloaded only when you click \"Update configuration\"."
+msgstr ""
+"KixDNS 始终使用本地 <code>/etc/kixdns/pipeline.json</code>。仅在点击“更新配置”时下载"
+"远程文件。"
+
+msgid "Remote configuration"
+msgstr "远程配置"
+
+msgid ""
+"Download from the URL above, validate the JSON, and replace the local "
+"configuration now. The original file is kept as "
+"<code>/etc/kixdns/pipeline.json.bak</code>."
+msgstr ""
+"立即从上方 URL 下载并校验 JSON，然后替换本地配置。原始文件将保存在 "
+"<code>/etc/kixdns/pipeline.json.bak</code>。"
+
+msgid "Update configuration"
+msgstr "更新配置"
+
+msgid "Enter a configuration download URL first."
+msgstr "请先填写配置文件下载 URL。"
+
+msgid "Configuration updated and KixDNS restarted."
+msgstr "配置已更新，KixDNS 已重启。"
+
+msgid "Configuration update failed"
+msgstr "配置更新失败"
+
+msgid "Command failed"
+msgstr "命令执行失败"
+
+msgid "KixDNS configuration editor"
+msgstr "KixDNS 配置编辑器"
+
+msgid "Configuration file is missing or unreadable."
+msgstr "配置文件不存在或无法读取。"
+
+msgid "The local configuration changed after this editor loaded. Reload it before saving."
+msgstr "本地配置在编辑器打开后已发生变化，请重新读取后再保存。"
+
+msgid "Configuration saved."
+msgstr "配置已保存。"
+
+msgid "Log filter"
+msgstr "日志过滤器"
+
+msgid "Tracing filter passed via the <code>RUST_LOG</code> environment variable."
+msgstr "通过 <code>RUST_LOG</code> 环境变量传递的 tracing 过滤器。"
+
+msgid "Query logs (recommended)"
+msgstr "查询日志（推荐）"
+
+msgid "Warnings and errors only"
+msgstr "仅警告和错误"
+
+msgid "Errors only"
+msgstr "仅错误"
+
+msgid "Info"
+msgstr "信息"
+
+msgid "Debug"
+msgstr "调试"
+
+msgid "Debug logging"
+msgstr "调试日志"
+
+msgid "Pass --debug to the daemon."
+msgstr "向守护进程传递 --debug 参数。"
+
+msgid "Invalid JSON"
+msgstr "JSON 格式错误"
+
+msgid "Configuration saved and KixDNS restarted."
+msgstr "配置已保存，KixDNS 已重启。"
+
+msgid "Save failed"
+msgstr "保存失败"
+
+msgid "KixDNS - Log"
+msgstr "KixDNS - 日志"
+
+msgid "Filter (domain, IP, rule ...)"
+msgstr "过滤（域名、IP、规则…）"
+
+msgid "Rule"
+msgstr "规则"
+
+msgid "All rules"
+msgstr "全部规则"
+
+msgid "Lines"
+msgstr "行数"
+
+msgid "All"
+msgstr "全部"
+
+msgid "Auto refresh"
+msgstr "自动刷新"
+
+msgid "Refresh"
+msgstr "刷新"
+
+msgid "%d shown / %d matched"
+msgstr "显示 %d 条 / 匹配 %d 条"
+
+msgid "No log entries match the current filters."
+msgstr "没有日志匹配当前过滤条件。"
+
+msgid "No log entries in %s."
+msgstr "%s 中暂无日志。"
+
+msgid "Listening (from pipeline config)"
+msgstr "监听地址（读取自 pipeline 配置）"
+
+msgid "Log size limit (KB)"
+msgstr "日志大小限制（KB）"
+
+msgid "When the log file exceeds this size, it is cleared."
+msgstr "日志文件超过此大小时将被清空。"
+
+msgid "Clear log"
+msgstr "清空日志"
+
+msgid "Log file: %s"
+msgstr "日志文件：%s"
+
+msgid "Stats"
+msgstr "统计"
+
+msgid "KixDNS - Stats"
+msgstr "KixDNS - 统计"
+
+msgid "Cache hit rate"
+msgstr "缓存命中率"
+
+msgid "Errors"
+msgstr "错误"
+
+msgid "Unique domains"
+msgstr "唯一域名"
+
+msgid "Categories"
+msgstr "分类"
+
+msgid "Top domains"
+msgstr "热门域名"
+
+msgid "Top clients"
+msgstr "热门客户端"
+
+msgid "Top upstreams"
+msgstr "热门上游"
+
+msgid "Pipelines"
+msgstr "流水线"
+
+msgid "Query types"
+msgstr "查询类型"
+
+msgid "Response codes"
+msgstr "响应码"
+
+msgid "None"
+msgstr "无"
+
+msgid "Classifying..."
+msgstr "正在分类…"
+
+msgid "Statistics request failed"
+msgstr "统计请求失败"
+
+msgid "Failed to save statistics; log was not cleared."
+msgstr "统计保存失败，日志未清除。"
+
+msgid "Classify pending (%d)"
+msgstr "分类未处理（%d）"
+
+msgid "Unclassified"
+msgstr "未分类"
+
+msgid "Ads"
+msgstr "广告"
+
+msgid "Trackers"
+msgstr "跟踪器"
+
+msgid "Malware"
+msgstr "恶意软件"
+
+msgid "Phishing"
+msgstr "钓鱼"
+
+msgid "Adult"
+msgstr "成人内容"
+
+msgid "Social"
+msgstr "社交"
+
+msgid "CDN"
+msgstr "CDN"
+
+msgid "PCDN"
+msgstr "PCDN"
+
+msgid "P2P"
+msgstr "P2P"
+
+msgid "Gaming"
+msgstr "游戏"
+
+msgid "Cloud"
+msgstr "云服务"
+
+msgid "Captive"
+msgstr "连通性检测"
+
+msgid "AI"
+msgstr "AI"
+
+msgid "Updates"
+msgstr "更新"
+
+msgid "Streaming"
+msgstr "流媒体"
+
+msgid "Ordinary"
+msgstr "普通"
+
+msgid "Intranet"
+msgstr "内网"
+
+msgid "TypeSafe API key"
+msgstr "TypeSafe API 密钥"
+
+msgid "Optional. Enables automatic TypeSafe Jev classification. Eligible domain names are sent to TypeSafe; leave empty to disable."
+msgstr "可选。启用 TypeSafe Jev 自动分类，符合条件的域名会发送至 TypeSafe；留空则禁用。"
+
+msgid "TypeSafe API endpoint"
+msgstr "TypeSafe API 终结点"
+
+msgid "Optional. Custom Jev-compatible endpoint; the API key is sent to it. Leave empty to use the official TypeSafe endpoint."
+msgstr "可选。自定义兼容 Jev 的终结点，API 密钥会发送至该终结点。留空则使用 TypeSafe 官方终结点。"
+
+msgid "Expecting an http:// or https:// URL"
+msgstr "请输入以 http:// 或 https:// 开头的 URL"
+
+msgid "Model name"
+msgstr "模型名称"
+
+msgid "Optional. Model requested from the custom endpoint. Leave empty to use jev-latest."
+msgstr "可选。向自定义终结点请求的模型。留空则使用 jev-latest。"
+
+msgid "Expecting up to 256 printable ASCII characters without spaces"
+msgstr "请输入不超过 256 个可打印 ASCII 字符，不含空格"
+
+msgid "Client"
+msgstr "客户端"
+
+msgid "Domain"
+msgstr "域名"
+
+msgid "Category"
+msgstr "分类"
+
+msgid "Client IP or hostname"
+msgstr "客户端 IP 或主机名"
+
+msgid "Domain keyword"
+msgstr "域名关键词"
+
+msgid "All categories"
+msgstr "全部分类"
+
+msgid "Apply filters"
+msgstr "应用筛选"
+
+msgid "Clear filters"
+msgstr "清空筛选"
+
+msgid "Retained responses"
+msgstr "已保留应答"
+
+msgid "Incomplete associations; this is not a complete hourly count."
+msgstr "关联数据不完整，此数值不是该小时的完整应答量。"
+
+msgid "Retained log records"
+msgstr "保留日志记录"
+
+msgid "24h logged responses (unfiltered): %s"
+msgstr "24 小时日志应答数（未筛选）：%s"
+
+msgid "Unaffected by filters"
+msgstr "不受筛选影响"
+
+msgid "Some response details are missing"
+msgstr "部分应答明细已缺失"
+
+msgid "Some associations are unavailable."
+msgstr "部分关联信息不可用。"
+
+msgid "Oldest associations removed at the storage limit."
+msgstr "存储已达上限，最旧的关联时段已移除。"
+
+msgid "Some records could not be associated."
+msgstr "部分记录无法关联。"
+
+msgid "Retained responses (24h)"
+msgstr "已保留应答（24 小时）"
+
+msgid "Unavailable"
+msgstr "不可用"
+
+msgid "Retained details (before filters): %s"
+msgstr "已保留明细（筛选前）：%s"
+
+msgid "Legacy logs may omit responses. Hit rates for affected hours are unavailable; upgrade the DNS core. Missing history cannot be recovered."
+msgstr "旧格式日志可能漏记应答，相关时段的缓存命中率不可用。请更新 DNS 内核；缺失的历史数据无法补回。"

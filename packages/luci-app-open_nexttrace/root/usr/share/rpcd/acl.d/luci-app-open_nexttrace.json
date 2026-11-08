@@ -1,0 +1,13 @@
+{
+  "luci-app-open_nexttrace": {
+    "description": "View and run bounded NextTrace diagnostics",
+    "read": {
+      "ubus": { "open_nexttrace": ["info", "status"] },
+      "uci": ["open_nexttrace"]
+    },
+    "write": {
+      "ubus": { "open_nexttrace": ["resolve", "start", "stop"] },
+      "uci": ["open_nexttrace"]
+    }
+  }
+}

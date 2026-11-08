@@ -1,0 +1,40 @@
+name: daily-sync
+
+on:
+  schedule:
+    # 每天 18:30 UTC = 北京时间 02:30（上游一天内的更新次日清晨即可拿到）
+    - cron: "30 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-sync
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sync upstream snapshots
+        run: bash scripts/sync.sh
+
+      - name: Commit and push if changed
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo "上游无变化，无需提交"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "sync: update snapshots from upstream ($(date -u '+%Y-%m-%d %H:%M UTC'))"
+          git push
+          echo "已提交同步结果："
+          git log --stat -1 | head -n 30
