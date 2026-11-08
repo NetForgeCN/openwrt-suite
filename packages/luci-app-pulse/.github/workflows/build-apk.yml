@@ -210,6 +210,6 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           prerelease: ${{ startsWith(github.ref_name, 'dev-') || contains(github.ref_name, '-') }}
-          make_latest: ${{ contains(github.ref_name, '-') && 'false' || 'true' }}
+          make_latest: "false"
           fail_on_unmatched_files: true
           files: dist/*.apk
