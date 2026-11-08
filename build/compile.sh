@@ -42,11 +42,12 @@ JOBS="${JOBS:-}"                            # 留空则自动探测 CPU 核心�
 SKIP_UPDATE="${SKIP_UPDATE:-0}"             # 1 = 不更新主仓库与 suite 仓库
 SKIP_DOWNLOAD="${SKIP_DOWNLOAD:-0}"          # 1 = 跳过 make download
 SKIP_BUILD="${SKIP_BUILD:-0}"               # 1 = 只做准备工作，不编译
-REFRESH_CONFIG="${REFRESH_CONFIG:-1}"       # 1 = 用 suite 仓库的 .config 覆盖本地（旧配置备份）
-                                             # 注意：suite 版 .config 是构建配置的“源头”，
-                                             # 默认每次覆盖；改配置请改 suite 仓库或设为 0
+REFRESH_CONFIG="${REFRESH_CONFIG:-0}"       # 1 = 用 suite 仓库的 .config 覆盖本地（旧配置备份）
+                                             # 默认 0：本地已有 .config 时保留（make menuconfig 的
+                                             # 改动不会被覆盖）；.config 缺失时仍从 suite 快照写入
 CLEAN_KERNEL="${CLEAN_KERNEL:-auto}"        # auto|1|0：内核配置变更后是否 make target/linux/clean
 CLEAN_GOLANG="${CLEAN_GOLANG:-auto}"        # auto|1|0：GO_AMD64 变更后是否 make golang/clean
+MENUCONFIG_ONLY="${MENUCONFIG_ONLY:-0}"     # 1 = 准备完直接打开 make menuconfig（--menuconfig）
 
 # 内部状态标记（先给默认值，避免被管道/子shell 调用时出现未绑定变量）
 RUST_CHANGED=0
@@ -399,6 +400,8 @@ OpenWrt 一键构建脚本（openwrt-suite 单源版）
 选项：
   -h, --help        显示本帮助
   -j, --jobs N      指定并行编译任务数（默认自动探测 CPU 核心数）
+  -m, --menuconfig  只准备到可配置状态并打开 make menuconfig（更新源码/feeds、
+                    安装第三方包、写入 .config），退出后可直接再运行本脚本编译
 
 环境变量：
   WORKDIR           OpenWrt 源码目录（默认 $HOME/openwrt）
@@ -412,7 +415,7 @@ OpenWrt 一键构建脚本（openwrt-suite 单源版）
   SKIP_UPDATE=1     跳过主仓库与 suite 仓库更新
   SKIP_DOWNLOAD=1   跳过 make download
   SKIP_BUILD=1       只做准备工作，不编译
-  REFRESH_CONFIG=0|1 用 suite 快照覆盖本地 .config（默认 1；改配置请改 suite 仓库）
+  REFRESH_CONFIG=1  用 suite 快照覆盖本地 .config（默认 0 保留本地，含 menuconfig 改动）
   CLEAN_KERNEL=auto|1|0   内核配置变更后是否执行 make target/linux/clean
   CLEAN_GOLANG=auto|1|0   GO_AMD64 变更后是否执行 make package/feeds/packages/golang/clean
 
@@ -431,6 +434,7 @@ main() {
                 JOBS="$2"
                 shift 2
                 ;;
+            -m|--menuconfig) MENUCONFIG_ONLY=1; shift ;;
             *) die "未知参数：$1（使用 --help 查看用法）" ;;
         esac
     done
@@ -444,6 +448,16 @@ main() {
     prepare_config
     kernel_patches
     clean_stale_artifacts
+
+    # --menuconfig: 准备完就打开配置界面，供手工勾选第三方包
+    if [[ "$MENUCONFIG_ONLY" == "1" ]]; then
+        log "第三方包已全部安装到 package/feeds/，打开 make menuconfig"
+        log "提示：在 LuCI / Network / Utilities 等菜单下可找到 suite 提供的包"
+        log "选完保存退出后，直接重新运行本脚本（不加 --menuconfig）即可按新配置编译"
+        make menuconfig
+        log "menuconfig 已退出，构建准备完成"
+        exit 0
+    fi
 
     if [[ "$SKIP_DOWNLOAD" == "1" ]]; then
         log "SKIP_DOWNLOAD=1，跳过源码下载"

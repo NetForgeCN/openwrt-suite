@@ -1,8 +1,9 @@
 # openwrt-suite
 
-OpenWrt 第三方组件**单一聚合 feed 仓库**：把 18 个常用第三方包 + 一份固件 `.config`
-统一收进本仓库，每日由 GitHub Actions 从各上游同步（纯快照方式），构建时只需拉取
-这一个源。
+OpenWrt 第三方组件**单一聚合 feed 仓库**：把 18 个第三方包（19 个包源目录，含
+argon 自带的 `compat/luci-app-argon-config`）+ 一份固件 `.config` 统一收进本仓库，
+每日由 GitHub Actions 从各上游同步（纯快照方式）。使用时**只需克隆本仓库**，
+第三方包就会出现在 `make menuconfig` 里。
 
 ## 仓库结构
 
@@ -29,16 +30,49 @@ openwrt-suite/
 
 ## 使用方法
 
-### 方式一：一键构建（推荐）
+### 方式一：只克隆本仓库 → menuconfig 勾选 → 编译（推荐）
 
 ```bash
+# 1) 克隆这一个仓库
 git clone https://github.com/NetForgeCN/openwrt-suite.git
+
+# 2) 准备到可配置状态（会自动克隆 OpenWrt 主仓库、配置 feeds、安装全部第三方包），
+#    然后直接打开 make menuconfig
+bash openwrt-suite/build/compile.sh --menuconfig
+
+# 3) 在 menuconfig 里勾选需要的包，保存退出后开始编译
 bash openwrt-suite/build/compile.sh
 ```
 
-脚本自动完成：克隆/更新 OpenWrt → 克隆 suite → 配置 feeds → `feeds update/install` →
-打官方 feed 补丁 → 写入 `.config` → 打内核补丁 → 下载 → 编译。
-常用变量：`WORKDIR`（默认 `~/openwrt`）、`JOBS`、`SKIP_BUILD=1`（只准备不编译）。
+第 2 步完成后，18 个第三方包已全部出现在 `make menuconfig` 中，且
+`config/dot.config` 里原有的选择会自动勾选好：16 个包 + `v2ray-geoip` /
+`v2ray-geosite`（v2ray-geodata 源里的实际数据包，`v2ray-geodata` 本身是虚包）。
+
+这些包在 menuconfig 中的位置：
+
+| 菜单路径 | 包 |
+|---|---|
+| LuCI → Applications | luci-app-airplay2、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-kixdns、luci-app-oxidns、luci-app-pulse、luci-app-temp-status |
+| LuCI → Themes | luci-theme-argon |
+| Network | dae、ddns-go、kixdns、kixdns-stats、nqptp、open-nexttrace-core、v2ray-geodata |
+| LuCI | luci-app-open_nexttrace（该包 CATEGORY 直接声明为 LuCI） |
+| Sound | airplay2 |
+
+> 自己的配置改动只留在本地 `.config`，不会被覆盖；想强制回到仓库快照版本时用
+> `REFRESH_CONFIG=1`（旧配置会自动备份）。
+
+### 方式一（等价的手工版）
+
+不想用脚本，就是三条命令：
+
+```bash
+git clone https://github.com/openwrt/openwrt.git && cd openwrt
+echo 'src-git suite https://github.com/NetForgeCN/openwrt-suite.git' | cat - feeds.conf.default > t && mv t feeds.conf.default
+./scripts/feeds update -a && ./scripts/feeds install -a
+make menuconfig
+```
+
+`src-git suite` 必须在**第一条**（官方 feed 之前），否则官方同名包会抢先。
 
 ### 方式二：接入已有构建
 
@@ -52,6 +86,47 @@ bash openwrt-suite/diy/01-feed-patches.sh <你的 openwrt 目录>
 # .config 直接用 config/dot.config
 bash openwrt-suite/diy/02-kernel-config.sh <你的 openwrt 目录>
 ```
+
+## 原理：克隆之后到底发生了什么
+
+```
+git clone 本仓库  ──►  一个标准 OpenWrt feed（顶层 packages/ 里每个目录 = 一个包）
+                              │
+              feeds.conf 一行 src-git suite <url>
+                              │
+   ./scripts/feeds update -a  ──►  克隆到 feeds/suite/
+   ./scripts/feeds install -a ──►  在 package/feeds/suite/ 下为每个包建符号链接
+                              │
+        OpenWrt 的包扫描（include/scan.mk）递归查找所有含 Makefile
+        且调用 BuildPackage 的目录 ──► 生成包索引 tmp/.packageinfo
+                              │
+                     make menuconfig 读取索引 ──► 菜单里可勾选
+```
+
+四个关键事实（均已对本仓库实测/源码核对）：
+
+1. **扫描是递归的**：`scan.mk` 用 `find -L $(SCAN_DIR) -name Makefile`，没有
+   `maxdepth` 限制，所以 `feeds/suite/packages/<包名>/` 这种多一层嵌套完全没问题
+   （官方 packages feed 本身就是 `lang/`、`net/` 这种嵌套结构）。
+2. **包路径无关紧要**：本仓库所有 Makefile 都用 `$(TOPDIR)` / `$(INCLUDE_DIR)`
+   绝对引用，没有一处相对路径 `include`，因此放在哪一层都能正常解析。
+3. **同名包由 feeds 顺序决定**：`scripts/feeds` 的 `install -a` 按 feeds.conf
+   顺序遍历，已安装过的源包名直接跳过 —— 谁排在前面谁生效。把 suite 放第一条，
+   nqptp / v2ray-geodata / ddns-go / dae 就用本仓库版本。
+   *（不要用 `git clone 到 package/suite` 的方式接入：`scan.awk` 会让 feed 版本
+   覆盖 `package/` 下的同名包，反而变成官方版赢。）*
+4. **`.config` 只是初始建议值**：首次准备时从 `config/dot.config` 写入，之后
+   menuconfig 的改动保留在本地，不会每次被覆盖。
+
+### 一键构建
+
+```bash
+bash openwrt-suite/build/compile.sh
+```
+
+脚本自动完成：克隆/更新 OpenWrt → 克隆 suite → 配置 feeds → `feeds update/install` →
+打官方 feed 补丁 → 写入 `.config` → 打内核补丁 → 下载 → 编译。
+常用变量：`WORKDIR`（默认 `~/openwrt`）、`JOBS`、`SKIP_BUILD=1`（只准备不编译）。
 
 ## 关键设计
 
