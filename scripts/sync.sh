@@ -57,9 +57,15 @@ copy_tree() {
     tar -C "$src" --exclude='./.git' -cf - . | tar -C "$dst" -xf -
 }
 
-# 记录 lock 行
+# 记录 lock 行（上游 commit 未变化时沿用旧记录，避免纯时间戳差异产生提交噪音）
 lock_add() {
-    printf '%s|%s|%s|%s\n' "$1" "$2" "$NOW" "$3" >> "$LOCK.new"
+    local slug="$1" sha="$2" url="$3" old_line
+    old_line="$(grep -E "^${slug}\|" "$LOCK" 2>/dev/null | head -n 1 || true)"
+    if [[ -n "$old_line" && "$old_line" == "${slug}|${sha}|"* ]]; then
+        printf '%s\n' "$old_line" >> "$LOCK.new"
+    else
+        printf '%s|%s|%s|%s\n' "$slug" "$sha" "$NOW" "$url" >> "$LOCK.new"
+    fi
 }
 
 FAILED=0
