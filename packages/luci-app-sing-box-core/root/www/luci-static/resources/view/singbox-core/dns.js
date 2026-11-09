@@ -69,7 +69,7 @@ return view.extend({
 		o.rmempty = false;
 
 		o = s.taboption('cache', form.Flag, 'optimistic', _('乐观缓存'),
-			_('条目过期后先返回旧结果并在后台刷新，减少等待。需要 sing-box 1.14 及以上，低版本会自动跳过。'));
+			_('条目过期后先返回旧结果并在后台刷新，减少等待。'));
 		o.default = '1';
 		o.rmempty = false;
 

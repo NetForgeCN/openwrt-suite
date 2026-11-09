@@ -4,18 +4,19 @@
 // 设计原则：
 //   1. UCI 是唯一数据源，本脚本是纯函数式渲染，不做任何持久化
 //   2. 引用不存在的规则集文件时跳过该规则并告警，而不是渲染出必然检查失败的配置
-//   3. 版本相关的字段按实际二进制版本裁剪（如 1.14 才有 optimistic）
+//   3. 配置格式固定按 sing-box 1.14 生成，与 Makefile 的 SB_VERSION 对齐
 //
 // 输出：/var/run/sing-box-core/config.json
 // 调试：直接对该文件执行 `sing-box check -c` 即可
 
 'use strict';
 
-import { writefile, mkdir, stat, popen } from 'fs';
+import { writefile, mkdir, stat } from 'fs';
 import * as uci from 'uci';
 
 const OUT_DIR     = '/var/run/sing-box-core';
 const CACHE_DB    = '/etc/sing-box-core/cache.db';
+const BIN         = '/usr/libexec/sing-box-core/sing-box';
 
 const ctx = uci.cursor();
 
@@ -47,35 +48,6 @@ function split_list(section, option) {
 
 	return filter(map(split(v, ','), function(x) { return trim(x); }),
 	              function(x) { return length(x) > 0; });
-}
-
-/* ---------------- 版本探测 ---------------- */
-
-let _ver = null;
-
-function sb_version() {
-	if (_ver != null)
-		return _ver;
-
-	let out = '';
-	let p = popen('/usr/libexec/sing-box-core/sing-box version 2>/dev/null', 'r');
-	if (p != null) {
-		let chunk;
-		while ((chunk = p.read()) != null && length(chunk) > 0)
-			out += chunk;
-		p.close();
-	}
-
-	let m = match(out, /version ([0-9]+)\.([0-9]+)\.([0-9]+)/);
-	_ver = m ? [+m[1], +m[2], +m[3]] : [0, 0, 0];
-	return _ver;
-}
-
-function ver_at_least(a, b, c) {
-	let v = sb_version();
-	if (v[0] != a) return v[0] > a;
-	if (v[1] != b) return v[1] > b;
-	return v[2] >= c;
 }
 
 /* ---------------- 规则集登记 ---------------- */
@@ -111,19 +83,14 @@ function is_ip(s) {
 	return match(s, /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) != null || match(s, /:/) != null;
 }
 
-/* ---------------- 版本闸门 ---------------- */
+/* ---------------- 二进制检查 ---------------- */
 
-// 配置里用到 http_clients / default_domain_resolver / remote rule-set 等 1.14 特性，
-// 低版本会报 unknown field 而不是给出可读错误，所以在这里提前拦住。
-let v = sb_version();
-
-if (v[0] == 0) {
-	warn('未找到可执行的 sing-box 二进制（/usr/libexec/sing-box-core/sing-box）\n');
-	exit(1);
-}
-
-if (!ver_at_least(1, 14, 0)) {
-	warn(sprintf('sing-box 版本 %d.%d.%d 过低，本插件需要 1.14.0 及以上\n', v[0], v[1], v[2]));
+// 只检查文件存在，不在这里探测版本。
+// ucode 的 popen 在不同版本上行为不一致，取不到输出时会把「二进制正常」误判成
+// 「二进制缺失」，直接把服务卡死。版本由 Makefile 的 SB_VERSION 固定为 1.14.0，
+// 插件也只按 1.14 的配置格式生成，不需要运行时再判断一次。
+if (stat(BIN) == null) {
+	warn('未找到 sing-box 二进制：' + BIN + '\n');
 	exit(1);
 }
 
@@ -236,8 +203,8 @@ if (cache_capacity < 1024)
 	cache_capacity = 4096;
 dns_block.cache_capacity = cache_capacity;
 
-// optimistic 是 1.14 才有的字段，低版本写了会 unknown field
-if (flag('dns', 'optimistic', '1') && ver_at_least(1, 14, 0))
+// optimistic 需要 1.14+，包自带的内核满足
+if (flag('dns', 'optimistic', '1'))
 	dns_block.optimistic = true;
 
 /* ---------------- TUN 入站 ---------------- */
@@ -260,8 +227,8 @@ let tun = {
 	]
 };
 
-// auto_redirect 是 1.10 才有的字段
-if (flag('route', 'auto_redirect', '1') && ver_at_least(1, 10, 0))
+// auto_redirect 需要 1.10+，包自带的内核满足
+if (flag('route', 'auto_redirect', '1'))
 	tun.auto_redirect = true;
 
 /* ---------------- 路由规则 ---------------- */
@@ -320,7 +287,7 @@ if (flag('route', 'block_quic', '1'))
 
 // 按源 MAC 强制走代理（需要 sing-box 1.14+ 与邻居解析）
 let lan_mac = g('route', 'lan_mac', '');
-if (lan_mac != '' && ver_at_least(1, 14, 0))
+if (lan_mac != '')
 	push(rules, {
 		source_mac_address: [lan_mac],
 		action: 'route',
@@ -400,7 +367,7 @@ let cfg = {
 };
 
 // 1.14 起邻居解析要显式开，否则 source_mac_address 拿不到数据
-if (lan_mac != '' && ver_at_least(1, 14, 0)) {
+if (lan_mac != '') {
 	cfg.route.find_neighbor = true;
 	let lease = g('route', 'dhcp_lease_file', '');
 	if (lease != '')

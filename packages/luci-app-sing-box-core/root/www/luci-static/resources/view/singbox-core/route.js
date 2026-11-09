@@ -91,7 +91,7 @@ return view.extend({
 		/* ---------- 按设备 ---------- */
 
 		o = s.taboption('device', form.Value, 'lan_mac', _('强制走代理的 MAC'),
-			_('留空则不启用。需要 sing-box 1.14+ 与邻居解析，低版本会自动跳过这条规则。'));
+			_('留空则不启用。需要 sing-box 1.14+ 与邻居解析，同时要配好下面的租约文件。'));
 		o.datatype = 'macaddr';
 		o.rmempty = true;
 		o.placeholder = '00:0c:29:7d:55:cb';
