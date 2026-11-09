@@ -177,8 +177,8 @@ LuCI 表单
    也就不会出现"手改 JSON 后被界面覆盖"或"少一个逗号整个服务起不来"。
 2. **改错不会断网**。`apply.sh` 先备份旧配置，`check` 失败就原样恢复；
    `restart` 后如果进程没存活，也会回滚。这是整个插件最重要的保证。
-3. **规则集缺失时降级**。`render.uc` 在引用 `.srs` 前会检查文件存在，
-   缺了就跳过该条规则并告警，而不是渲染出一份必然检查失败的配置。
+3. **规则集交给内核自己拉**。配置里只写 `type: remote` 的地址，下载与缓存由 sing-box
+   负责。代价是首次启动必须能出网：节点不通就拉不到规则集，服务起不来。
 
 ## 规则生成顺序
 
@@ -216,7 +216,7 @@ TUN 用的是 `iproute2_table_index: 2023` + `iproute2_rule_index: 9100`，
 按这个顺序查，每步都能排除一大类问题：
 
 ```sh
-/usr/libexec/sing-box-core/sing-box version          # 1. 版本对不对
+/usr/libexec/sing-box-core/sing-box version          # 1. 二进制在不在、版本对不对
 /usr/libexec/sing-box-core/render.uc && echo OK      # 2. 能不能渲染
 /usr/libexec/sing-box-core/sing-box check -c /var/run/sing-box-core/config.json   # 3. 配置合不合法
 ip link show sbc-tun                        # 4. TUN 建起来没（查 kmod-tun）
@@ -258,6 +258,6 @@ LuCI 侧和脚本侧同样写进了 `DEPENDS`：`luci-base`、`rpcd`、`ucode` �
 | 单节点 | 设计如此。多节点需要 rule_set 分组和 selector，会显著增加界面复杂度 |
 | 无 dscp 匹配 | sing-box 没有 DSCP/TOS 字段，dae 的 `dscp()` 规则无法迁移 |
 | `process_name` 只对本机有效 | 局域网流量来自 TUN，没有进程上下文，这些规则不会命中 |
-| `source_mac_address` 需 1.14+ | 低版本自动跳过该规则，并需要 `find_neighbor` + DHCP 租约 |
+| `source_mac_address` 需 1.14+ | 同时依赖 `find_neighbor` 与 DHCP 租约，未配租约文件时可能匹配不到 |
 | 首次启动需要联网 | 规则集在启动时下载，节点连不通就拉不到规则，服务起不来 |
 | 规则集版本随上游漂移 | `rule-set` 分支滚动更新，没有 tag；要固定版本就改成本地 `local` 类型 |
