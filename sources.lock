@@ -1,6 +1,6 @@
 airplay2|ebd30eddbb83899deb848166b34b34d4d3c4e25e|2026-11-08T04:32:51Z|https://github.com/NetForgeCN/luci-app-airplay2.git
 argon|c6d63bd68aa9272e40c35cee5e615f45cc1e4eb0|2026-11-08T04:32:51Z|https://github.com/jerrykuku/luci-theme-argon.git
-config|51fa64c5a6919a3efbfe4fb56bd1162b21edf3ed|2026-11-09T07:09:44Z|https://github.com/NetForgeCN/OpenWRT.git
+config|1bbe0ec194102ecdafadc3aa5bef771328587c8d|2026-11-09T15:40:54Z|https://github.com/NetForgeCN/OpenWRT.git
 dae|4d33a0c69733436074d2f5f13267b09e8c4c6949|2026-11-08T04:32:51Z|https://github.com/QiuSimons/luci-app-dae.git
 ddnsgo|7092e6de6ad9fe3f7d327f70468dfd19e00d6f0e|2026-11-08T04:32:51Z|https://github.com/sirpdboy/luci-app-ddns-go.git
 diskman|be87fcb92c472821bcedbefbfc8b7e8d9e039449|2026-11-08T04:32:51Z|https://github.com/sbwml/luci-app-diskman.git
@@ -8,6 +8,6 @@ geodata|2e3845caae172326f02b3406048c7a3613f3dee5|2026-11-08T04:32:51Z|https://gi
 honk|9936045ac52ca46a48f57f86fae1af8fa0e9134b|2026-11-09T14:14:12Z|https://github.com/QiuSimons/luci-app-honk.git
 kixdns|bea466368823dfc829a13151f804b29b5ab2ca67|2026-11-08T04:32:51Z|https://github.com/JohnsonRan/luci-app-kixdns.git
 opennexttrace|fcac844b466e22d94da3aef39049cb4ae5ee6f35|2026-11-08T04:32:51Z|https://github.com/haohaoget/luci-app-open_nexttrace.git
-oxidns|27e850d0cb9a1169b907e88fcf548914ab481382|2026-11-09T02:26:49Z|https://github.com/NetForgeCN/luci-app-oxidns.git
+oxidns|43752bd3d65fc00f74fbb939b78c9c03d0e9a1c0|2026-11-09T15:40:54Z|https://github.com/NetForgeCN/luci-app-oxidns.git
 pulse|860838518049bab471ab15015467cb453b4f1b9c|2026-11-08T22:22:56Z|https://github.com/w9315273/luci-app-pulse.git
 temp-status|6d127817d92d758e35617620f9567a1336f5f8a5|2026-11-08T04:32:51Z|https://github.com/gSpotx2f/luci-app-temp-status.git
