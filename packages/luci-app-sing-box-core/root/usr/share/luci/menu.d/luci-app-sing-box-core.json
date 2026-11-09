@@ -1,0 +1,44 @@
+{
+	"admin/services/sing-box-core": {
+		"title": "sing-box-core",
+		"order": 30,
+		"action": {
+			"type": "firstchild"
+		},
+		"depends": {
+			"acl": [ "luci-app-sing-box-core" ]
+		}
+	},
+	"admin/services/sing-box-core/overview": {
+		"title": "概览",
+		"order": 10,
+		"action": {
+			"type": "view",
+			"path": "singbox-core/overview"
+		}
+	},
+	"admin/services/sing-box-core/node": {
+		"title": "节点",
+		"order": 20,
+		"action": {
+			"type": "view",
+			"path": "singbox-core/node"
+		}
+	},
+	"admin/services/sing-box-core/dns": {
+		"title": "DNS",
+		"order": 30,
+		"action": {
+			"type": "view",
+			"path": "singbox-core/dns"
+		}
+	},
+	"admin/services/sing-box-core/route": {
+		"title": "分流",
+		"order": 40,
+		"action": {
+			"type": "view",
+			"path": "singbox-core/route"
+		}
+	}
+}

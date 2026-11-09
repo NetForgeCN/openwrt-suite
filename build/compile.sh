@@ -2,7 +2,7 @@
 #
 # OpenWrt (x86-64) 一键构建脚本 —— openwrt-suite 单源版
 #
-# 与旧版的区别: 所有第三方组件（18 个包 + .config）全部来自自有的聚合仓库
+# 与旧版的区别: 所有第三方组件（19 个包 + .config）全部来自自有的聚合仓库
 # openwrt-suite（https://github.com/NetForgeCN/openwrt-suite），构建时只需
 # 拉取这一个源；官方 feed 同名包（nqptp / v2ray-geodata / ddns-go 等）由
 # feeds.conf 顺序保证优先使用 suite 版本，不再需要任何特判。

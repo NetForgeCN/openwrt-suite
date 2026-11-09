@@ -1,0 +1,10 @@
+#!/bin/sh
+# 首次安装时的初始化。二进制和脚本的权限由 Makefile 的 INSTALL_BIN 保证，
+# 这里只补运行期需要的目录。
+[ -n "${IPKG_INSTROOT}" ] && exit 0
+
+mkdir -p /etc/sing-box-core /var/run/sing-box-core
+
+# 不自动启动：此时还没有节点配置，渲染会失败。用户填完节点由 apply 拉起。
+
+exit 0
