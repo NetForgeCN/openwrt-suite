@@ -158,6 +158,12 @@ OpenWrt 的 `feeds install -a` 对同名包按 feeds.conf 中的**出现顺序**
 每个源同步后强制校验 `Makefile` 存在，任何失配（上游重构、删库、改默认分支）
 都会让同步失败报红，绝不静默产出坏快照。每次同步把上游 commit 记入 `sources.lock`。
 
+> **`packages/` 下的一切都由上游决定，不要在这里直接改。** 典型例子：argon 快照里
+> 自带的 `.github/workflows/*`（上游自己的 CI）会被 Renovate 当成仓库依赖来提 PR，
+> 但合并后下一次同步就 `rm -rf` 冲掉，而且这些 workflow 在子目录里 GitHub 根本不会执行。
+> 所以 `renovate.json` 里已经 `ignorePaths: ["packages/**"]`，Renovate 只升级本仓库
+> 自身的 `.github/workflows/sync.yml`。真需要在快照上做定制，用 `patches/<slug>.sh`。
+
 ### v2ray-geodata 的处理
 
 同步源用 [NetForgeCN/Loyalsoldier](https://github.com/NetForgeCN/Loyalsoldier) 这个
