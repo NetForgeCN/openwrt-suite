@@ -1,6 +1,6 @@
 # openwrt-suite
 
-OpenWrt 第三方组件**单一聚合 feed 仓库**：把 19 个第三方包（21 个包源目录，含
+OpenWrt 第三方组件**单一聚合 feed 仓库**：把 18 个第三方包（20 个包源目录，含
 argon 自带的 `compat/luci-app-argon-config` 与 oxidns 自带的 `oxidns-core` 两个
 嵌套子包）+ 一份固件 `.config` 统一收进本仓库，每日由 GitHub Actions 从各上游
 同步（纯快照方式）。使用时**只需克隆本仓库**，第三方包就会出现在 `make menuconfig` 里。
@@ -9,7 +9,7 @@ argon 自带的 `compat/luci-app-argon-config` 与 oxidns 自带的 `oxidns-core
 
 ```
 openwrt-suite/
-├── packages/          19 个包（feed 主体，OpenWrt 递归扫描含 Makefile 的目录）
+├── packages/          18 个包（feed 主体，OpenWrt 递归扫描含 Makefile 的目录）
 ├── config/
 │   └── dot.config     固件 .config 快照（跟随 NetForgeCN/OpenWRT main 分支）
 ├── sources.conf       上游同步映射表（源地址、分支、路径映射模式）
@@ -44,7 +44,7 @@ bash openwrt-suite/build/compile.sh --menuconfig
 bash openwrt-suite/build/compile.sh
 ```
 
-第 2 步完成后，19 个第三方包已全部出现在 `make menuconfig` 中，且
+第 2 步完成后，18 个第三方包已全部出现在 `make menuconfig` 中，且
 `config/dot.config` 里原有的选择会自动勾选好：16 个包 + `v2ray-geoip` /
 `v2ray-geosite`（v2ray-geodata 源里的实际数据包，`v2ray-geodata` 本身是虚包）。
 
@@ -52,7 +52,7 @@ bash openwrt-suite/build/compile.sh
 
 | 菜单路径 | 包 |
 |---|---|
-| LuCI → Applications | luci-app-airplay2、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-kixdns、luci-app-oxidns、luci-app-pulse、luci-app-sing-box-core、luci-app-temp-status |
+| LuCI → Applications | luci-app-airplay2、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-kixdns、luci-app-oxidns、luci-app-pulse、luci-app-temp-status |
 | LuCI → Themes | luci-theme-argon |
 | Network | dae、ddns-go、kixdns、kixdns-stats、nqptp、open-nexttrace-core、v2ray-geodata |
 | LuCI | luci-app-open_nexttrace（该包 CATEGORY 直接声明为 LuCI） |
