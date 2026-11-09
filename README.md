@@ -1,9 +1,9 @@
 # openwrt-suite
 
-OpenWrt 第三方组件**单一聚合 feed 仓库**：把 18 个第三方包（19 个包源目录，含
-argon 自带的 `compat/luci-app-argon-config`）+ 一份固件 `.config` 统一收进本仓库，
-每日由 GitHub Actions 从各上游同步（纯快照方式）。使用时**只需克隆本仓库**，
-第三方包就会出现在 `make menuconfig` 里。
+OpenWrt 第三方组件**单一聚合 feed 仓库**：把 18 个第三方包（20 个包源目录，含
+argon 自带的 `compat/luci-app-argon-config` 与 oxidns 自带的 `oxidns-core` 两个
+嵌套子包）+ 一份固件 `.config` 统一收进本仓库，每日由 GitHub Actions 从各上游
+同步（纯快照方式）。使用时**只需克隆本仓库**，第三方包就会出现在 `make menuconfig` 里。
 
 ## 仓库结构
 

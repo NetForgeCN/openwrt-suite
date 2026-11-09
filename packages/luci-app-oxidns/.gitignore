@@ -1,4 +1,5 @@
 /dist/
+/dist-embedded/
 /*.ipk
 /*.apk
 /sha256sums.txt

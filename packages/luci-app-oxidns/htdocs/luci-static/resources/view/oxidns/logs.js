@@ -17,7 +17,21 @@ var state = {
 	paused: false,
 	followTail: true,
 	limit: 100,
-	clearBaseline: null
+	clearBaseline: null,
+	filters: {
+		keyword: '',
+		plugin: '',
+		qtype: '',
+		rcode: ''
+	}
+};
+
+var FILTER_FIELDS = [ 'plugin', 'qtype', 'rcode' ];
+
+var FIELD_RES = {
+	plugin: /(?:^|\s)plugin=(\S+)/,
+	qtype: /(?:^|\s)qtype=(\S+)/,
+	rcode: /(?:^|\s)rcode=(\S+)/
 };
 
 function byId(id) {
@@ -27,6 +41,57 @@ function byId(id) {
 function normalizeLines(result) {
 	var lines = result && result.lines;
 	return Array.isArray(lines) ? lines : [];
+}
+
+function extractField(line, field) {
+	var match = FIELD_RES[field].exec(line);
+	return match ? match[1] : null;
+}
+
+function distinctValues(lines, field) {
+	var seen = {};
+	var values = [];
+
+	for (var i = 0; i < lines.length; i++) {
+		var value = extractField(lines[i], field);
+		if (value && !seen[value]) {
+			seen[value] = true;
+			values.push(value);
+		}
+	}
+
+	return values.sort();
+}
+
+function applyFilters(lines) {
+	var f = state.filters;
+	var keyword = f.keyword.toLowerCase();
+
+	if (!keyword && !f.plugin && !f.qtype && !f.rcode)
+		return lines;
+
+	var filtered = [];
+
+	for (var i = 0; i < lines.length; i++) {
+		var line = lines[i];
+		var keep = true;
+
+		if (keyword && line.toLowerCase().indexOf(keyword) < 0)
+			keep = false;
+
+		for (var j = 0; keep && j < FILTER_FIELDS.length; j++) {
+			var field = FILTER_FIELDS[j];
+			var want = f[field];
+
+			if (want && extractField(line, field) !== want)
+				keep = false;
+		}
+
+		if (keep)
+			filtered.push(line);
+	}
+
+	return filtered;
 }
 
 function trimClearedLines(lines) {
@@ -75,13 +140,29 @@ function scrollLogToBottom() {
 		log.scrollTop = log.scrollHeight;
 }
 
+function updateFilterSummary() {
+	var node = byId('oxidns-log-filter-summary');
+	if (!node)
+		return;
+
+	var total = state.lines.length;
+	var shown = applyFilters(state.lines).length;
+
+	if (shown === total)
+		node.textContent = _('%d lines').format(total);
+	else
+		node.textContent = _('%d of %d lines').format(shown, total);
+}
+
 function renderLines() {
 	var log = byId('oxidns-log-lines');
 	if (!log)
 		return;
 
+	var visible = applyFilters(state.lines);
 	var shouldFollow = state.followTail || isNearBottom(log);
-	log.textContent = state.lines.join('\n');
+	log.textContent = visible.join('\n');
+	updateFilterSummary();
 
 	if (shouldFollow) {
 		state.followTail = true;
@@ -89,13 +170,31 @@ function renderLines() {
 	}
 }
 
-function updatePauseButton() {
-	var button = byId('oxidns-log-pause-toggle');
-	if (!button)
-		return;
+function updateFilterOptions() {
+	for (var i = 0; i < FILTER_FIELDS.length; i++) {
+		var field = FILTER_FIELDS[i];
+		var select = byId('oxidns-log-filter-' + field);
+		if (!select)
+			continue;
 
-	button.textContent = state.paused ? _('Resume') : _('Pause');
-	button.className = 'btn cbi-button cbi-button-%s'.format(state.paused ? 'positive' : 'neutral');
+		var values = distinctValues(state.lines, field);
+		var signature = values.join('\n');
+		if (select.getAttribute('data-signature') === signature)
+			continue;
+		select.setAttribute('data-signature', signature);
+
+		while (select.firstChild)
+			select.removeChild(select.firstChild);
+
+		select.appendChild(E('option', { 'value': '' }, _('All')));
+
+		for (var j = 0; j < values.length; j++)
+			select.appendChild(E('option', { 'value': values[j] }, values[j]));
+
+		if (state.filters[field] && values.indexOf(state.filters[field]) < 0)
+			state.filters[field] = '';
+		select.value = state.filters[field];
+	}
 }
 
 function refreshLogs() {
@@ -112,6 +211,7 @@ function refreshLogs() {
 		else
 			state.lines = lines;
 
+		updateFilterOptions();
 		renderLines();
 	});
 }
@@ -147,6 +247,31 @@ function clearLogs() {
 	renderLines();
 }
 
+function resetFilters() {
+	state.filters = { keyword: '', plugin: '', qtype: '', rcode: '' };
+
+	var keyword = byId('oxidns-log-filter-keyword');
+	if (keyword)
+		keyword.value = '';
+
+	for (var i = 0; i < FILTER_FIELDS.length; i++) {
+		var select = byId('oxidns-log-filter-' + FILTER_FIELDS[i]);
+		if (select)
+			select.value = '';
+	}
+
+	renderLines();
+}
+
+function updatePauseButton() {
+	var button = byId('oxidns-log-pause-toggle');
+	if (!button)
+		return;
+
+	button.textContent = state.paused ? _('Resume') : _('Pause');
+	button.className = 'btn cbi-button cbi-button-%s'.format(state.paused ? 'positive' : 'neutral');
+}
+
 function controlButton(label, handler, style) {
 	return E('button', {
 		'class': 'btn cbi-button cbi-button-%s'.format(style || 'neutral'),
@@ -155,6 +280,55 @@ function controlButton(label, handler, style) {
 			return handler();
 		}
 	}, label);
+}
+
+function filterLabel(text) {
+	return E('span', {
+		'style': 'align-self: center; color: #888; font-size: 12px; white-space: nowrap;'
+	}, text);
+}
+
+function filterBar() {
+	var keywordInput = E('input', {
+		'id': 'oxidns-log-filter-keyword',
+		'class': 'cbi-input-text',
+		'type': 'text',
+		'placeholder': _('Keyword (qname, domain, text...)'),
+		'style': 'flex: 1 1 220px; min-width: 180px;',
+		'input': function(ev) {
+			state.filters.keyword = ev.target.value;
+			renderLines();
+		}
+	});
+
+	var bar = E('div', {
+		'style': 'display: flex; flex-wrap: wrap; gap: .5em; margin-bottom: .75em;'
+	}, [ keywordInput ]);
+
+	var fieldLabels = {
+		plugin: _('Plugin'),
+		qtype: _('QType'),
+		rcode: _('RCode')
+	};
+
+	for (var i = 0; i < FILTER_FIELDS.length; i++) {
+		(function(field) {
+			bar.appendChild(filterLabel(fieldLabels[field]));
+			bar.appendChild(E('select', {
+				'id': 'oxidns-log-filter-' + field,
+				'class': 'cbi-input-select',
+				'style': 'max-width: 180px;',
+				'change': function(ev) {
+					state.filters[field] = ev.target.value;
+					renderLines();
+				}
+			}, E('option', { 'value': '' }, _('All'))));
+		})(FILTER_FIELDS[i]);
+	}
+
+	bar.appendChild(controlButton(_('Reset'), resetFilters, 'neutral'));
+
+	return bar;
 }
 
 return view.extend({
@@ -173,17 +347,18 @@ return view.extend({
 		state.paused = false;
 		state.followTail = true;
 		state.clearBaseline = null;
+		state.filters = { keyword: '', plugin: '', qtype: '', rcode: '' };
 		window.setTimeout(refreshLogs, 0);
 		poll.add(refreshLogs, 1);
 
 		return E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, _('OxiDNS Logs')),
 			E('div', { 'class': 'cbi-map-descr' },
-				_('View recent OxiDNS entries from OpenWrt logread.')),
+				_('View recent OxiDNS entries from OpenWrt logread. Use the filters to narrow down entries by keyword, plugin, query type or response code.')),
 			E('div', { 'class': 'cbi-section' }, [
 				E('div', {
 					'class': 'cbi-button-row',
-					'style': 'display: flex; flex-wrap: wrap; gap: .5em; margin-bottom: 1.5em;'
+					'style': 'display: flex; flex-wrap: wrap; gap: .5em; margin-bottom: 1em;'
 				}, [
 					E('button', {
 						'id': 'oxidns-log-pause-toggle',
@@ -194,8 +369,13 @@ return view.extend({
 						}
 					}, _('Pause')),
 					controlButton(_('Refresh'), refreshLogs, 'action'),
-					controlButton(_('Clear'), clearLogs, 'negative')
+					controlButton(_('Clear'), clearLogs, 'negative'),
+					E('span', {
+						'id': 'oxidns-log-filter-summary',
+						'style': 'align-self: center; margin-left: auto; color: #888; font-size: 12px;'
+					}, '')
 				]),
+				filterBar(),
 				E('pre', {
 					'id': 'oxidns-log-lines',
 					'scroll': function(ev) {

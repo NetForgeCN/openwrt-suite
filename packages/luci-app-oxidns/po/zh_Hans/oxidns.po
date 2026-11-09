@@ -13,11 +13,17 @@ msgstr ""
 msgid "A token is currently configured. Enter a new value to replace it."
 msgstr "当前已配置 Token。输入新值可替换现有 Token。"
 
+msgid "A new OxiDNS core release is available."
+msgstr "有新的 OxiDNS 内核版本可用。"
+
 msgid "Actions"
 msgstr "操作"
 
 msgid "Applying service action..."
 msgstr "正在执行服务操作..."
+
+msgid "Archive"
+msgstr "压缩包"
 
 msgid "Available"
 msgstr "可用"
@@ -33,6 +39,9 @@ msgstr "取消"
 
 msgid "Bundle"
 msgstr "Bundle"
+
+msgid "Check Update"
+msgstr "检查更新"
 
 msgid "Clear"
 msgstr "清空"
@@ -72,6 +81,48 @@ msgstr "内核"
 
 msgid "Core Status"
 msgstr "内核状态"
+
+msgid "Core Update"
+msgstr "内核更新"
+
+msgid "Current version"
+msgstr "当前版本"
+
+msgid "Latest version"
+msgstr "最新版本"
+
+msgid "Repository"
+msgstr "仓库"
+
+msgid "The OxiDNS core is already up to date."
+msgstr "OxiDNS 内核已是最新版本。"
+
+msgid "OxiDNS Core Update"
+msgstr "OxiDNS 内核更新"
+
+msgid "Update to %s"
+msgstr "更新到 %s"
+
+msgid "Updating OxiDNS core..."
+msgstr "正在更新 OxiDNS 内核..."
+
+msgid "Persistent storage"
+msgstr "持久化存储"
+
+msgid "Enabled"
+msgstr "已启用"
+
+msgid "Enabled (core not saved yet)"
+msgstr "已启用（内核尚未保存）"
+
+msgid "Disabled"
+msgstr "已禁用"
+
+msgid "Install, repair or update the OxiDNS core binary. With persistent storage enabled the core is kept across firmware upgrades."
+msgstr "安装、修复或更新 OxiDNS 内核二进制。启用持久化存储后，内核在固件升级后仍然保留。"
+
+msgid "LuCI can download the official OxiDNS release archive, install an uploaded .tar.gz archive or single oxidns binary, check for new releases and update the core in place."
+msgstr "LuCI 可以下载官方 OxiDNS release archive、安装上传的 .tar.gz archive 或单个 oxidns 二进制，还可以检查新版本并就地更新内核。"
 
 msgid "Core bundle"
 msgstr "内核 bundle"
@@ -195,6 +246,39 @@ msgstr "OxiDNS 内核"
 
 msgid "OxiDNS Logs"
 msgstr "OxiDNS 日志"
+
+msgid "View recent OxiDNS entries from OpenWrt logread. Use the filters to narrow down entries by keyword, plugin, query type or response code."
+msgstr "查看 OpenWrt logread 中最近的 OxiDNS 条目。可使用过滤器按关键词、插件、查询类型或响应码筛选。"
+
+msgid "Keyword (qname, domain, text...)"
+msgstr "关键词（qname、域名、文本...）"
+
+msgid "Plugin"
+msgstr "插件"
+
+msgid "QType"
+msgstr "查询类型"
+
+msgid "RCode"
+msgstr "响应码"
+
+msgid "All"
+msgstr "全部"
+
+msgid "Reset"
+msgstr "重置"
+
+msgid "%d lines"
+msgstr "%d 行"
+
+msgid "%d of %d lines"
+msgstr "%d / %d 行"
+
+msgid "Persist core across upgrades"
+msgstr "固件升级时保留内核"
+
+msgid "Store the core binary and webui under /etc/oxidns/core, which is kept during firmware upgrades. Requires enough free space on the overlay partition."
+msgstr "把内核二进制和 WebUI 存放到 /etc/oxidns/core，固件升级时会保留。需要 overlay 分区有足够剩余空间。"
 
 msgid "OxiDNS Settings"
 msgstr "OxiDNS 设置"

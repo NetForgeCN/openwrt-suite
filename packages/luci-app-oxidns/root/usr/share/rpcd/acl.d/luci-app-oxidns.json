@@ -6,6 +6,7 @@
 				"luci.oxidns": [
 					"status",
 					"core_progress",
+					"core_update_check",
 					"config_read",
 					"settings_read",
 					"logs_recent"
@@ -21,6 +22,7 @@
 				"luci.oxidns": [
 					"core_install",
 					"core_reinstall",
+					"core_update",
 					"core_upload_install",
 					"core_remove",
 					"service_start",

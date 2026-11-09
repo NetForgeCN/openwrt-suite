@@ -21,7 +21,8 @@ var callSettingsSave = rpc.declare({
 		'github_token',
 		'clear_download_proxy',
 		'clear_github_token',
-		'log_syslog'
+		'log_syslog',
+		'persist_core'
 	],
 	expect: {}
 });
@@ -132,7 +133,8 @@ function saveSettings() {
 		github_token: field('oxidns-setting-github-token'),
 		clear_download_proxy: checked('oxidns-setting-clear-download-proxy'),
 		clear_github_token: checked('oxidns-setting-clear-github-token'),
-		log_syslog: checked('oxidns-setting-log-syslog') ? '1' : '0'
+		log_syslog: checked('oxidns-setting-log-syslog') ? '1' : '0',
+		persist_core: checked('oxidns-setting-persist-core') ? '1' : '0'
 	};
 
 	ui.showModal(_('OxiDNS'), [
@@ -148,7 +150,8 @@ function saveSettings() {
 		payload.github_token,
 		payload.clear_download_proxy,
 		payload.clear_github_token,
-		payload.log_syslog
+		payload.log_syslog,
+		payload.persist_core
 	), null).then(function(result) {
 		ui.hideModal();
 		if (!result || result.ok === false) {
@@ -159,6 +162,9 @@ function saveSettings() {
 		var logSyslog = document.getElementById('oxidns-setting-log-syslog');
 		if (logSyslog)
 			logSyslog.checked = result.log_syslog !== false;
+		var persistCore = document.getElementById('oxidns-setting-persist-core');
+		if (persistCore)
+			persistCore.checked = result.persist_core !== false;
 		var proxy = document.getElementById('oxidns-setting-download-proxy');
 		if (proxy)
 			proxy.value = result.download_proxy || '';
@@ -199,6 +205,15 @@ return view.extend({
 					row(_('Core bundle'), bundleSelect('oxidns-setting-core-bundle', settings.core_bundle || 'full')),
 					row(_('Config path'), textInput('oxidns-setting-config-path', settings.config_path || '/etc/oxidns/config.yaml')),
 					row(_('Working directory'), textInput('oxidns-setting-working-dir', settings.working_dir || '/var/lib/oxidns')),
+					row(_('Persist core across upgrades'), E('div', {}, [
+						E('input', {
+							'id': 'oxidns-setting-persist-core',
+							'type': 'checkbox',
+							'checked': settings.persist_core !== false ? 'checked' : null
+						}),
+						E('div', { 'class': 'cbi-value-description' },
+							_('Store the core binary and webui under /etc/oxidns/core, which is kept during firmware upgrades. Requires enough free space on the overlay partition.'))
+					])),
 					row(_('Write to system log'), E('div', {}, [
 						E('input', {
 							'id': 'oxidns-setting-log-syslog',

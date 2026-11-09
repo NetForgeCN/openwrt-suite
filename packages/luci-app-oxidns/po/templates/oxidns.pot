@@ -385,3 +385,87 @@ msgstr ""
 
 msgid "Yes"
 msgstr ""
+
+msgid "A new OxiDNS core release is available."
+msgstr ""
+
+msgid "Archive"
+msgstr ""
+
+msgid "Check Update"
+msgstr ""
+
+msgid "Core Update"
+msgstr ""
+
+msgid "Current version"
+msgstr ""
+
+msgid "Latest version"
+msgstr ""
+
+msgid "Repository"
+msgstr ""
+
+msgid "The OxiDNS core is already up to date."
+msgstr ""
+
+msgid "OxiDNS Core Update"
+msgstr ""
+
+msgid "Update to %s"
+msgstr ""
+
+msgid "Updating OxiDNS core..."
+msgstr ""
+
+msgid "Persistent storage"
+msgstr ""
+
+msgid "Enabled"
+msgstr ""
+
+msgid "Enabled (core not saved yet)"
+msgstr ""
+
+msgid "Disabled"
+msgstr ""
+
+msgid "Install, repair or update the OxiDNS core binary. With persistent storage enabled the core is kept across firmware upgrades."
+msgstr ""
+
+msgid "LuCI can download the official OxiDNS release archive, install an uploaded .tar.gz archive or single oxidns binary, check for new releases and update the core in place."
+msgstr ""
+
+msgid "View recent OxiDNS entries from OpenWrt logread. Use the filters to narrow down entries by keyword, plugin, query type or response code."
+msgstr ""
+
+msgid "Keyword (qname, domain, text...)"
+msgstr ""
+
+msgid "Plugin"
+msgstr ""
+
+msgid "QType"
+msgstr ""
+
+msgid "RCode"
+msgstr ""
+
+msgid "All"
+msgstr ""
+
+msgid "Reset"
+msgstr ""
+
+msgid "%d lines"
+msgstr ""
+
+msgid "%d of %d lines"
+msgstr ""
+
+msgid "Persist core across upgrades"
+msgstr ""
+
+msgid "Store the core binary and webui under /etc/oxidns/core, which is kept during firmware upgrades. Requires enough free space on the overlay partition."
+msgstr ""

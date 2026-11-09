@@ -4,11 +4,23 @@ set -eu
 
 VERSION="${1:-0.1.0}"
 OUT_DIR="${2:-dist}"
+CORE_ARCHIVE="${3:-}"
 PKG_VERSION="$(printf '%s' "$VERSION" | sed 's/^v//')"
 PKG_NAME="luci-app-oxidns"
 PKG_FILE_BASE="${PKG_NAME}_${PKG_VERSION}-r1_all"
 I18N_PKG_NAME="luci-i18n-oxidns-zh-cn"
 I18N_FILE_BASE="${I18N_PKG_NAME}_${PKG_VERSION}-r1_all"
+
+if [ -n "$CORE_ARCHIVE" ]; then
+	if [ ! -f "$CORE_ARCHIVE" ]; then
+		printf 'core archive not found: %s\n' "$CORE_ARCHIVE" >&2
+		exit 1
+	fi
+	if ! tar -tzf "$CORE_ARCHIVE" 2>/dev/null | grep -qx 'oxidns'; then
+		printf 'core archive does not look like an OxiDNS release bundle (missing ./oxidns entry)\n' >&2
+		exit 1
+	fi
+fi
 
 need_cmd() {
 	command -v "$1" >/dev/null 2>&1 || {
@@ -107,6 +119,44 @@ write_rpcd_restart_script() {
 	cat > "$out" <<'EOF'
 #!/bin/sh
 [ -n "${IPKG_INSTROOT:-}" ] && exit 0
+# Keep the core binary, webui and configuration across firmware upgrades.
+if [ -f /etc/sysupgrade.conf ]; then
+	for entry in /etc/oxidns /etc/config/oxidns; do
+		grep -qxF "$entry" /etc/sysupgrade.conf 2>/dev/null || \
+			echo "$entry" >> /etc/sysupgrade.conf
+	done
+fi
+# Unpack an embedded core bundle on first install, so the package works
+# out of the box without downloading anything.
+BUNDLE="/usr/share/oxidns/core-bundle.tar.gz"
+if [ -f "$BUNDLE" ] && [ ! -x /etc/oxidns/core/oxidns ]; then
+	EXTRACT_DIR="$(mktemp -d /tmp/oxidns-core-bundle.XXXXXX)"
+	if tar -xzf "$BUNDLE" -C "$EXTRACT_DIR" 2>/dev/null && [ -f "$EXTRACT_DIR/oxidns" ]; then
+		mkdir -p /etc/oxidns/core
+		cp "$EXTRACT_DIR/oxidns" /etc/oxidns/core/oxidns
+		chmod 755 /etc/oxidns/core/oxidns
+		if [ -d "$EXTRACT_DIR/webui" ]; then
+			rm -rf /etc/oxidns/core/webui
+			cp -R "$EXTRACT_DIR/webui" /etc/oxidns/core/webui
+			mkdir -p /usr/share/oxidns
+			ln -sfn /etc/oxidns/core/webui /usr/share/oxidns/webui
+		fi
+		mkdir -p /usr/bin
+		ln -sf /etc/oxidns/core/oxidns /usr/bin/oxidns
+		rm -rf "$EXTRACT_DIR"
+		rm -f "$BUNDLE"
+	else
+		rm -rf "$EXTRACT_DIR"
+	fi
+fi
+if [ -x /etc/oxidns/core/oxidns ] && [ ! -x /usr/bin/oxidns ]; then
+	mkdir -p /usr/bin
+	ln -sf /etc/oxidns/core/oxidns /usr/bin/oxidns
+fi
+if [ -d /etc/oxidns/core/webui ] && [ ! -d /usr/share/oxidns/webui ]; then
+	mkdir -p /usr/share/oxidns
+	ln -sfn /etc/oxidns/core/webui /usr/share/oxidns/webui
+fi
 rm -f /tmp/luci-indexcache* 2>/dev/null || true
 rm -rf /tmp/luci-modulecache/* 2>/dev/null || true
 if [ -d /www/luci-static/resources/view/oxidns ]; then
@@ -165,6 +215,11 @@ if [ -d htdocs ]; then
 fi
 if [ -d root ]; then
 	cp -R root/. "$DATA_DIR/"
+fi
+
+if [ -n "$CORE_ARCHIVE" ]; then
+	mkdir -p "$DATA_DIR/usr/share/oxidns"
+	cp "$CORE_ARCHIVE" "$DATA_DIR/usr/share/oxidns/core-bundle.tar.gz"
 fi
 
 chmod 755 "$DATA_DIR/usr/libexec/rpcd/luci.oxidns"

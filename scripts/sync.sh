@@ -78,9 +78,11 @@ while IFS='|' read -r slug url branch mode payload; do
     [[ -n "$url" && -n "$branch" && -n "$mode" ]] ||
         { warn "映射表条目字段不全，跳过：$slug"; FAILED=1; continue; }
 
-    # 调试模式：只同步指定 slug
+    # 调试模式：只同步指定 slug（未选中的源沿用旧 lock 行，保证 lock 与 conf 仍然对齐）
     if [[ -n "$ONLY" && ",${ONLY// /,}," != *",$slug,"* ]]; then
         log "跳过（SUITE_SYNC_ONLY 未包含）：$slug"
+        old_line="$(grep -E "^${slug}\|" "$LOCK" 2>/dev/null | head -n 1 || true)"
+        [[ -n "$old_line" ]] && printf '%s\n' "$old_line" >> "$LOCK.new"
         continue
     fi
 

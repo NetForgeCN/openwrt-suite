@@ -29,6 +29,15 @@ if [[ -d "$ROOT/packages" ]]; then
         fi
     done
     log "packages/ 下共 $count 个包目录"
+
+    # 统计真正会被 OpenWrt 扫描到的包源目录（含包内嵌套子包，如 argon/compat、oxidns-core）
+    src_dirs="$(find -L "$ROOT/packages" -name Makefile -type f 2>/dev/null |
+        xargs grep -lE 'call (BuildPackage|BuildTarget|BuildContainer|BuildCompose|KernelPackage)' 2>/dev/null |
+        sed "s#$ROOT/packages/##; s#/Makefile\$##" | sort || true)"
+    src_count="$(printf '%s\n' "$src_dirs" | grep -c . || true)"
+    log "可被扫描的包源目录 $src_count 个（含嵌套子包）："
+    printf '%s\n' "$src_dirs" | sed 's/^/    /' | grep -v '^    $' || true
+
     ((count > 0)) || fail "packages/ 为空"
 else
     fail "缺少 packages/ 目录"

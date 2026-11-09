@@ -21,6 +21,18 @@ var callCoreReinstall = rpc.declare({
 	expect: {}
 });
 
+var callCoreUpdateCheck = rpc.declare({
+	object: 'luci.oxidns',
+	method: 'core_update_check',
+	expect: {}
+});
+
+var callCoreUpdate = rpc.declare({
+	object: 'luci.oxidns',
+	method: 'core_update',
+	expect: {}
+});
+
 var callCoreUploadInstall = rpc.declare({
 	object: 'luci.oxidns',
 	method: 'core_upload_install',
@@ -61,6 +73,60 @@ function serviceRunning(status) {
 	return !!(status && status.service_status && status.service_status.running);
 }
 
+function persistText(status) {
+	var persist = status && status.persist;
+	if (!persist || !persist.enabled)
+		return _('Disabled');
+	return persist.binary_saved ? _('Enabled') : _('Enabled (core not saved yet)');
+}
+
+function handleCheckUpdate() {
+	return L.resolveDefault(callCoreUpdateCheck(), null).then(function(result) {
+		if (!result || result.ok === false) {
+			ui.addNotification(null, renderCoreError(result || {}), 'danger');
+			return;
+		}
+
+		var rows = [
+			renderRow(_('Current version'), result.current_version),
+			renderRow(_('Latest version'), result.latest_version),
+			renderRow(_('Repository'), result.repository),
+			renderRow(_('Bundle'), result.bundle),
+			renderRow(_('Target'), result.target),
+			renderRow(_('Archive'), result.asset)
+		];
+		var buttons = [
+			E('button', {
+				'class': 'btn cbi-button cbi-button-neutral',
+				'click': function(ev) {
+					ev.preventDefault();
+					ui.hideModal();
+				}
+			}, _('Close'))
+		];
+
+		if (result.update_available) {
+			buttons.push(' ');
+			buttons.push(E('button', {
+				'class': 'btn cbi-button cbi-button-positive',
+				'click': function(ev) {
+					ev.preventDefault();
+					ui.hideModal();
+					return runCoreAction(_('Updating OxiDNS core...'), callCoreUpdate, 300);
+				}
+			}, _('Update to %s').format(result.latest_version)));
+		}
+
+		ui.showModal(_('OxiDNS Core Update'), [
+			E('p', {}, result.update_available
+				? _('A new OxiDNS core release is available.')
+				: _('The OxiDNS core is already up to date.')),
+			E('div', { 'class': 'table cbi-section-table' }, rows),
+			E('div', { 'class': 'right', 'style': 'margin-top: 1em;' }, buttons)
+		]);
+	});
+}
+
 function renderRow(label, value, id) {
 	var attrs = { 'class': 'td left' };
 	if (id)
@@ -88,6 +154,7 @@ function refreshStatus() {
 		setText('oxidns-core-bundle', core.bundle);
 		setText('oxidns-core-target', core.target);
 		setText('oxidns-core-binary', core.binary_path);
+		setText('oxidns-core-persist', persistText(statusState));
 		setText('oxidns-core-service', serviceRunning(statusState) ? _('Running') : _('Stopped'));
 		refreshActionButtons();
 	});
@@ -404,6 +471,7 @@ function actionButton(label, handler, style) {
 function actionButtons(status) {
 	if (coreInstalled(status)) {
 		return [
+			actionButton(_('Check Update'), handleCheckUpdate, 'action'),
 			actionButton(_('Repair Reinstall'), handleReinstall, 'action'),
 			actionButton(_('Upload Core'), handleUploadInstall, 'action'),
 			actionButton(_('Remove Core'), handleRemove, 'negative')
@@ -436,13 +504,14 @@ return view.extend({
 			renderRow(_('Bundle'), core.bundle, 'oxidns-core-bundle'),
 			renderRow(_('Target'), core.target, 'oxidns-core-target'),
 			renderRow(_('Binary path'), core.binary_path, 'oxidns-core-binary'),
+			renderRow(_('Persistent storage'), persistText(statusState), 'oxidns-core-persist'),
 			renderRow(_('Service status'), serviceRunning(statusState) ? _('Running') : _('Stopped'), 'oxidns-core-service')
 		];
 
 		return E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, _('OxiDNS Core')),
 			E('div', { 'class': 'cbi-map-descr' },
-				_('Install or repair the OxiDNS core binary. Runtime upgrades are handled by OxiDNS itself.')),
+				_('Install, repair or update the OxiDNS core binary. With persistent storage enabled the core is kept across firmware upgrades.')),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, _('Core Status')),
 				E('div', { 'class': 'table cbi-section-table' }, rows)
@@ -450,7 +519,7 @@ return view.extend({
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, _('Actions')),
 				E('div', { 'class': 'cbi-section-descr' },
-					_('LuCI can download the official OxiDNS release archive or install an uploaded .tar.gz archive or single oxidns binary. Future upgrades are handled by the OxiDNS core.')),
+					_('LuCI can download the official OxiDNS release archive, install an uploaded .tar.gz archive or single oxidns binary, check for new releases and update the core in place.')),
 				E('div', {
 					'id': 'oxidns-core-actions',
 					'class': 'cbi-button-row',

@@ -4,108 +4,112 @@ Language: [中文](./README.md) | English
 
 `luci-app-oxidns` is the LuCI management app for OxiDNS on OpenWrt. After installation, LuCI adds `Services -> OxiDNS` pages for installing the OxiDNS core binary, managing the OpenWrt service, editing configuration, and viewing logs.
 
-This repository provides only a simple implementation for installing and managing OxiDNS. Other developers are welcome to extend it or build alternative LuCI plugins that cover the existing functionality and offer more features.
+This is a re-implementation on top of [svenshi/luci-app-oxidns](https://github.com/svenshi/luci-app-oxidns) that fills in three missing capabilities. Licensed under GPL-3.0-or-later.
 
-## What To Install
+## Differences From Upstream
 
-- `luci-app-oxidns`: LuCI pages, rpcd backend, and OpenWrt init service script.
-- `luci-i18n-oxidns-zh-cn`: optional Simplified Chinese translation package.
+| Capability | Upstream | This repository |
+|---|---|---|
+| Core binary location | `/usr/bin/oxidns`, lost on firmware upgrade | `/etc/oxidns/core/oxidns` (persistent), runtime path is a symlink |
+| Configuration file | lost by default on sysupgrade | added to `/etc/sysupgrade.conf`, kept when "keep settings" is checked |
+| Recovery after sysupgrade | re-download core, re-paste config | symlinks auto-rebuilt; reinstall the package once and it works |
+| Core upgrades | no LuCI entry, must use the core's own WebUI/API | `Check Update` button on the `Core` page |
+| Logs | plain listing | keyword filter plus `plugin` / `qtype` / `rcode` field filters |
+| Low-flash devices | — | persistence can be disabled in `Settings` |
 
-## Install The LuCI App
+## Building From Source
 
-On OpenWrt, the recommended path is the official one-command installer. Run it as root:
-
-```sh
-curl -fsSL https://oxidns.org/install.sh | sh
-```
-
-If `curl` is not installed, use `wget`:
-
-```sh
-wget -O- https://oxidns.org/install.sh | sh
-```
-
-The script detects the OpenWrt package manager, reads the latest package from `luci-app-oxidns` Releases, selects `.ipk` or `.apk` for the system, installs `luci-app-oxidns` plus the optional Simplified Chinese translation package, and restarts `rpcd`. See <https://oxidns.org/openwrt> for more script options.
-
-You can also download the LuCI release artifact and install it manually:
+### Option 1: OpenWrt buildroot / SDK (recommended, can be baked into firmware)
 
 ```sh
-opkg install ./luci-app-oxidns_0.1.0-r1_all.ipk
-opkg install ./luci-i18n-oxidns-zh-cn_0.1.0-r1_all.ipk
+# 1. Prepare an OpenWrt build environment matching your target firmware
+git clone https://github.com/openwrt/openwrt.git
+cd openwrt
+./scripts/feeds update -a
+./scripts/feeds install -a
+
+# 2. Clone this repository as a package (includes the oxidns-core subpackage)
+git clone https://github.com/NetForgeCN/luci-app-oxidns.git package/luci-app-oxidns
+
+# 3. Select it in menuconfig (LuCI -> Applications -> luci-app-oxidns, plus Network -> DNS -> oxidns-core)
+make menuconfig
+
+# 4. Build
+make package/luci-app-oxidns/compile V=s
 ```
 
-On OpenWrt systems using `apk`:
+**Bundled core**: the repository ships an `oxidns-core` subpackage that `luci-app-oxidns` depends on in buildroot. At compile time it downloads the official OxiDNS release for the target architecture (URL and SHA256 pinned in `oxidns-core/Makefile`) and bakes the binary, webui and default config into the firmware/ipk. The installed system **has a working core out of the box** — no first-run download needed. Runtime updates via the LuCI `Check Update` button are not limited to the pinned version. Supported architectures: x86_64, aarch64, i386 (i686 binary), ARM hard-float (cortex → armv7, others → armv6). For unsupported architectures (e.g. MIPS), build `luci-app-oxidns` without `oxidns-core` and install the core from the LuCI page instead.
+
+Artifacts land in `bin/packages/<arch>/`: `oxidns-core_*.ipk`, `luci-app-oxidns_*.ipk` and `luci-i18n-oxidns-zh-cn_*.ipk`. Selecting `<*>` in menuconfig bakes the plugin and the core directly into the firmware image.
+
+### Option 2: Quick packaging without the SDK
+
+Requires `node`, `tar`, `gzip`, `sha256sum`:
 
 ```sh
-apk add --allow-untrusted --no-network ./luci-app-oxidns_0.1.0-r1_all.apk
-apk add --allow-untrusted --no-network ./luci-i18n-oxidns-zh-cn_0.1.0-r1_all.apk
+git clone https://github.com/NetForgeCN/luci-app-oxidns.git
+cd luci-app-oxidns
+
+# Plain package (core downloaded from the LuCI page after install)
+./scripts/build-luci-package.sh 0.2.0 dist
+
+# Package with an embedded core (works out of the box on the matching arch)
+curl -LO https://github.com/svenshi/oxidns/releases/download/v1.6.1/oxidns-x86_64-unknown-linux-musl.tar.gz
+./scripts/build-luci-package.sh 0.2.0 dist-embedded oxidns-x86_64-unknown-linux-musl.tar.gz
 ```
 
-If the menu does not appear after installation, restart `rpcd`:
+When embedding a core, pick the release asset matching the router CPU (x86_64 / aarch64 / armv7 / i686). postinst unpacks it into `/etc/oxidns/core` on install and creates the symlinks.
+
+### Install On The Router
 
 ```sh
-/etc/init.d/rpcd restart
+opkg install luci-app-oxidns_0.2.0-r1_all.ipk
+opkg install luci-i18n-oxidns-zh-cn_0.2.0-r1_all.ipk
+# or on apk-based OpenWrt:
+apk add --allow-untrusted ./luci-app-oxidns_0.2.0-r1_all.apk
 ```
 
-Then open LuCI: `Services -> OxiDNS`.
+Then open LuCI → `Services -> OxiDNS`:
 
-## Install OxiDNS Core
+1. `Core` page → `Install Core` (auto-selects the release for your CPU architecture and verifies SHA256; use `Upload Core` offline);
+2. `Configuration` page → paste/edit `config.yaml` → `Save & Restart`;
+3. `Overview` page → `Start` + `Start on boot`.
 
-If you are migrating from the old OpenWrt `oxidns` package model, stop the service and remove the old runtime package first so it no longer owns `/usr/bin/oxidns` or `/etc/init.d/oxidns`:
+## Behavior After Installing The Build
 
-```sh
-/etc/init.d/oxidns stop
-opkg remove oxidns
-```
+- **Bundled core (build time)**: buildroot builds embed the official core via the `oxidns-core` subpackage; quick packaging embeds one when a core archive is passed as the third argument. The system has DNS capability right after install — no first-run download.
+- **Persistent core**: the binary and webui live in `/etc/oxidns/core/` on the persistent partition; runtime paths are symlinks. They survive a sysupgrade with "keep settings".
+- **Persistent configuration**: `/etc/oxidns` and `/etc/config/oxidns` are appended to `/etc/sysupgrade.conf` on install.
+- **Boot self-healing**: init script, rpcd status and package postinst all recreate missing symlinks from the persistent copy. After a firmware upgrade, reinstalling the package once brings the service back — no re-download, no re-pasting.
+- **LuCI core updates**: `Check Update` compares the installed version with the latest GitHub release and updates in place (with SHA256 verification).
+- **Log filtering**: keyword filter plus `plugin` / `qtype` / `rcode` dropdowns with a live line counter.
 
-On systems using `apk`, run:
+## Firmware Upgrade Steps
 
-```sh
-/etc/init.d/oxidns stop
-apk del oxidns
-```
+1. LuCI → System → Backup / Flash Firmware, check **"keep settings"**;
+2. Flash the new firmware;
+3. Reinstall this package once (the plugin's own files are wiped by sysupgrade — that is how OpenWrt works);
+4. Done. postinst rebuilds the core symlinks automatically; configuration is preserved.
 
-1. Open `Services -> OxiDNS -> Settings` and confirm `Core repository` is `svenshi/oxidns` and `Core bundle` is `full`.
-2. Open `Services -> OxiDNS -> Core` and click `Install Core`. For offline installs, click `Upload Core` to upload an official `.tar.gz` archive or a single `oxidns` binary.
-3. After installation succeeds, use `Overview` to start and enable the service.
-
-LuCI selects the OxiDNS Linux musl release archive for the current CPU architecture, such as `oxidns-x86_64-unknown-linux-musl.tar.gz`. The GitHub release asset SHA256 digest is verified before installation.
-
-When the core is already installed, the `Core` page offers `Repair Reinstall` and `Upload Core`, which repair the binary or WebUI files by downloading the current installed version again or using an uploaded file. It does not install latest and is not an upgrade entry point.
-
-## Main Pages
-
-- `Overview`: core, service, WebUI entry, config path, and log status.
-- `Core`: install, upload install, repair reinstall, or remove the OxiDNS core binary.
-- `Configuration`: view, save, and validate the config file.
-- `Logs`: view runtime logs with refresh and pause controls.
-- `Settings`: configure core repository, bundle, proxy, config path, and working directory.
+Without "keep settings", everything is wiped — that is the OpenWrt mechanism itself.
 
 ## Default Paths
 
-- Binary: `/usr/bin/oxidns`
-- WebUI: `/usr/share/oxidns/webui`
+- Binary (runtime): `/usr/bin/oxidns` (symlink)
+- Binary (persistent): `/etc/oxidns/core/oxidns`
+- WebUI (runtime): `/usr/share/oxidns/webui` (symlink)
+- WebUI (persistent): `/etc/oxidns/core/webui`
 - Config: `/etc/oxidns/config.yaml`
-- Working directory: `/var/lib/oxidns`
+- Working directory: `/var/lib/oxidns` (tmpfs, runtime only)
 - Init script: `/etc/init.d/oxidns`
-
-## Upgrade And Remove
-
-To upgrade the OxiDNS core, use the upgrade feature built into OxiDNS itself, such as the core WebUI / API / CLI upgrade flow. LuCI does not provide a core-upgrade entry point.
-
-To upgrade the LuCI app, download and install the newer `luci-app-oxidns` package. The LuCI UI does not provide self-upgrade.
-
-To remove the OxiDNS core, click `Remove Core` on the LuCI `Core` page. This stops and disables the service, removes `/usr/bin/oxidns` and `/usr/share/oxidns/webui`, and preserves `/etc/oxidns/config.yaml` and `/var/lib/oxidns`.
-
-## Private Repositories And Downloads
-
-The router must be able to reach GitHub Releases and release archives directly. For private repositories or restricted networks, configure a GitHub token or download proxy in `Settings`. Token and proxy values are never shown again after saving; use the matching clear option to remove them. A configured download proxy requires `curl`; otherwise LuCI returns a clear error. You can also use `Upload Core` on the `Core` page to install an archive or binary offline.
 
 ## Known Limitations
 
-- Only published OxiDNS Linux musl release targets are supported.
-- The `Core` page handles first install, upload install, and repair reinstall only, not version upgrades.
-- The `Overview` WebUI entry is generated from the HTTP listen address in the config file. If it listens on `127.0.0.1`, LuCI keeps the link and shows a hint that local access or an SSH tunnel is required.
-- The log page reads OxiDNS service stdout/stderr output from OpenWrt `logread`.
-- `Settings` includes a "Write to system log" switch, enabled by default. OxiDNS must be restarted after saving a change. LuCI stops the service, waits up to 10 seconds for the old procd instance to be removed, and then starts a new instance so the stdout/stderr settings are applied. A failed state query or stop timeout aborts the restart. The same stop wait is used before replacing a running core.
-- Service actions on `Overview` (Start / Stop / Restart / Enable / Disable) always write a `luci-app-oxidns` tagged audit record to the system log, including the action and whether it succeeded. It is written even when the core is not installed, the init script is missing, or the action fails. These records are visible in raw `logread` output and in the LuCI system log page; they do not appear on the OxiDNS log page, which only renders `oxidns[PID]:` output from the core.
+- Only published Linux musl release targets of OxiDNS are supported.
+- Low-flash devices (less free overlay space than the core bundle) should disable `Persist core across upgrades` in `Settings`.
+- The `Overview` WebUI entry is generated from the HTTP listen address; `127.0.0.1` requires local access or an SSH tunnel.
+- Private core repositories or restricted networks can use a GitHub token or download proxy in `Settings` (requires `curl`).
+
+## License
+
+GPL-3.0-or-later. Based on [svenshi/luci-app-oxidns](https://github.com/svenshi/luci-app-oxidns) and [svenshi/oxidns](https://github.com/svenshi/oxidns). Thanks to the original author.

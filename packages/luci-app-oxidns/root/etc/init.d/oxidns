@@ -7,6 +7,10 @@ STOP=10
 PROG="/usr/bin/oxidns"
 DEFAULT_CONFIG_PATH="/etc/oxidns/config.yaml"
 DEFAULT_WORKING_DIR="/var/lib/oxidns"
+PERSIST_DIR="/etc/oxidns/core"
+PERSIST_BIN="$PERSIST_DIR/oxidns"
+PERSIST_WEBUI="$PERSIST_DIR/webui"
+WEBUI_DIR="/usr/share/oxidns/webui"
 
 load_oxidns_settings() {
 	config_load oxidns
@@ -15,8 +19,28 @@ load_oxidns_settings() {
 	config_get_bool LOG_SYSLOG main log_syslog 1
 }
 
+# Boot self-heal: the persistent copy of the core survives firmware upgrades
+# (via /etc/sysupgrade.conf). Recreate the runtime symlinks when they are
+# missing or dangling, so a reinstall of the LuCI package after an upgrade is
+# enough to bring the DNS service back without re-downloading anything.
+restore_core_links() {
+	if [ -x "$PERSIST_BIN" ]; then
+		if [ ! -x "$PROG" ]; then
+			mkdir -p "$(dirname "$PROG")"
+			ln -sf "$PERSIST_BIN" "$PROG"
+		fi
+	fi
+	if [ -d "$PERSIST_WEBUI" ]; then
+		if [ ! -d "$WEBUI_DIR" ]; then
+			mkdir -p "$(dirname "$WEBUI_DIR")"
+			ln -sfn "$PERSIST_WEBUI" "$WEBUI_DIR"
+		fi
+	fi
+}
+
 start_service() {
 	load_oxidns_settings
+	restore_core_links
 
 	if [ ! -x "$PROG" ]; then
 		echo "oxidns binary not found or not executable: $PROG" >&2

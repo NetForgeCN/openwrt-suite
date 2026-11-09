@@ -6,6 +6,9 @@ UCI_PACKAGE="oxidns"
 UCI_SECTION="main"
 OXIDNS_BIN="/usr/bin/oxidns"
 WEBUI_DIR="/usr/share/oxidns/webui"
+PERSIST_DIR="/etc/oxidns/core"
+PERSIST_BIN="$PERSIST_DIR/oxidns"
+PERSIST_WEBUI="$PERSIST_DIR/webui"
 TARGETS_FILE="${OXIDNS_TARGETS_FILE:-/usr/share/oxidns/targets.json}"
 DEFAULT_CONFIG_PATH="/etc/oxidns/config.yaml"
 DEFAULT_WORKING_DIR="/var/lib/oxidns"
@@ -25,6 +28,7 @@ SERVICE_NAME="$DEFAULT_SERVICE_NAME"
 CORE_REPOSITORY="$DEFAULT_CORE_REPOSITORY"
 CORE_BUNDLE="$DEFAULT_CORE_BUNDLE"
 LOG_SYSLOG=1
+PERSIST_CORE=1
 DOWNLOAD_PROXY=""
 GITHUB_TOKEN=""
 DOWNLOAD_ERROR=""
@@ -281,12 +285,31 @@ load_settings() {
 		0|off|false|no) LOG_SYSLOG=0 ;;
 		*) LOG_SYSLOG=1 ;;
 	esac
+	PERSIST_CORE="$(uci_get persist_core 1)"
+	case "$PERSIST_CORE" in
+		0|off|false|no) PERSIST_CORE=0 ;;
+		*) PERSIST_CORE=1 ;;
+	esac
 	DOWNLOAD_PROXY="$(uci_get download_proxy '')"
 	GITHUB_TOKEN="$(uci_get github_token '')"
 }
 
 init_script() {
 	printf '/etc/init.d/%s' "$SERVICE_NAME"
+}
+
+# Boot self-heal companion for rpcd: when the persistent copy of the core
+# exists (it survives firmware upgrades via /etc/sysupgrade.conf) but the
+# runtime symlinks are gone, recreate them so status/start just works.
+ensure_core_links() {
+	if [ -x "$PERSIST_BIN" ] && [ ! -x "$OXIDNS_BIN" ]; then
+		mkdir -p "$(dirname "$OXIDNS_BIN")" 2>/dev/null || true
+		ln -sf "$PERSIST_BIN" "$OXIDNS_BIN" 2>/dev/null || true
+	fi
+	if [ -d "$PERSIST_WEBUI" ] && [ ! -d "$WEBUI_DIR" ]; then
+		mkdir -p "$(dirname "$WEBUI_DIR")" 2>/dev/null || true
+		ln -sfn "$PERSIST_WEBUI" "$WEBUI_DIR" 2>/dev/null || true
+	fi
 }
 
 service_enabled() {
@@ -460,6 +483,7 @@ detect_rust_target() {
 
 emit_status() {
 	load_settings
+	ensure_core_links
 	ENABLED=0
 	RUNNING=0
 	CORE_INSTALLED=0
@@ -520,6 +544,19 @@ emit_status() {
 	json_bool "$WEBUI_WILDCARD"
 	printf ',"path":'
 	json_string "$WEBUI_DIR"
+	printf '}'
+	printf ',"persist":{"enabled":'
+	json_bool "$PERSIST_CORE"
+	printf ',"core_dir":'
+	json_string "$PERSIST_DIR"
+	printf ',"binary":'
+	json_string "$PERSIST_BIN"
+	printf ',"webui":'
+	json_string "$PERSIST_WEBUI"
+	printf ',"binary_saved":'
+	if [ -x "$PERSIST_BIN" ]; then json_bool 1; else json_bool 0; fi
+	printf ',"webui_saved":'
+	if [ -d "$PERSIST_WEBUI" ]; then json_bool 1; else json_bool 0; fi
 	printf '}'
 	printf ',"build":'
 	if printf '%s' "$BUILD_JSON" | grep -q '^{'; then
@@ -680,6 +717,8 @@ emit_settings_read() {
 	json_field_string working_dir "$WORKING_DIR"
 	printf ',"log_syslog":'
 	json_bool "$LOG_SYSLOG"
+	printf ',"persist_core":'
+	json_bool "$PERSIST_CORE"
 	printf ','
 	json_field_string download_proxy "$DOWNLOAD_PROXY"
 	printf ','
@@ -733,6 +772,17 @@ emit_settings_save() {
 				;;
 		esac
 	fi
+	PERSIST_CORE_VALUE="$PERSIST_CORE"
+	if input_has_key persist_core "$INPUT"; then
+		PERSIST_CORE_VALUE="$(input_value persist_core "$INPUT")"
+		case "$PERSIST_CORE_VALUE" in
+			0|1) ;;
+			*)
+				json_error "invalid_persist_core" "persist_core must be 0 or 1"
+				return 1
+				;;
+		esac
+	fi
 
 	case "$REPOSITORY_VALUE" in
 		*/*) ;;
@@ -768,6 +818,7 @@ emit_settings_save() {
 	uci -q set "oxidns.main.config_path=$CONFIG_VALUE"
 	uci -q set "oxidns.main.working_dir=$WORKING_VALUE"
 	uci -q set "oxidns.main.log_syslog=$LOG_SYSLOG_VALUE"
+	uci -q set "oxidns.main.persist_core=$PERSIST_CORE_VALUE"
 	uci -q delete oxidns.main.api_base_url >/dev/null 2>&1 || true
 	uci -q delete oxidns.main.install_mode >/dev/null 2>&1 || true
 	uci -q delete oxidns.main.service_name >/dev/null 2>&1 || true
@@ -1448,6 +1499,60 @@ core_install_error() {
 	return 1
 }
 
+# Install the unpacked core binary and webui. With persistence enabled the
+# files live under /etc/oxidns/core (kept across sysupgrade via
+# /etc/sysupgrade.conf) and the runtime paths become symlinks into the
+# persistent area. Sets CORE_WEBUI_INSTALLED to 1 when webui files were laid
+# down. Requires CORE_TMP_DIR to point at the caller's temp directory.
+install_core_files() {
+	UNPACK_DIR="$1"
+	CORE_WEBUI_INSTALLED=0
+
+	if [ "$PERSIST_CORE" = "1" ]; then
+		core_progress_command "install -m 755 $UNPACK_DIR/oxidns $PERSIST_BIN"
+		mkdir -p "$PERSIST_DIR" "$WORKING_DIR"
+		cp "$UNPACK_DIR/oxidns" "$CORE_TMP_DIR/oxidns.new"
+		chmod 755 "$CORE_TMP_DIR/oxidns.new"
+		mv "$CORE_TMP_DIR/oxidns.new" "$PERSIST_BIN"
+
+		core_progress_command "ln -sf $PERSIST_BIN $OXIDNS_BIN"
+		mkdir -p "$(dirname "$OXIDNS_BIN")"
+		ln -sf "$PERSIST_BIN" "$OXIDNS_BIN"
+
+		if [ -d "$UNPACK_DIR/webui" ]; then
+			core_progress_command "copy webui files to $PERSIST_WEBUI"
+			WEBUI_TMP="$CORE_TMP_DIR/webui.new"
+			rm -rf "$WEBUI_TMP"
+			mkdir -p "$WEBUI_TMP"
+			cp -R "$UNPACK_DIR/webui/." "$WEBUI_TMP/"
+			rm -rf "$PERSIST_WEBUI"
+			mv "$WEBUI_TMP" "$PERSIST_WEBUI"
+
+			core_progress_command "ln -sfn $PERSIST_WEBUI $WEBUI_DIR"
+			mkdir -p "$(dirname "$WEBUI_DIR")"
+			ln -sfn "$PERSIST_WEBUI" "$WEBUI_DIR"
+			CORE_WEBUI_INSTALLED=1
+		fi
+	else
+		core_progress_command "install -m 755 $UNPACK_DIR/oxidns $OXIDNS_BIN"
+		mkdir -p "$(dirname "$OXIDNS_BIN")" "$WORKING_DIR"
+		cp "$UNPACK_DIR/oxidns" "$CORE_TMP_DIR/oxidns.new"
+		chmod 755 "$CORE_TMP_DIR/oxidns.new"
+		mv "$CORE_TMP_DIR/oxidns.new" "$OXIDNS_BIN"
+
+		if [ -d "$UNPACK_DIR/webui" ]; then
+			core_progress_command "copy webui files to $WEBUI_DIR"
+			WEBUI_TMP="$CORE_TMP_DIR/webui.new"
+			rm -rf "$WEBUI_TMP"
+			mkdir -p "$(dirname "$WEBUI_DIR")" "$WEBUI_TMP"
+			cp -R "$UNPACK_DIR/webui/." "$WEBUI_TMP/"
+			rm -rf "$WEBUI_DIR"
+			mv "$WEBUI_TMP" "$WEBUI_DIR"
+			CORE_WEBUI_INSTALLED=1
+		fi
+	fi
+}
+
 install_core_from_release() {
 	ACTION="$1"
 	RELEASE_TARGET="$2"
@@ -1573,21 +1678,8 @@ install_core_from_release() {
 		rm -f "$SERVICE_OUT"
 	fi
 
-	core_progress_command "install -m 755 $UNPACK_DIR/oxidns $OXIDNS_BIN"
-	mkdir -p "$(dirname "$OXIDNS_BIN")" "$WORKING_DIR"
-	cp "$UNPACK_DIR/oxidns" "$CORE_TMP_DIR/oxidns.new"
-	chmod 755 "$CORE_TMP_DIR/oxidns.new"
-	mv "$CORE_TMP_DIR/oxidns.new" "$OXIDNS_BIN"
-
-	if [ -d "$UNPACK_DIR/webui" ]; then
-		core_progress_command "copy webui files to $WEBUI_DIR"
-		WEBUI_TMP="$CORE_TMP_DIR/webui.new"
-		rm -rf "$WEBUI_TMP"
-		mkdir -p "$(dirname "$WEBUI_DIR")" "$WEBUI_TMP"
-		cp -R "$UNPACK_DIR/webui/." "$WEBUI_TMP/"
-		rm -rf "$WEBUI_DIR"
-		mv "$WEBUI_TMP" "$WEBUI_DIR"
-	fi
+	core_progress_command "install core files"
+	install_core_files "$UNPACK_DIR"
 
 	if [ -n "$CONFIG_TMP" ]; then
 		core_progress_command "install default config to $CONFIG_PATH"
@@ -1682,6 +1774,94 @@ emit_core_reinstall() {
 	run_with_core_lock emit_core_reinstall_locked
 }
 
+emit_core_update_check() {
+	load_settings
+	require_download_transport || return 1
+
+	case "$CORE_REPOSITORY" in
+		*/*) ;;
+		*)
+			json_error "invalid_core_repository" "core_repository must use owner/repo format"
+			return 1
+			;;
+	esac
+
+	BUILD_JSON="$(build_info_json)"
+	CURRENT_VERSION="$(json_value_from_string version "$BUILD_JSON")"
+	if [ -z "$CURRENT_VERSION" ]; then
+		json_error "core_not_installed" "OxiDNS core is not installed or cannot report its version"
+		return 1
+	fi
+
+	if ! RUST_TARGET="$(detect_rust_target 2>/dev/null)"; then
+		json_error "unsupported_target" "current CPU architecture does not match a published OxiDNS Linux musl release"
+		return 1
+	fi
+	if ! ASSET_NAME="$(asset_name_for_bundle "$CORE_BUNDLE" "$RUST_TARGET")"; then
+		json_error "unsupported_core_bundle" "core bundle must be one of full, standard, minimal"
+		return 1
+	fi
+
+	RELEASE_URL="$(release_api_url "$CORE_REPOSITORY" latest)"
+	RELEASE_FILE="$(mktemp "$TMP_ROOT/oxidns-update-check.XXXXXX")"
+	if ! download_file "$RELEASE_URL" "$RELEASE_FILE"; then
+		rm -f "$RELEASE_FILE"
+		json_detailed_error "release_fetch_failed" "failed to fetch OxiDNS release metadata" "download_metadata" "repository=$CORE_REPOSITORY url=$RELEASE_URL; ${DOWNLOAD_ERROR:-unknown download error}"
+		return 1
+	fi
+	set +e
+	select_release_asset "$RELEASE_FILE" "$ASSET_NAME"
+	SELECT_RC="$?"
+	set -e
+	rm -f "$RELEASE_FILE"
+	if [ "$SELECT_RC" -ne 0 ]; then
+		json_detailed_error "release_asset_not_found" "latest release does not contain the required archive" "select_release_asset" "wanted asset=$ASSET_NAME repository=$CORE_REPOSITORY"
+		return 1
+	fi
+
+	LATEST_VERSION="$(version_tag "$SELECT_TAG")"
+	CURRENT_TAG="$(version_tag "$CURRENT_VERSION")"
+	UPDATE_AVAILABLE=0
+	if [ "$LATEST_VERSION" != "$CURRENT_TAG" ]; then
+		UPDATE_AVAILABLE=1
+	fi
+
+	printf '{"ok":true'
+	printf ',"current_version":'
+	json_string "$CURRENT_VERSION"
+	printf ',"latest_version":'
+	json_string "$LATEST_VERSION"
+	printf ',"update_available":'
+	json_bool "$UPDATE_AVAILABLE"
+	printf ',"repository":'
+	json_string "$CORE_REPOSITORY"
+	printf ',"bundle":'
+	json_string "$CORE_BUNDLE"
+	printf ',"target":'
+	json_string "$RUST_TARGET"
+	printf ',"asset":'
+	json_string "$SELECT_ASSET_NAME"
+	printf ',"asset_size":'
+	json_string "$SELECT_SIZE"
+	printf '}\n'
+}
+
+emit_core_update_locked() {
+	load_settings
+	core_progress_reset "update OxiDNS core"
+	if [ ! -x "$OXIDNS_BIN" ]; then
+		core_progress_log "error" "core is not installed"
+		json_error "core_not_installed" "OxiDNS core is not installed; use install instead of update"
+		return 1
+	fi
+	core_progress_log "info" "updating OxiDNS core to latest release"
+	install_core_from_release update latest "$CORE_BUNDLE"
+}
+
+emit_core_update() {
+	run_with_core_lock emit_core_update_locked
+}
+
 upload_core_error() {
 	ERROR_CODE="$1"
 	ERROR_MESSAGE="$2"
@@ -1769,22 +1949,9 @@ install_uploaded_core_from_unpack() {
 		rm -f "$SERVICE_OUT"
 	fi
 
-	core_progress_command "install -m 755 $UNPACK_DIR/oxidns $OXIDNS_BIN"
-	mkdir -p "$(dirname "$OXIDNS_BIN")" "$WORKING_DIR"
-	cp "$UNPACK_DIR/oxidns" "$CORE_TMP_DIR/oxidns.new"
-	chmod 755 "$CORE_TMP_DIR/oxidns.new"
-	mv "$CORE_TMP_DIR/oxidns.new" "$OXIDNS_BIN"
-
-	if [ -d "$UNPACK_DIR/webui" ]; then
-		core_progress_command "copy webui files to $WEBUI_DIR"
-		WEBUI_TMP="$CORE_TMP_DIR/webui.new"
-		rm -rf "$WEBUI_TMP"
-		mkdir -p "$(dirname "$WEBUI_DIR")" "$WEBUI_TMP"
-		cp -R "$UNPACK_DIR/webui/." "$WEBUI_TMP/"
-		rm -rf "$WEBUI_DIR"
-		mv "$WEBUI_TMP" "$WEBUI_DIR"
-		HAS_WEBUI=1
-	fi
+	core_progress_command "install core files"
+	install_core_files "$UNPACK_DIR"
+	HAS_WEBUI="$CORE_WEBUI_INSTALLED"
 
 	if [ -n "$CONFIG_TMP" ]; then
 		core_progress_command "install default config to $CONFIG_PATH"
@@ -1941,6 +2108,8 @@ emit_core_remove_locked() {
 	rm -f "$OXIDNS_BIN"
 	core_progress_command "rm -rf $WEBUI_DIR"
 	rm -rf "$WEBUI_DIR"
+	core_progress_command "rm -rf $PERSIST_DIR"
+	rm -rf "$PERSIST_DIR"
 
 	if [ "$REMOVE_CONFIG" = "1" ]; then
 		core_progress_command "rm -f $CONFIG_PATH"
@@ -1987,6 +2156,8 @@ case "${1:-}" in
 		printf '"status":{},'
 		printf '"core_install":{},'
 		printf '"core_reinstall":{},'
+		printf '"core_update_check":{},'
+		printf '"core_update":{},'
 		printf '"core_upload_install":{"path":"string"},'
 		printf '"core_progress":{},'
 		printf '"core_remove":{"remove_config":"boolean","remove_workdir":"boolean"},'
@@ -1999,7 +2170,7 @@ case "${1:-}" in
 		printf '"config_validate":{"content":"string"},'
 		printf '"config_save":{"content":"string","base_mtime":"string","restart":"boolean"},'
 		printf '"settings_read":{},'
-		printf '"settings_save":{"core_repository":"string","core_bundle":"string","config_path":"string","working_dir":"string","download_proxy":"string","github_token":"string","clear_download_proxy":"boolean","clear_github_token":"boolean","log_syslog":"string"},'
+		printf '"settings_save":{"core_repository":"string","core_bundle":"string","config_path":"string","working_dir":"string","download_proxy":"string","github_token":"string","clear_download_proxy":"boolean","clear_github_token":"boolean","log_syslog":"string","persist_core":"string"},'
 		printf '"logs_recent":{"limit":"number"}'
 		printf '}\n'
 		;;
@@ -2013,6 +2184,12 @@ case "${1:-}" in
 				;;
 			core_reinstall)
 				emit_core_reinstall
+				;;
+			core_update_check)
+				emit_core_update_check
+				;;
+			core_update)
+				emit_core_update
 				;;
 			core_upload_install)
 				emit_core_upload_install
