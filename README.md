@@ -59,7 +59,8 @@ bash openwrt-suite/build/compile.sh
 | Sound | airplay2 |
 
 > 自己的配置改动只留在本地 `.config`，不会被覆盖；想强制回到仓库快照版本时用
-> `REFRESH_CONFIG=1`（旧配置会自动备份）。
+> `REFRESH_CONFIG=1`（旧配置会自动备份）。想临时试另一份配置（比如对比测试），
+> 用 `CONFIG_URL=<url>` 指定，仅当次生效、不改变快照。
 
 ### 方式一（等价的手工版）
 

@@ -34,7 +34,11 @@ WORKDIR="${WORKDIR:-${HOME}/openwrt}"
 OPENWRT_REPO="${OPENWRT_REPO:-https://github.com/openwrt/openwrt.git}"
 SUITE_REPO="${SUITE_REPO:-https://github.com/NetForgeCN/openwrt-suite.git}"
 SUITE_DIR="${SUITE_DIR:-${WORKDIR}/suite}"
+CONFIG_URL="${CONFIG_URL:-}"                # 留空 = 用 suite 仓库的 config/dot.config 快照；
+                                             # 非空 = 从该 URL 下载 .config（临时覆盖快照）
 GO_AMD64_LEVEL="${GO_AMD64_LEVEL:-v3}"     # GOAMD64 微架构级别：v1/v2/v3/v4
+RUST_MAKEFILE="${RUST_MAKEFILE:-feeds/packages/lang/rust/Makefile}"
+GOLANG_VALUES="${GOLANG_VALUES:-feeds/packages/lang/golang/golang-values.mk}"
 TARGET_SUBDIR="${TARGET_SUBDIR:-x86}"
 KERNEL_CONFIG="${KERNEL_CONFIG:-}"          # 留空则自动探测 target/linux/<TARGET>/config-<ver>
 JOBS="${JOBS:-}"                            # 留空则自动探测 CPU 核心数
@@ -325,7 +329,10 @@ verify_feed_priority() {
 
 feed_patches() {
     log "应用官方 packages feed 补丁（Rust LLVM / Golang GO_AMD64）"
-    GO_AMD64_LEVEL="$GO_AMD64_LEVEL" bash "$SUITE_DIR/diy/01-feed-patches.sh" "$WORKDIR" ||
+    GO_AMD64_LEVEL="$GO_AMD64_LEVEL" \
+        RUST_MAKEFILE="$RUST_MAKEFILE" \
+        GOLANG_VALUES="$GOLANG_VALUES" \
+        bash "$SUITE_DIR/diy/01-feed-patches.sh" "$WORKDIR" ||
         die "feed 补丁应用失败"
 }
 
@@ -334,15 +341,28 @@ feed_patches() {
 # ---------------------------------------------------------------------------
 
 prepare_config() {
-    log "准备固件配置文件 .config（来自 suite 仓库：${SUITE_DIR}/config/dot.config）"
+    local suite_cfg="$SUITE_DIR/config/dot.config" dl_dir=""
 
-    local suite_cfg="$SUITE_DIR/config/dot.config"
-    [[ -s "$suite_cfg" ]] || die "suite 仓库缺少 config/dot.config"
+    if [[ -n "$CONFIG_URL" ]]; then
+        log "CONFIG_URL 已指定，从网络获取 .config：${CONFIG_URL}"
+        dl_dir="$(mktemp -d "${TMPDIR:-/tmp}/openwrt-config.XXXXXX")"
+        if ! curl -fL --retry 3 --retry-delay 2 --connect-timeout 15 \
+            "$CONFIG_URL" -o "$dl_dir/config"; then
+            rm -rf -- "$dl_dir"
+            die "下载远程 .config 失败：$CONFIG_URL"
+        fi
+        suite_cfg="$dl_dir/config"
+        [[ -s "$suite_cfg" ]] || { rm -rf -- "$dl_dir"; die "下载的 .config 为空"; }
+    else
+        log "准备固件配置文件 .config（来自 suite 仓库：${suite_cfg}）"
+        [[ -s "$suite_cfg" ]] || die "suite 仓库缺少 config/dot.config（可用 CONFIG_URL 指定远程配置）"
+    fi
+
     grep -qE '^(CONFIG_|# CONFIG_)' "$suite_cfg" ||
-        die "suite 仓库的 config/dot.config 未检测到有效的 Kconfig 配置项"
+        { rm -rf -- "$dl_dir"; die "待写入的 .config 未检测到有效的 Kconfig 配置项"; }
 
     if [[ -f .config && "$REFRESH_CONFIG" != "1" ]]; then
-        log "检测到已有 .config，保留现有配置（如需用 suite 快照覆盖请设置 REFRESH_CONFIG=1）"
+        log "检测到已有 .config，保留现有配置（如需用快照覆盖请设置 REFRESH_CONFIG=1）"
     else
         if [[ -f .config && "$REFRESH_CONFIG" == "1" ]]; then
             local backup=".config.bak.$(date '+%Y%m%d-%H%M%S')"
@@ -351,8 +371,9 @@ prepare_config() {
         fi
 
         cp -f -- "$suite_cfg" .config
-        log "已从 suite 快照写入 .config（$(wc -l < .config | tr -d ' ') 行）"
+        log "已写入 .config（$(wc -l < .config | tr -d ' ') 行，来源：$([[ -n "$CONFIG_URL" ]] && echo "$CONFIG_URL" || echo "suite 快照")）"
     fi
+    rm -rf -- "$dl_dir"
 
     log "执行 make defconfig"
     make defconfig
@@ -471,9 +492,12 @@ OpenWrt 一键构建脚本（openwrt-suite 单源版）
   OPENWRT_REPO      OpenWrt 主仓库地址
   SUITE_REPO        openwrt-suite 聚合仓库地址（第三方包 + .config 的唯一来源）
   SUITE_DIR         suite 本地克隆位置（默认 $WORKDIR/suite）
+  CONFIG_URL        非空则从该 URL 下载 .config（临时覆盖 suite 快照，如试配置用）
   TARGET_SUBDIR     target/linux 下的子目录（默认 x86）
   KERNEL_CONFIG     手动指定内核配置文件路径（默认自动探测最新版本）
   GO_AMD64_LEVEL    GOAMD64 微架构级别（默认 v3，可选 v1/v2/v3/v4）
+  RUST_MAKEFILE     Rust Makefile 路径（默认 feeds/packages/lang/rust/Makefile）
+  GOLANG_VALUES     golang-values.mk 路径（默认 feeds/packages/lang/golang/golang-values.mk）
   JOBS              并行任务数
   SKIP_UPDATE=1     跳过主仓库与 suite 仓库更新
   SKIP_DOWNLOAD=1   跳过 make download
