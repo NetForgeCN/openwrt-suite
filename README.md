@@ -1,6 +1,6 @@
 # openwrt-suite
 
-OpenWrt 第三方组件**单一聚合 feed 仓库**：把 18 个第三方包（20 个包源目录，含
+OpenWrt 第三方组件**单一聚合 feed 仓库**：把 20 个第三方包（22 个包源目录，含
 argon 自带的 `compat/luci-app-argon-config` 与 oxidns 自带的 `oxidns-core` 两个
 嵌套子包）+ 一份固件 `.config` 统一收进本仓库，每日由 GitHub Actions 从各上游
 同步（纯快照方式）。使用时**只需克隆本仓库**，第三方包就会出现在 `make menuconfig` 里。
@@ -9,7 +9,7 @@ argon 自带的 `compat/luci-app-argon-config` 与 oxidns 自带的 `oxidns-core
 
 ```
 openwrt-suite/
-├── packages/          18 个包（feed 主体，OpenWrt 递归扫描含 Makefile 的目录）
+├── packages/          20 个包（feed 主体，OpenWrt 递归扫描含 Makefile 的目录）
 ├── config/
 │   └── dot.config     固件 .config 快照（跟随 NetForgeCN/OpenWRT main 分支）
 ├── sources.conf       上游同步映射表（源地址、分支、路径映射模式）
@@ -44,7 +44,7 @@ bash openwrt-suite/build/compile.sh --menuconfig
 bash openwrt-suite/build/compile.sh
 ```
 
-第 2 步完成后，18 个第三方包已全部出现在 `make menuconfig` 中，且
+第 2 步完成后，20 个第三方包已全部出现在 `make menuconfig` 中，且
 `config/dot.config` 里原有的选择会自动勾选好：16 个包 + `v2ray-geoip` /
 `v2ray-geosite`（v2ray-geodata 源里的实际数据包，`v2ray-geodata` 本身是虚包）。
 
@@ -52,9 +52,10 @@ bash openwrt-suite/build/compile.sh
 
 | 菜单路径 | 包 |
 |---|---|
-| LuCI → Applications | luci-app-airplay2、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-kixdns、luci-app-oxidns、luci-app-pulse、luci-app-temp-status |
+| LuCI → Applications | luci-app-airplay2、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-honk、luci-app-kixdns、luci-app-oxidns、luci-app-pulse、luci-app-temp-status |
 | LuCI → Themes | luci-theme-argon |
 | Network | dae、ddns-go、kixdns、kixdns-stats、nqptp、open-nexttrace-core、v2ray-geodata |
+| Network → Web Servers/Proxies | honk（eBPF 核心，仅 x86_64 / aarch64_generic） |
 | LuCI | luci-app-open_nexttrace（该包 CATEGORY 直接声明为 LuCI） |
 | Sound | airplay2 |
 
@@ -163,6 +164,32 @@ OpenWrt 的 `feeds install -a` 对同名包按 feeds.conf 中的**出现顺序**
 fork 的源头 [sbwml/v2ray-geodata](https://github.com/sbwml/v2ray-geodata)，同步后由
 `patches/geodata.sh` 重打 fork 中的定制（`GEOIP_URL` 改用全量 `geoip.dat`）。
 上游 Makefile 结构变化导致补丁失配时同步会报红，提示人工更新补丁。
+
+### honk 的处理
+
+上游 [QiuSimons/luci-app-honk](https://github.com/QiuSimons/luci-app-honk) 是**一个仓库两个包**：
+
+| 目录 | 包 | 内容 |
+|---|---|---|
+| `honk/` | honk | 从 `daeuniverse/honk` 指定 commit 编译出的 `honk-core`、init.d、默认配置 |
+| `luci-app-honk/` | luci-app-honk | LuCI 页面、rpcd ucode 后端、Doona 静态资源（`root/etc/honk/doona`） |
+
+仓库根目录还有 `scripts/`（维护者刷新版本号用）、`PIC/`（README 截图）、`.github/`，
+这些不参与构建；**根目录没有 Makefile**，所以只能按 `mode=pkg` 只拷这两个目录 ——
+`mode=all` 会因为「拷贝后缺少 Makefile」直接被同步脚本判失败。这两个目录内部
+没有任何 `../` 跨目录引用，单独拷出来可以独立编译。
+
+`honk-core` 不是在 OpenWrt 里交叉编译的：`honk/build_honk_core.sh` 调用宿主机上的
+**Rust / cargo / Zig / bpf-linker**（版本由上游 `.github/ci/pins.env` 与 release.yml
+钉住），产物写到 `honk/files/honk-core.bin`；该文件被上游 `.gitignore` 忽略，
+所以**新同步下来的快照里没有它**。两条路：
+
+1. 宿主机装好工具链后编译（需能访问 crates.io、ziglang.org、aya-rs releases），
+   版本用 `eval $(./package/feeds/suite/honk/honk_toolchain.sh)` 现查；
+2. 想跳过编译：把已生成的 `honk-core.bin` 放进 `package/feeds/suite/honk/files/`，
+   构建脚本带 `--if-needed`，无 `.stamp` 时视为预编译产物直接复用。
+
+架构只支持 `x86_64` 与 `aarch64_generic`（Makefile 里的 `HONK_RUST_ARCH_DEPENDS` 限定）。
 
 ### 版本锁定与可复现
 
