@@ -18,7 +18,7 @@ env:
 jobs:
   metadata:
     name: Resolve release version
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     outputs:
       prerelease: ${{ steps.version.outputs.prerelease }}
       apk_version: ${{ steps.version.outputs.apk_version }}
@@ -47,7 +47,7 @@ jobs:
   build:
     name: Build ${{ matrix.package_format }} packages
     needs: [checks, metadata]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:
@@ -333,7 +333,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: [build, metadata]
     steps:
       - name: Checkout release installation notes
@@ -373,7 +373,7 @@ jobs:
 
   sync-docs:
     name: Sync release docs
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: [release, metadata]
     if: needs.metadata.outputs.prerelease == 'false'
     steps:

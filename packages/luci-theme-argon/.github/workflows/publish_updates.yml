@@ -21,7 +21,7 @@ concurrency:
 jobs:
   prepare:
     name: Prepare the latest stable update feed
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     outputs:
       publish: ${{ steps.release.outputs.publish }}
     steps:
@@ -87,7 +87,7 @@ jobs:
     name: Deploy the fallback feed to GitHub Pages
     needs: prepare
     if: needs.prepare.outputs.publish == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       pages: write
       id-token: write
@@ -103,7 +103,7 @@ jobs:
     name: Publish the Cloudflare source branch and optional deploy hook
     needs: prepare
     if: needs.prepare.outputs.publish == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     steps:
