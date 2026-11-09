@@ -43,16 +43,17 @@ PKG_BUILD_PARALLEL:=1
 
 include $(INCLUDE_DIR)/package.mk
 
+# 依赖说明：除 kmod-tun / ip-full / curl / ca-bundle 外，还必须有
+# luci-base（视图框架 + rpcd 的 luci 对象）、rpcd（ubus/文件 RPC），
+# 以及 ucode / ucode-mod-fs / ucode-mod-uci —— render.uc 由 ucode 解释，
+# import 'fs' 与 import 'uci' 各需要一个模块包，缺任一个都会在首次启动
+# 渲染配置时直接失败。
 define Package/$(PKG_NAME)
   SECTION:=luci
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=Bare-core sing-box transparent proxy panel
   URL:=https://github.com/NetForgeCN/sing-box-core
-  # ucode 三个包是硬依赖：render.uc 靠 ucode 解释执行，import 'fs' 需要
-  # ucode-mod-fs，import 'uci' 需要 ucode-mod-uci；只写 +ucode 会在
-  # 首次启动渲染配置时直接报模块找不到，服务起不来。
-  # luci-base 提供视图框架与 rpcd 的 luci 对象，rpcd 提供 ubus/文件 RPC。
   DEPENDS:=+kmod-tun +ip-full +curl +ca-bundle \
            +luci-base +rpcd +ucode +ucode-mod-fs +ucode-mod-uci
 endef
