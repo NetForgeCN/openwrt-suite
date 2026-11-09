@@ -184,10 +184,68 @@ fork 的源头 [sbwml/v2ray-geodata](https://github.com/sbwml/v2ray-geodata)，�
 钉住），产物写到 `honk/files/honk-core.bin`；该文件被上游 `.gitignore` 忽略，
 所以**新同步下来的快照里没有它**。两条路：
 
-1. 宿主机装好工具链后编译（需能访问 crates.io、ziglang.org、aya-rs releases），
-   版本用 `eval $(./package/feeds/suite/honk/honk_toolchain.sh)` 现查；
+1. 宿主机装好工具链后编译（需能访问 crates.io、ziglang.org、aya-rs releases）；
 2. 想跳过编译：把已生成的 `honk-core.bin` 放进 `package/feeds/suite/honk/files/`，
    构建脚本带 `--if-needed`，无 `.stamp` 时视为预编译产物直接复用。
+
+#### 宿主机依赖（honk 核心专用）
+
+⚠️ **这一节和 OpenWrt 的交叉编译工具链无关。** `honk-core` 是**在宿主机上**用
+Rust + Zig 编译后再塞进 ipk 的，所以每台构建机（含 GitHub Actions runner）都要
+先备好这套工具；只装 OpenWrt 的依赖不够，缺了会在 `honk` 包编译阶段直接失败。
+
+版本必须与上游 pin **完全一致**（`honk/build_honk_core.sh` 会用 `zig version`
+严格比对，不等就 `exit 1`）。当前 pin 由 `honk/Makefile` 的 `HONK_SRC_VERSION`
+所指的那次提交决定，本快照对应的值如下：
+
+| 组件 | 版本 | 说明 |
+|---|---|---|
+| Zig | `0.14.1` | 必须精确匹配，脚本不比较范围 |
+| bpf-linker | `0.11.0` | musl 静态包，按 sha256 校验；`--version` 报 0.0.0 是正常的 |
+| Rust | 任意 rustup 稳定版 | eBPF 部分脚本会自动 `rustup toolchain install nightly --component rust-src,llvm-tools` |
+
+Debian / Ubuntu 宿主机可直接粘这一段：
+
+```bash
+# 1) 编译 honk-core 需要的系统依赖（bindgen / eBPF / 解压用）
+sudo apt-get update
+sudo apt-get install -y clang llvm libbpf-dev cmake libclang-dev zstd \
+  make perl file binutils git curl xz-utils pkg-config ca-certificates
+
+# 2) rustup（honk 构建脚本位于 ~/.cargo/bin 的前提）
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+. "$HOME/.cargo/env"
+
+# 3) bpf-linker 0.11.0（务必保留 sha256 校验）
+curl -fsSL -o /tmp/bpf-linker.tar.zst \
+  https://github.com/aya-rs/bpf-linker/releases/download/v0.11.0/bpf-linker-x86_64-unknown-linux-musl.tar.zst
+echo "10f62ba9ab7e544d538370552660efcb4f1a19153d5752bbf0f6b51f3bada450  /tmp/bpf-linker.tar.zst" | sha256sum -c -
+sudo tar --zstd -xf /tmp/bpf-linker.tar.zst -C /usr/local/bin
+
+# 4) Zig 0.14.1（版本必须一模一样）
+curl -fsSL -o /tmp/zig.tar.xz https://ziglang.org/download/0.14.1/zig-x86_64-linux-0.14.1.tar.xz
+sudo tar -xJf /tmp/zig.tar.xz -C /usr/local
+sudo ln -sf /usr/local/zig-x86_64-linux-0.14.1/zig /usr/local/bin/zig
+
+# 5) 自检
+zig version && bpf-linker --version && cargo --version
+```
+
+几点说明：
+
+- **脚本只检查、不自动装**：`build_honk_core.sh` 里是 `command -v zig` 之类的
+  断言，缺失就报错退出，不会替你 `apt install`；这一步必须人来做（或交给 CI）。
+- **不要用发行版包管理器装 Zig**：Debian/Ubuntu 源里的 zig 是旧版本，`zig version`
+  对不上 pin 一样会失败；bpf-linker 同理，必须用 aya-rs 的 release 资产。
+- **换机器/换 CI 都要重做**：这套工具在宿主机全局，不随 OpenWrt 构建树或
+  `staging_dir` 缓存走。
+- **CI 里怎么用**：`NetForgeCN/OpenWrt-ScriptBuild` 的 `compile.sh`（`ensure_honk_toolchain`）
+  与 `NetForgeCN/OpenWRT` 的 `OpenWRT.yml`（"Install honk toolchain" 步骤）都内置了
+  同一套安装逻辑，且**只在 `.config` 里选中 `honk` 时才触发**；不选 honk 的构建
+  不会多花这几分钟。
+- 版本升级：上游改 pin 时，`honk/Makefile` 的 `HONK_SRC_VERSION` 会变，
+  这时要同步更新本节的 Zig / bpf-linker 版本号，以及上面两处 CI 里的同名常量
+  （`HONK_ZIG_VERSION` / `HONK_BPF_LINKER_VERSION`）。三处对不上就会编译失败。
 
 架构只支持 `x86_64` 与 `aarch64_generic`（Makefile 里的 `HONK_RUST_ARCH_DEPENDS` 限定）。
 
@@ -206,6 +264,12 @@ fork 的源头 [sbwml/v2ray-geodata](https://github.com/sbwml/v2ray-geodata)，�
 
 ## 许可证
 
-各包许可证**原样保留**：`mode=all` 的包 LICENSE 在包目录内；`mode=pkg` 的多包上游
-其 LICENSE / THIRD-PARTY-NOTICES 副本收于 `meta/<slug>/`。本仓库不对任何上游代码
-做修改，唯一的例外是 `patches/geodata.sh` 声明的 GEOIP_URL 一行定制。
+**本仓库自身**（`scripts/`、`diy/`、`build/`、文档）以 **MIT** 授权，见 [LICENSE](LICENSE)。
+
+**聚合进来的第三方包**许可证**原样保留**：`mode=all` 的包 LICENSE 在包目录内；
+`mode=pkg` 的多包上游其 LICENSE / THIRD-PARTY-NOTICES 副本收于 `meta/<slug>/`。
+本仓库不对任何上游代码做修改，唯一的例外是 `patches/geodata.sh` 声明的
+GEOIP_URL 一行定制。
+
+> 换句话说：MIT 只覆盖本仓库自己的脚本与文档；每个 `packages/<name>/` 下的代码
+> 仍按它自己的许可证（GPL-3.0、Apache-2.0 等）分发，装机时以包内 LICENSE 为准。
