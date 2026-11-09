@@ -97,7 +97,7 @@ jobs:
     steps:
       - name: Deploy GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
   cloudflare-source:
     name: Publish the Cloudflare source branch and optional deploy hook
