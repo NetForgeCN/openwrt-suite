@@ -79,7 +79,7 @@ jobs:
 
       - name: Package the same files for GitHub Pages
         if: steps.release.outputs.publish == 'true'
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@v4
         with:
           path: update-site/
 
@@ -97,7 +97,7 @@ jobs:
     steps:
       - name: Deploy GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@v4
 
   cloudflare-source:
     name: Publish the Cloudflare source branch and optional deploy hook

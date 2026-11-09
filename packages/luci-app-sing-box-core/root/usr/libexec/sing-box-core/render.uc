@@ -6,13 +6,12 @@
 //   2. 引用不存在的规则集文件时跳过该规则并告警，而不是渲染出必然检查失败的配置
 //   3. 版本相关的字段按实际二进制版本裁剪（如 1.14 才有 optimistic）
 //
-// 用法：
-//   render.uc                      写 /var/run/sing-box-core/config.json
-//   SINGBOX_CORE_STDOUT=1 render.uc         打印到标准输出（供 LuCI 预览）
+// 输出：/var/run/sing-box-core/config.json
+// 调试：直接对该文件执行 `sing-box check -c` 即可
 
 'use strict';
 
-import { writefile, mkdir, stat, popen, getenv } from 'fs';
+import { writefile, mkdir, stat, popen } from 'fs';
 import * as uci from 'uci';
 
 const OUT_DIR     = '/var/run/sing-box-core';
@@ -383,7 +382,7 @@ let cfg = {
 	route: {
 		auto_detect_interface: true,
 		// 1.14 起必填：出站域名默认用 bootstrap 解析，否则 sing-box 拒绝启动。
-		// 指向直连的明文 DNS，避免"解析出站域名又要走代理"的回环。
+		// 指向直连的明文 DNS，避免解析出站域名又要走代理的回环。
 		default_domain_resolver: 'bootstrap',
 		rule_set: rule_sets,
 		rules: rules,
@@ -409,11 +408,6 @@ if (lan_mac != '' && ver_at_least(1, 14, 0)) {
 }
 
 let out = sprintf('%.P\n', cfg);
-
-if (getenv('SINGBOX_CORE_STDOUT') == '1') {
-	printf('%s', out);
-	exit(0);
-}
 
 if (stat(OUT_DIR) == null)
 	mkdir(OUT_DIR);
