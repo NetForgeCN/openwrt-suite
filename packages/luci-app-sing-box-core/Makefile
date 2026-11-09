@@ -13,7 +13,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-sing-box-core
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_LICENSE:=GPL-3.0-only
 PKG_LICENSE_FILES:=LICENSE
 PKG_MAINTAINER:=NetForgeCN
@@ -21,22 +21,40 @@ PKG_MAINTAINER:=NetForgeCN
 # ---- 自带的 sing-box 版本（与插件版本解耦，可单独升级）----
 SB_VERSION:=1.14.0
 
-# OpenWrt ARCH -> sing-box GOARCH 映射
-SB_ARCH:= \
-	$(if $(filter x86_64,$(ARCH)),amd64, \
-	$(if $(filter i386 i486 i586 i686,$(ARCH)),386, \
-	$(if $(filter aarch64%,$(ARCH)),arm64, \
-	$(if $(filter arm%,$(ARCH)),armv7, \
-	$(if $(filter mipsel%,$(ARCH)),mipsle, \
-	$(if $(filter mips64el%,$(ARCH)),mips64le, \
-	$(if $(filter mips%,$(ARCH)),mips, \
-	$(if $(filter riscv64%,$(ARCH)),riscv64,amd64))))))))
+# OpenWrt ARCH -> SagerNet release 资产名
+#
+# 只取 -musl 变体。musl 版是 CGO_ENABLED=0 的纯静态二进制：
+#   - 没有任何 DT_NEEDED，打包时 OpenWrt 的「Package ... is missing
+#     dependencies for the following libraries」校验天然通过；
+#   - 不需要 glibc 的 /lib64/ld-linux-x86-64.so.2，musl 固件上能直接执行。
+# 不带后缀的 sing-box-linux-<arch>.tar.gz 是 glibc 动态链接版（还捆了
+# libcronet.so），装进 musl 固件既过不了依赖检查、也跑不起来，不要用。
+SB_ASSET:=$(strip \
+	$(if $(filter x86_64,$(ARCH)),amd64-musl, \
+	$(if $(filter i386 i486 i586 i686,$(ARCH)),386-musl, \
+	$(if $(filter aarch64%,$(ARCH)),arm64-musl, \
+	$(if $(filter arm%,$(ARCH)),armv7-musl, \
+	$(if $(filter mipsel%,$(ARCH)),mipsle-softfloat-musl, \
+	$(if $(filter riscv64%,$(ARCH)),riscv64-musl,)))))))
 
-PKG_SOURCE:=sing-box-$(SB_VERSION)-linux-$(SB_ARCH).tar.gz
+# 官方只对这六个架构出 musl 资产。这里用 warning 而不是 $(error)：$(error)
+# 会在 menuconfig 的元数据扫描阶段就把整棵树打断，而实际构建时若资产名为空，
+# 下载阶段自然会失败。
+$(if $(strip $(SB_ASSET)),,$(warning luci-app-sing-box-core: $(ARCH) 没有对应的 musl 静态资产，无法打包自带的 sing-box 核心))
+
+# 逐资产 sha256（download.pl 会校验，换 SB_VERSION 时要一起更新）
+SB_HASH_amd64-musl:=d2d6b4543d850269214ced70ffe41b13b1595baa1b6f9c016466abfba162c4d4
+SB_HASH_386-musl:=7dd44c5f2fd11f2fabe50eada0ebc6546e13ca51304393b71a030de96ff4d520
+SB_HASH_arm64-musl:=1811c446a4957edee1b62ed2363607f8e99e1f7b6d88179719251d7ed5f30169
+SB_HASH_armv7-musl:=a46243ee738200dce68638720a36c8e3bf53ce868a043ec49c29baf122cc4b20
+SB_HASH_mipsle-softfloat-musl:=2f71d969cf4cf2181a6497bbb147fd38a1aaea101caf48cbbf8e29a2ca4a415e
+SB_HASH_riscv64-musl:=2ab42d9566ecfa81cd47033ee1f6cc6f00ce817ab0db43fd371bab860b882338
+PKG_HASH:=$(if $(strip $(SB_ASSET)),$(SB_HASH_$(SB_ASSET)),skip)
+
+PKG_SOURCE:=sing-box-$(SB_VERSION)-linux-$(SB_ASSET).tar.gz
 PKG_SOURCE_URL:=https://github.com/SagerNet/sing-box/releases/download/v$(SB_VERSION)
-# 官方 release 未提供逐资产的固定 hash 清单，这里跳过校验。
-# 要固定完整性请把 PKG_HASH 换成本地 `sha256sum` 结果。
-PKG_HASH:=skip
+# 下载规则由 $(INCLUDE_DIR)/package.mk 自带，这里不要重复定义（会触发
+# "warning: overriding recipe for target .../dl/sing-box-*.tar.gz"）。
 
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 PKG_BUILD_PARALLEL:=1
@@ -98,13 +116,10 @@ define Package/$(PKG_NAME)/prerm
 exit 0
 endef
 
-$(DL_DIR)/$(PKG_SOURCE):
-	$(call Download,$(PKG_SOURCE_URL)/$(PKG_SOURCE))
-
 define Build/Prepare
 	mkdir -p $(PKG_BUILD_DIR)
 	$(TAR) -xzf $(DL_DIR)/$(PKG_SOURCE) -C $(PKG_BUILD_DIR)
-	cp "$(PKG_BUILD_DIR)/sing-box-$(SB_VERSION)-linux-$(SB_ARCH)/sing-box" \
+	cp "$(PKG_BUILD_DIR)/sing-box-$(SB_VERSION)-linux-$(SB_ASSET)/sing-box" \
 	   "$(PKG_BUILD_DIR)/sing-box"
 endef
 

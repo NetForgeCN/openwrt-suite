@@ -49,7 +49,7 @@ OpenWrt 官方源的 sing-box 版本通常落后好几个大版本，而 1.12 �
 
 ```
 sing-box-core/
-├── Makefile                              # 按 $(ARCH) 下载对应架构的官方二进制
+├── Makefile                              # 按 $(ARCH) 下载对应架构的 musl 静态二进制
 ├── LICENSE                               # GPL-3.0
 ├── root/
 │   ├── etc/config/singbox_core                  # UCI 默认值（唯一数据源）
@@ -80,11 +80,24 @@ make menuconfig   # LuCI -> Applications -> luci-app-sing-box-core
 make package/luci-app-sing-box-core/compile V=s
 ```
 
-编译时会从 `github.com/SagerNet/sing-box/releases` 下载对应架构的二进制：
+编译时会从 `github.com/SagerNet/sing-box/releases` 下载对应架构的 **musl 静态**二进制：
 
 - 版本由 Makefile 里的 `SB_VERSION` 控制（默认 1.14.0）
-- 架构按 `$(ARCH)` 自动映射到 `amd64` / `arm64` / `armv7` / `mipsle` 等
-- `PKG_HASH` 目前是 `skip`，要固定完整性就把本地 `sha256sum` 结果填进去
+- 架构按 `$(ARCH)` 映射到资产名：`x86_64`→`amd64-musl`、`aarch64*`→`arm64-musl`、
+  `arm*`→`armv7-musl`、`i386/486/586/686`→`386-musl`、`mipsel*`→`mipsle-softfloat-musl`、
+  `riscv64*`→`riscv64-musl`
+- 每个资产的 sha256 写在 `SB_HASH_<资产名>`，由 `download.pl` 校验；升 `SB_VERSION`
+  时这几行要一起换（官方没有统一的 hash 清单，只能逐个钉）
+- **不要用**不带后缀的 `sing-box-<ver>-linux-<arch>.tar.gz`：那是 glibc 动态链接版，
+  还捆了 `libcronet.so`。装到 musl 固件上有两个硬伤 —— 打包时过不了 OpenWrt 的
+  “missing dependencies for the following libraries”（它要 `libc.so.6` / `libdl.so.2` /
+  `libpthread.so.0`），而固件里没有提供这些名字的包；就算强行装上，也没有
+  `/lib64/ld-linux-x86-64.so.2` 这个 glibc 加载器，二进制起不来
+- musl 版是 `CGO_ENABLED=0` 构建的纯静态二进制（`file` 显示 statically linked，
+  没有 DT_NEEDED），Hysteria2 / TUIC / QUIC / WireGuard / clash_api 等特性都在；
+  唯一没有的是需要 cronet 的 `naive` 出站
+- 官方只对这六个架构出 musl 资产，其它架构在解析阶段会打一条明确的 warning，
+  真去编译会在下载阶段失败 —— 那种情况只能改成源码编译
 
 ## 规则集
 
