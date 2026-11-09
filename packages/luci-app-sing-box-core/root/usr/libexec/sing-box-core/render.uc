@@ -374,7 +374,8 @@ if (lan_mac != '') {
 		cfg.route.dhcp_lease_files = [lease];
 }
 
-let out = sprintf('%.P\n', cfg);
+// ucode 的 JSON 格式化是 %J，精度控制缩进：%.4J = 4 空格，%.J = tab
+let out = sprintf('%.4J\n', cfg);
 
 if (stat(OUT_DIR) == null)
 	mkdir(OUT_DIR);

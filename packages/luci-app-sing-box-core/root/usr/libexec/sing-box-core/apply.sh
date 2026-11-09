@@ -6,7 +6,7 @@
 #
 # 退出码：
 #   0  成功
-#   2  渲染失败（UCI 数据不完整）
+#   2  渲染失败（UCI 数据不完整，或渲染结果不是合法 JSON）
 #   3  配置校验失败（sing-box check）
 #   4  启动后进程未存活（已回滚）
 
@@ -30,6 +30,18 @@ mkdir -p "$RUN" /etc/sing-box-core
 # 1) 渲染
 if ! /usr/libexec/sing-box-core/render.uc; then
 	echo "配置渲染失败：请检查节点地址等必填项" >&2
+	[ -f "$BAK" ] && cp "$BAK" "$CFG"
+	exit 2
+fi
+
+# 1.5) 防御：渲染结果必须是 JSON 对象
+#  ucode 的 JSON 格式符是 %J / %.4J，写错（比如写成 %.P）时 sprintf 会原样
+#  输出格式串，config.json 首字符变成 %，sing-box 只会报一句很难懂的
+#  “invalid character '%' looking for beginning of value”。在这里提前拦住。
+first=$(head -c 1 "$CFG" 2>/dev/null)
+if [ "$first" != "{" ]; then
+	echo "渲染结果不是合法 JSON（首字符是 '$first'）" >&2
+	echo "通常是 render.uc 的 sprintf 格式符与当前 ucode 版本不匹配" >&2
 	[ -f "$BAK" ] && cp "$BAK" "$CFG"
 	exit 2
 fi

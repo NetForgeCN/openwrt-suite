@@ -1,0 +1,225 @@
+{
+    "log": {
+        "level": "info",
+        "timestamp": true
+    },
+    "http_clients": [
+        {
+            "tag": "rs-download",
+            "detour": "proxy"
+        }
+    ],
+    "dns": {
+        "servers": [
+            {
+                "type": "udp",
+                "tag": "bootstrap",
+                "server": "223.5.5.5"
+            },
+            {
+                "type": "https",
+                "tag": "cn",
+                "server": "223.5.5.5",
+                "path": "/dns-query"
+            },
+            {
+                "type": "https",
+                "tag": "remote",
+                "server": "dns.google",
+                "path": "/dns-query",
+                "domain_resolver": "bootstrap",
+                "detour": "proxy"
+            }
+        ],
+        "rules": [
+            {
+                "rule_set": [
+                    "geosite-google",
+                    "geosite-github"
+                ],
+                "server": "remote"
+            },
+            {
+                "rule_set": [
+                    "geosite-cn"
+                ],
+                "server": "cn"
+            }
+        ],
+        "final": "remote",
+        "strategy": "prefer_ipv4",
+        "cache_capacity": 4096,
+        "optimistic": true
+    },
+    "inbounds": [
+        {
+            "type": "tun",
+            "tag": "tun-in",
+            "interface_name": "sbc-tun",
+            "address": [
+                "172.19.0.1/30"
+            ],
+            "mtu": 1400,
+            "auto_route": true,
+            "auto_redirect": true,
+            "strict_route": true,
+            "iproute2_table_index": 2023,
+            "iproute2_rule_index": 9100,
+            "route_exclude_address": [
+                "10.0.0.0/8",
+                "172.16.0.0/12",
+                "192.168.0.0/16",
+                "127.0.0.0/8"
+            ]
+        }
+    ],
+    "outbounds": [
+        {
+            "type": "hysteria2",
+            "tag": "proxy",
+            "server": "REPLACE_ME.example.com",
+            "server_port": 443,
+            "password": "REPLACE_ME",
+            "tls": {
+                "enabled": true,
+                "server_name": "REPLACE_ME.example.com",
+                "insecure": false
+            }
+        },
+        {
+            "type": "direct",
+            "tag": "direct"
+        }
+    ],
+    "route": {
+        "auto_detect_interface": true,
+        "default_domain_resolver": "bootstrap",
+        "rule_set": [
+            {
+                "type": "remote",
+                "tag": "geosite-google",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-google.srs",
+                "http_client": "rs-download",
+                "update_interval": "7d"
+            },
+            {
+                "type": "remote",
+                "tag": "geosite-github",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-github.srs",
+                "http_client": "rs-download",
+                "update_interval": "7d"
+            },
+            {
+                "type": "remote",
+                "tag": "geosite-cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
+                "http_client": "rs-download",
+                "update_interval": "7d"
+            },
+            {
+                "type": "remote",
+                "tag": "geosite-category-ads-all",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs",
+                "http_client": "rs-download",
+                "update_interval": "7d"
+            },
+            {
+                "type": "remote",
+                "tag": "geoip-cn",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
+                "http_client": "rs-download",
+                "update_interval": "7d"
+            }
+        ],
+        "rules": [
+            {
+                "action": "sniff"
+            },
+            {
+                "process_name": [
+                    "dnsmasq",
+                    "zerotier-one"
+                ],
+                "action": "route",
+                "outbound": "direct"
+            },
+            {
+                "process_name": [
+                    "kixdns",
+                    "oxidns"
+                ],
+                "network": "udp",
+                "port": [
+                    53
+                ],
+                "action": "route",
+                "outbound": "direct"
+            },
+            {
+                "protocol": "dns",
+                "action": "hijack-dns"
+            },
+            {
+                "process_name": [
+                    "hev-socks5-serve"
+                ],
+                "ip_cidr": [
+                    "8.8.8.8/32",
+                    "8.8.4.4/32"
+                ],
+                "port": [
+                    443
+                ],
+                "action": "route",
+                "outbound": "proxy"
+            },
+            {
+                "rule_set": [
+                    "geosite-category-ads-all"
+                ],
+                "action": "reject"
+            },
+            {
+                "network": "udp",
+                "port": [
+                    443
+                ],
+                "action": "reject"
+            },
+            {
+                "rule_set": [
+                    "geoip-cn"
+                ],
+                "action": "route",
+                "outbound": "direct"
+            },
+            {
+                "ip_cidr": [
+                    "224.0.0.0/3"
+                ],
+                "action": "route",
+                "outbound": "direct"
+            },
+            {
+                "ip_is_private": true,
+                "action": "route",
+                "outbound": "direct"
+            }
+        ],
+        "final": "proxy"
+    },
+    "experimental": {
+        "cache_file": {
+            "enabled": true,
+            "path": "/etc/sing-box-core/cache.db"
+        },
+        "clash_api": {
+            "external_controller": "127.0.0.1:9091"
+        }
+    }
+}
