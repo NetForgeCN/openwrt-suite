@@ -49,7 +49,12 @@ define Package/$(PKG_NAME)
   SUBMENU:=3. Applications
   TITLE:=Bare-core sing-box transparent proxy panel
   URL:=https://github.com/NetForgeCN/sing-box-core
-  DEPENDS:=+kmod-tun +ip-full +curl +ca-bundle
+  # ucode 三个包是硬依赖：render.uc 靠 ucode 解释执行，import 'fs' 需要
+  # ucode-mod-fs，import 'uci' 需要 ucode-mod-uci；只写 +ucode 会在
+  # 首次启动渲染配置时直接报模块找不到，服务起不来。
+  # luci-base 提供视图框架与 rpcd 的 luci 对象，rpcd 提供 ubus/文件 RPC。
+  DEPENDS:=+kmod-tun +ip-full +curl +ca-bundle \
+           +luci-base +rpcd +ucode +ucode-mod-fs +ucode-mod-uci
 endef
 
 define Package/$(PKG_NAME)/description
@@ -135,7 +140,10 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_DATA) ./root/usr/share/rpcd/acl.d/luci-app-sing-box-core.json \
 		$(1)/usr/share/rpcd/acl.d/luci-app-sing-box-core.json
 
-	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/singbox_core
+	# 视图目录名必须与 menu.d 的 path、仓库内源码目录三者一致（都是 singbox-core）；
+	# 之前这里写成 singbox_core，INSTALL_DIR 建出的目录和 INSTALL_DATA 的目标不一致，
+	# 安装阶段 cp 找不到目录会直接失败。
+	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/singbox-core
 	$(INSTALL_DATA) ./root/www/luci-static/resources/view/singbox-core/*.js \
 		$(1)/www/luci-static/resources/view/singbox-core/
 endef

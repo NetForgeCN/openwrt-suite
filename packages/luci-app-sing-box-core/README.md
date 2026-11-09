@@ -214,6 +214,12 @@ logread -e sing-box-core | tail -50                  # 7. 服务日志
 
 `ip-full` 是硬依赖。缺了它表现为"服务起来了、日志干净、但路由没建"。
 
+LuCI 侧和脚本侧同样写进了 `DEPENDS`：`luci-base`、`rpcd`、`ucode` 以及
+`ucode-mod-fs` / `ucode-mod-uci`。渲染脚本是 ucode 写的（`import ... from 'fs'`、
+`import * as uci from 'uci'`），若手工装 ipk 时用 `--force-depends` 跳过依赖，
+故障会以 `/usr/libexec/sing-box-core/render.uc: not found` 或
+`unable to load module 'uci'` 的形式出现在首次启动，而不是安装阶段提示。
+
 ### 1.14 的三个坑（插件已规避，手改 JSON 时会遇到）
 
 ```sh
