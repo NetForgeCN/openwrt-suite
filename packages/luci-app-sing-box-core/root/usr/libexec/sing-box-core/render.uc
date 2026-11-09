@@ -3,7 +3,7 @@
 //
 // 设计原则：
 //   1. UCI 是唯一数据源，本脚本是纯函数式渲染，不做任何持久化
-//   2. 引用不存在的规则集文件时跳过该规则并告警，而不是渲染出必然检查失败的配置
+//   2. 本地有规则集就用本地，没有才走远程；避免节点出口受限时无法启动
 //   3. 配置格式固定按 sing-box 1.14 生成，与 Makefile 的 SB_VERSION 对齐
 //
 // 输出：/var/run/sing-box-core/config.json
@@ -17,6 +17,7 @@ import * as uci from 'uci';
 const OUT_DIR     = '/var/run/sing-box-core';
 const CACHE_DB    = '/etc/sing-box-core/cache.db';
 const BIN         = '/usr/libexec/sing-box-core/sing-box';
+const RULESET_DIR = '/usr/share/sing-box-core/rulesets';
 
 const ctx = uci.cursor();
 
@@ -52,8 +53,9 @@ function split_list(section, option) {
 
 /* ---------------- 规则集登记 ---------------- */
 
-// 规则集不随包分发，全部在运行时由 sing-box 自己从 SagerNet 官方源拉取。
-// 下载结果会缓存进 experimental.cache_file，重启不会重复拉。
+// 规则集优先用本地，没有才走远程。远程需要节点出口能访问 GitHub；
+// 若节点被审计（典型现象是 HTTP 419）或直接连不上，把 .srs 放进
+// RULESET_DIR 即可完全离线，不必改任何配置。
 const RS_BASE = {
 	geosite: 'https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/',
 	geoip:   'https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/'
@@ -64,7 +66,13 @@ let rs_needed = {};
 function need_rs(category, kind) {
 	kind = kind ?? 'geosite';
 	let tag = kind + '-' + category;
-	rs_needed[tag] = { kind: kind, file: tag + '.srs' };
+	let file = tag + '.srs';
+
+	rs_needed[tag] = {
+		kind: kind,
+		file: file,
+		local: stat(RULESET_DIR + '/' + file) != null
+	};
 	return tag;
 }
 
@@ -308,10 +316,22 @@ push(rules, { ip_is_private: true, action: 'route', outbound: 'direct' });
 
 let rule_sets = [];
 let rs_tags = keys(rs_needed);
+let rs_local = 0;
 
 for (let i = 0; i < length(rs_tags); i++) {
 	let tag = rs_tags[i];
 	let e = rs_needed[tag];
+
+	if (e.local) {
+		rs_local++;
+		push(rule_sets, {
+			type: 'local',
+			tag: tag,
+			format: 'binary',
+			path: RULESET_DIR + '/' + e.file
+		});
+		continue;
+	}
 
 	push(rule_sets, {
 		type: 'remote',
@@ -324,6 +344,9 @@ for (let i = 0; i < length(rs_tags); i++) {
 	});
 }
 
+if (rs_local > 0)
+	warn(sprintf('规则集：本地 %d 个，远程 %d 个\n', rs_local, length(rule_sets) - rs_local));
+
 /* ---------------- 组装 ---------------- */
 
 let cfg = {
@@ -334,9 +357,8 @@ let cfg = {
 	// 1.14 起 rule-set 的下载出站走 http_client（download_detour 已弃用）。
 	// 不能 detour 到「空的 direct 出站」，sing-box 会直接拒绝：
 	//   detour to an empty direct outbound makes no sense
-	// 除非 direct 显式配了 bind_interface。这里走 proxy：不依赖 wan 接口名，
-	// 且节点可用时必然能下载。代价是节点配置错误时规则集也拉不到，
-	// 服务会起不来 —— apply.sh 会把日志打出来，便于定位。
+	// 除非 direct 显式配了 bind_interface。这里走 proxy：不依赖 wan 接口名。
+	// 全部规则集都在本地时该字段无害，仍保留以便部分切换到远程。
 	http_clients: [
 		{ tag: 'rs-download', detour: 'proxy' }
 	],

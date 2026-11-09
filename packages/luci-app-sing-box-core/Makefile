@@ -89,9 +89,9 @@ define Package/$(PKG_NAME)/description
   sing-box manage routing and the fw4 compatibility rules by itself.
 
   Features: Hysteria2 / TUIC single node, DoH DNS split (CN / non-CN) with
-  bootstrap and persistent cache, geosite routing fetched at runtime, and a
-  check-before-reload apply path that rolls back instead of cutting the
-  network.
+  bootstrap and persistent cache, geosite routing (local files first, remote
+  fallback), and a check-before-reload apply path that rolls back instead of
+  cutting the network.
 endef
 
 define Package/$(PKG_NAME)/conffiles
@@ -146,6 +146,9 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/usr/libexec/sing-box-core
 	$(INSTALL_BIN) ./root/usr/libexec/sing-box-core/render.uc $(1)/usr/libexec/sing-box-core/render.uc
 	$(INSTALL_BIN) ./root/usr/libexec/sing-box-core/apply.sh $(1)/usr/libexec/sing-box-core/apply.sh
+
+	# --- 本地规则集目录（留空，用户可自行放入 .srs 走离线模式）---
+	$(INSTALL_DIR) $(1)/usr/share/sing-box-core/rulesets
 
 	# --- LuCI 资源 ---
 	$(INSTALL_DIR) $(1)/usr/share/luci/menu.d

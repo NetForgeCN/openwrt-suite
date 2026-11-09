@@ -3,7 +3,7 @@
 # 这里只补运行期需要的目录。
 [ -n "${IPKG_INSTROOT}" ] && exit 0
 
-mkdir -p /etc/sing-box-core /var/run/sing-box-core
+mkdir -p /etc/sing-box-core /var/run/sing-box-core /usr/share/sing-box-core/rulesets
 
 # 不自动启动：此时还没有节点配置，渲染会失败。用户填完节点由 apply 拉起。
 
