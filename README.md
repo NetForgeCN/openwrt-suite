@@ -1,6 +1,6 @@
 # openwrt-suite
 
-OpenWrt 第三方组件**单一聚合 feed 仓库**：把 20 个第三方包（22 个包源目录，含
+OpenWrt 第三方组件**单一聚合 feed 仓库**：把 23 个第三方包（25 个包源目录，含
 argon 自带的 `compat/luci-app-argon-config` 与 oxidns 自带的 `oxidns-core` 两个
 嵌套子包）+ 一份固件 `.config` 统一收进本仓库，每日由 GitHub Actions 从各上游
 同步（纯快照方式）。使用时**只需克隆本仓库**，第三方包就会出现在 `make menuconfig` 里。
@@ -9,7 +9,7 @@ argon 自带的 `compat/luci-app-argon-config` 与 oxidns 自带的 `oxidns-core
 
 ```
 openwrt-suite/
-├── packages/          20 个包（feed 主体，OpenWrt 递归扫描含 Makefile 的目录）
+├── packages/          23 个包（feed 主体，OpenWrt 递归扫描含 Makefile 的目录）
 ├── config/
 │   └── dot.config     固件 .config 快照（跟随 NetForgeCN/OpenWRT main 分支）
 ├── sources.conf       上游同步映射表（源地址、分支、路径映射模式）
@@ -44,7 +44,7 @@ bash openwrt-suite/build/compile.sh --menuconfig
 bash openwrt-suite/build/compile.sh
 ```
 
-第 2 步完成后，20 个第三方包已全部出现在 `make menuconfig` 中，且
+第 2 步完成后，23 个第三方包已全部出现在 `make menuconfig` 中，且
 `config/dot.config` 里原有的选择会自动勾选好：16 个包 + `v2ray-geoip` /
 `v2ray-geosite`（v2ray-geodata 源里的实际数据包，`v2ray-geodata` 本身是虚包）。
 
@@ -52,9 +52,10 @@ bash openwrt-suite/build/compile.sh
 
 | 菜单路径 | 包 |
 |---|---|
-| LuCI → Applications | luci-app-airplay2、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-honk、luci-app-kixdns、luci-app-oxidns、luci-app-pulse、luci-app-temp-status |
+| LuCI → Applications | luci-app-airplay2、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-honk、luci-app-kixdns、luci-app-oxidns、luci-app-photondns、luci-app-photondns-compat、luci-app-pulse、luci-app-temp-status |
 | LuCI → Themes | luci-theme-argon |
 | Network | dae、ddns-go、kixdns、kixdns-stats、nqptp、open-nexttrace-core、v2ray-geodata |
+| Network → IP Addresses and Names | photondns（Rust DNS 转发器） |
 | Network → Web Servers/Proxies | honk（eBPF 核心，仅 x86_64 / aarch64_generic） |
 | LuCI | luci-app-open_nexttrace（该包 CATEGORY 直接声明为 LuCI） |
 | Sound | airplay2 |
@@ -155,6 +156,10 @@ OpenWrt 的 `feeds install -a` 对同名包按 feeds.conf 中的**出现顺序**
 | `all`  | Makefile 在仓库根目录 | jerrykuku/luci-theme-argon → `luci-theme-argon/` |
 | `file` | 大仓库里的单个文件 | NetForgeCN/OpenWRT 的 `.config` → `config/dot.config` |
 
+`pkg` 的 payload 可以写上游内的**子路径**，目标目录取它的 basename，用来对付
+「包目录藏在子目录里」的上游（如 c2h2/luci-app-photondns 的 `openwrt/photondns`）。
+顶层目录写法的行为与以前完全一致。
+
 每个源同步后强制校验 `Makefile` 存在，任何失配（上游重构、删库、改默认分支）
 都会让同步失败报红，绝不静默产出坏快照。每次同步把上游 commit 记入 `sources.lock`。
 
@@ -254,6 +259,39 @@ zig version && bpf-linker --version && cargo --version
   （`HONK_ZIG_VERSION` / `HONK_BPF_LINKER_VERSION`）。三处对不上就会编译失败。
 
 架构只支持 `x86_64` 与 `aarch64_generic`（Makefile 里的 `HONK_RUST_ARCH_DEPENDS` 限定）。
+
+### photondns 的处理
+
+上游 [c2h2/luci-app-photondns](https://github.com/c2h2/luci-app-photondns) 的目录结构和别人的不一样：
+**仓库根是 Rust 工程**（`Cargo.toml`、`Cargo.lock`、`build.rs`、`src/`），三个 OpenWrt 包则躺在
+`openwrt/` 子目录里，而且根目录**没有 Makefile**：
+
+| 上游路径 | 包 | 说明 |
+|---|---|---|
+| `openwrt/photondns/` | photondns | Rust 守护进程 + uci 配置 + init.d + 列表更新脚本 |
+| `openwrt/luci-app-photondns/` | luci-app-photondns | 新版 LuCI（JS 视图 + ucode rpcd 后端） |
+| `openwrt/luci-app-photondns-compat/` | luci-app-photondns-compat | 旧 LuCI 的 Lua/CBI 版（依赖 `luci-compat`） |
+
+所以 `sources.conf` 里 payload 直接写子路径，目标目录取 basename —— 这是 `mode=pkg` 支持的
+写法（`openwrt/photondns` → `packages/photondns`），顶层目录的上游（ddnsgo、kixdns 等）
+行为完全不变。
+
+**还有一个坑**：上游 `openwrt/photondns/Makefile` 用 `RustBinPackage`，编译的是「包目录里的」
+Cargo 工程（`cargo install --path $(PKG_BUILD_DIR)`，默认 `Build/Prepare` 只把包目录的
+`./src/*` 拷进构建目录）。可包里只有 `Makefile` 和 `root/`，工程本体在仓库根 ——
+照原样构建必然报 `could not find Cargo.toml`。`patches/photondns.sh` 在同步后把
+`Cargo.toml` / `Cargo.lock` / `build.rs` / `src/` 从上游克隆 stage 到
+`packages/photondns/src/`，这样默认 `Prepare` 正好把 `Cargo.toml` 摆到构建目录根，
+`cargo` 就能正常识别（stage 内容与上游逐字节一致，不做任何修改）。上游哪天自己把工程
+放进包目录，这个补丁的结构校验会报错，届时删掉即可。
+
+构建注意：
+
+- `PKG_BUILD_DEPENDS:=rust/host` —— 第一次编译要先把 Rust 宿主工具链建起来，很耗时；
+- `CARGO_HOME` 在 `dl/cargo`，**首次编译需要联网**拉 crates（Cargo.lock 已锁定版本）；
+- `Cargo.toml` 里除了 `photondns` 还声明了 4 个 bench 用的 bin，`cargo install` 会一并编译
+  （LTO），但产物只装 `photondns`。嫌慢可以在上游 Makefile 里加
+  `Build/Compile=$(call Build/Compile/Cargo,,--bin photondns)`。
 
 ### 版本锁定与可复现
 

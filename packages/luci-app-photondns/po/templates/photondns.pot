@@ -1,0 +1,1192 @@
+msgid ""
+msgstr "Content-Type: text/plain; charset=UTF-8"
+
+msgid "photondns"
+msgstr ""
+
+msgid "Status"
+msgstr ""
+
+msgid "Basic Settings"
+msgstr ""
+
+msgid "Rules"
+msgstr ""
+
+msgid "Logs"
+msgstr ""
+
+msgid "photondns Status"
+msgstr ""
+
+msgid "photondns Rules"
+msgstr ""
+
+msgid "photondns Logs"
+msgstr ""
+
+msgid "High-performance Rust DNS forwarder with caching and adaptive multi-path failover."
+msgstr ""
+
+msgid "High-performance DNS forwarder written in Rust: configurable cache, serve-stale, prefetch, and adaptive failover that races multiple upstreams (UDP/TCP/DoT/DoH) and takes the fastest answer."
+msgstr ""
+
+msgid "RUNNING"
+msgstr ""
+
+msgid "NOT RUNNING"
+msgstr ""
+
+msgid "Collecting data..."
+msgstr ""
+
+msgid "photondns is not running (or the API is unreachable). Enable and start it from Basic Settings."
+msgstr ""
+
+msgid "Service"
+msgstr ""
+
+msgid "Version"
+msgstr ""
+
+msgid "Uptime"
+msgstr ""
+
+msgid "Queries/min"
+msgstr ""
+
+msgid "Queries"
+msgstr ""
+
+msgid "Total"
+msgstr ""
+
+msgid "UDP / TCP"
+msgstr ""
+
+msgid "Blocked"
+msgstr ""
+
+msgid "Hosts / Redirected"
+msgstr ""
+
+msgid "Hedged (failover races)"
+msgstr ""
+
+msgid "SERVFAIL"
+msgstr ""
+
+msgid "Cache"
+msgstr ""
+
+msgid "Entries"
+msgstr ""
+
+msgid "Hit rate"
+msgstr ""
+
+msgid "Hits / Misses"
+msgstr ""
+
+msgid "Stale served"
+msgstr ""
+
+msgid "Prefetches"
+msgstr ""
+
+msgid "Evictions"
+msgstr ""
+
+msgid "Upstream Servers"
+msgstr ""
+
+msgid "Group"
+msgstr ""
+
+msgid "Upstream"
+msgstr ""
+
+msgid "State"
+msgstr ""
+
+msgid "Latency (EWMA)"
+msgstr ""
+
+msgid "Last RTT"
+msgstr ""
+
+msgid "OK"
+msgstr ""
+
+msgid "Fail"
+msgstr ""
+
+msgid "Outages"
+msgstr ""
+
+msgid "UP"
+msgstr ""
+
+msgid "DOWN"
+msgstr ""
+
+msgid "Flush DNS Cache"
+msgstr ""
+
+msgid "DNS cache flushed."
+msgstr ""
+
+msgid "Flush failed, is photondns running?"
+msgstr ""
+
+msgid "Basic Options"
+msgstr ""
+
+msgid "Upstreams"
+msgstr ""
+
+msgid "Failover"
+msgstr ""
+
+msgid "Enabled"
+msgstr ""
+
+msgid "Listen Address"
+msgstr ""
+
+msgid "Listen Port"
+msgstr ""
+
+msgid "Log Level"
+msgstr ""
+
+msgid "Debug"
+msgstr ""
+
+msgid "Info"
+msgstr ""
+
+msgid "Warning"
+msgstr ""
+
+msgid "Error"
+msgstr ""
+
+msgid "Log File"
+msgstr ""
+
+msgid "API Port"
+msgstr ""
+
+msgid "Local HTTP API for statistics and cache control (127.0.0.1 only)"
+msgstr ""
+
+msgid "DNS Forward"
+msgstr ""
+
+msgid "Forward dnsmasq DNS resolution requests to photondns"
+msgstr ""
+
+msgid "DNS Redirect (Hijack)"
+msgstr ""
+
+msgid "Force redirect all LAN DNS queries (UDP port 53) to photondns via firewall"
+msgstr ""
+
+msgid "Disable RR Type 65 (HTTPS/SVCB)"
+msgstr ""
+
+msgid "Answer HTTPS/SVCB queries with NXDOMAIN, forcing clients onto plain A/AAAA records"
+msgstr ""
+
+msgid "Routing mode"
+msgstr ""
+
+msgid "Split mode resolves mainland-China domains (dnsmasq-china-list, ~70k entries) via the China DNS group and everything else via the overseas group"
+msgstr ""
+
+msgid "China / overseas split DNS (recommended)"
+msgstr ""
+
+msgid "Single group - all domains use the same servers"
+msgstr ""
+
+msgid "China DNS servers"
+msgstr ""
+
+msgid "Used for mainland-China domains and the Local Domains rule file"
+msgstr ""
+
+msgid "Overseas DNS servers"
+msgstr ""
+
+msgid "Used for all other domains (all domains in single-group mode). Formats: 1.2.3.4, udp://host, tcp://host, tls://host (DoT), https://host/dns-query (DoH)"
+msgstr ""
+
+msgid "Cloudflare (TCP)"
+msgstr ""
+
+msgid "Google (TCP)"
+msgstr ""
+
+msgid "Failover & Advanced"
+msgstr ""
+
+msgid "Formats: 1.2.3.4, udp://host, tcp://host, tls://host (DoT), https://host/dns-query (DoH)"
+msgstr ""
+
+msgid "Backup DNS servers"
+msgstr ""
+
+msgid "Only used when every primary server is down or times out - never raced against healthy primaries, and never asked when a primary answers SERVFAIL/REFUSED (the name itself is broken)"
+msgstr ""
+
+msgid "Local-domain DNS servers"
+msgstr ""
+
+msgid "Bootstrap DNS"
+msgstr ""
+
+msgid "Plain DNS server used to resolve DoT/DoH hostnames"
+msgstr ""
+
+msgid "Disable TLS verification"
+msgstr ""
+
+msgid "Skip DoT/DoH certificate validation (useful if the system clock/CA store is broken)"
+msgstr ""
+
+msgid "Connection idle timeout (s)"
+msgstr ""
+
+msgid "How long pooled TCP/DoT/DoH connections stay open"
+msgstr ""
+
+msgid "UDP worker sockets"
+msgstr ""
+
+msgid "Parallel UDP sockets per listen address (SO_REUSEPORT); 0 = automatic (one per CPU core, up to 4)"
+msgstr ""
+
+msgid "TCP client idle timeout (s)"
+msgstr ""
+
+msgid "Close idle client TCP/DoH connections after this many seconds"
+msgstr ""
+
+msgid "Strategy"
+msgstr ""
+
+msgid "race: hedged racing, best latency (recommended). fastest: always lowest-latency upstream. parallel: ask all at once. sequential: strict configured order. random: uniform spread."
+msgstr ""
+
+msgid "race (adaptive hedging)"
+msgstr ""
+
+msgid "fastest (lowest EWMA)"
+msgstr ""
+
+msgid "parallel (all at once)"
+msgstr ""
+
+msgid "sequential (ordered)"
+msgstr ""
+
+msgid "random"
+msgstr ""
+
+msgid "Max hedge delay (ms)"
+msgstr ""
+
+msgid "Upper bound before racing the next upstream; actual delay adapts to ~2x the best upstream latency"
+msgstr ""
+
+msgid "Query timeout (ms)"
+msgstr ""
+
+msgid "Health check interval (s)"
+msgstr ""
+
+msgid "Active probes keep latency stats fresh and detect dead upstreams even when idle"
+msgstr ""
+
+msgid "Health check domain"
+msgstr ""
+
+msgid "Failure threshold"
+msgstr ""
+
+msgid "Consecutive failures before an upstream is taken out of rotation"
+msgstr ""
+
+msgid "Recovery threshold"
+msgstr ""
+
+msgid "Consecutive successes before a down upstream is restored"
+msgstr ""
+
+msgid "Cooldown (s)"
+msgstr ""
+
+msgid "How long a down upstream is excluded before a half-open retry"
+msgstr ""
+
+msgid "Enable DNS cache"
+msgstr ""
+
+msgid "Cache size (entries)"
+msgstr ""
+
+msgid "Maximum number of cached responses (sharded LRU)"
+msgstr ""
+
+msgid "Minimum TTL (s)"
+msgstr ""
+
+msgid "Raise very low TTLs to this value; 0 = no change"
+msgstr ""
+
+msgid "Maximum TTL (s)"
+msgstr ""
+
+msgid "Cap TTLs at this value; 0 = no cap"
+msgstr ""
+
+msgid "Negative cache TTL (s)"
+msgstr ""
+
+msgid "How long NXDOMAIN / empty answers are cached"
+msgstr ""
+
+msgid "Serve stale (lazy cache)"
+msgstr ""
+
+msgid "Answer instantly from expired entries and refresh in the background - also keeps DNS working when all upstreams are down"
+msgstr ""
+
+msgid "Stale lifetime (s)"
+msgstr ""
+
+msgid "How long past expiry an entry may still be served"
+msgstr ""
+
+msgid "Stale answer TTL (s)"
+msgstr ""
+
+msgid "TTL stamped on stale answers so clients can cache them briefly; RFC 8767 recommends 30"
+msgstr ""
+
+msgid "Prefetch popular entries"
+msgstr ""
+
+msgid "Refresh frequently used entries shortly before they expire, so they never go stale"
+msgstr ""
+
+msgid "Prefetch margin (s)"
+msgstr ""
+
+msgid "Start refreshing a popular entry when its remaining TTL falls below this many seconds"
+msgstr ""
+
+msgid "Prefetch minimum hits"
+msgstr ""
+
+msgid "Minimum lookups an entry needs before it qualifies for prefetch"
+msgstr ""
+
+msgid "Persist cache to disk"
+msgstr ""
+
+msgid "Save the cache on shutdown (and optionally at intervals); restore it on startup"
+msgstr ""
+
+msgid "Cache save interval (s)"
+msgstr ""
+
+msgid "0 = save only on shutdown (spares flash wear); otherwise dump every N seconds"
+msgstr ""
+
+msgid "Rule files are applied on service restart."
+msgstr ""
+
+msgid "Hosts"
+msgstr ""
+
+msgid "Static host records: \"<name> <ip> [ip...]\" per line. Answers A/AAAA locally."
+msgstr ""
+
+msgid "Block List"
+msgstr ""
+
+msgid "Domains answered with NXDOMAIN. \"example.com\" blocks all subdomains, \"full:example.com\" exact only."
+msgstr ""
+
+msgid "Local Domains"
+msgstr ""
+
+msgid "Domains resolved by the \"local\" upstream group (configure Local-domain DNS servers first)."
+msgstr ""
+
+msgid "Redirect"
+msgstr ""
+
+msgid "\"<from-domain> <to-domain>\" per line: answer queries for from-domain with the records of to-domain."
+msgstr ""
+
+msgid "Rules saved and photondns restarted."
+msgstr ""
+
+msgid "Clear Log"
+msgstr ""
+
+msgid "Log cleared."
+msgstr ""
+
+msgid "(empty)"
+msgstr ""
+
+msgid "China Domain List"
+msgstr ""
+
+msgid "Current list"
+msgstr ""
+
+msgid "List file"
+msgstr ""
+
+msgid "Update Now"
+msgstr ""
+
+msgid "Download Now"
+msgstr ""
+
+msgid "Download failed - check the log on the List Updates page."
+msgstr ""
+
+msgid "Updating..."
+msgstr ""
+
+msgid "not downloaded yet"
+msgstr ""
+
+msgid "Update failed to start: %s"
+msgstr ""
+
+msgid "China list status"
+msgstr ""
+
+msgid "%d domains, updated %s (%s)"
+msgstr ""
+
+msgid "today"
+msgstr ""
+
+msgid "yesterday"
+msgstr ""
+
+msgid "%d days ago"
+msgstr ""
+
+msgid "Query Log"
+msgstr ""
+
+msgid "Live view of recent DNS queries: which client asked, how each query was answered (cache, hosts, blocked, or the upstream group and server that won the race) and how long it took. Kept in memory only."
+msgstr ""
+
+msgid "Time"
+msgstr ""
+
+msgid "Client"
+msgstr ""
+
+msgid "Domain"
+msgstr ""
+
+msgid "Type"
+msgstr ""
+
+msgid "Route"
+msgstr ""
+
+msgid "Time (ms)"
+msgstr ""
+
+msgid "(no entries)"
+msgstr ""
+
+msgid "Filter by domain / client / route..."
+msgstr ""
+
+msgid "photondns is not running (or the query log is disabled)."
+msgstr ""
+
+# Query Log statistics panel (querylog.js)
+msgid "The statistics cover the queries currently shown (the filter applies to them too). Click a client, domain or route to filter by it."
+msgstr ""
+
+msgid "(no data)"
+msgstr ""
+
+msgid "Summary"
+msgstr ""
+
+msgid "Time span"
+msgstr ""
+
+msgid "Queries / min"
+msgstr ""
+
+msgid "Unique clients"
+msgstr ""
+
+msgid "Unique domains"
+msgstr ""
+
+msgid "Cache hit rate"
+msgstr ""
+
+msgid "Forwarded"
+msgstr ""
+
+msgid "Avg upstream RTT"
+msgstr ""
+
+msgid "Top clients"
+msgstr ""
+
+msgid "Top domains"
+msgstr ""
+
+msgid "Routes"
+msgstr ""
+
+msgid "Query types"
+msgstr ""
+
+msgid "Top upstreams"
+msgstr ""
+
+msgid "Query log size"
+msgstr ""
+
+msgid "Number of recent queries kept in memory for the Query Log page; 0 disables it"
+msgstr ""
+
+msgid "List Updates"
+msgstr ""
+
+msgid "Manually download or refresh the domain lists, fetched via CN-friendly mirrors. Enable the corresponding features in Basic Settings to use them."
+msgstr ""
+
+msgid "Mainland-China domains routed to the Local-domain DNS group (split DNS). Source: felixonmars/dnsmasq-china-list."
+msgstr ""
+
+msgid "Ad Block Lists"
+msgstr ""
+
+msgid "Advertising / tracker domains answered with NXDOMAIN. Sources are configured in Basic Settings (default: anti-AD)."
+msgstr ""
+
+msgid "Update started in the background."
+msgstr ""
+
+msgid "%s: %d domains."
+msgstr ""
+
+msgid "Ad Block"
+msgstr ""
+
+msgid "Enable DNS ad blocking"
+msgstr ""
+
+msgid "Answer known advertising / tracker domains with NXDOMAIN"
+msgstr ""
+
+msgid "Ad list sources"
+msgstr ""
+
+msgid "Plain domain lists, mosdns domain:/full: lists or hosts-format files, one URL per entry"
+msgstr ""
+
+msgid "Ad list status"
+msgstr ""
+
+msgid "Auto-update lists"
+msgstr ""
+
+msgid "Refresh the enabled China / ad-block lists on a schedule (cron)"
+msgstr ""
+
+msgid "Update day"
+msgstr ""
+
+msgid "Every day"
+msgstr ""
+
+msgid "Sunday"
+msgstr ""
+
+msgid "Monday"
+msgstr ""
+
+msgid "Tuesday"
+msgstr ""
+
+msgid "Wednesday"
+msgstr ""
+
+msgid "Thursday"
+msgstr ""
+
+msgid "Friday"
+msgstr ""
+
+msgid "Saturday"
+msgstr ""
+
+msgid "Update hour (0-23)"
+msgstr ""
+
+msgid "AliDNS (UDP 223.5.5.5)"
+msgstr ""
+
+msgid "AliDNS (UDP 223.6.6.6)"
+msgstr ""
+
+msgid "Tencent DNSPod (UDP 119.29.29.29)"
+msgstr ""
+
+msgid "114DNS (UDP)"
+msgstr ""
+
+msgid "AliDNS (DoT)"
+msgstr ""
+
+msgid "DNSPod (DoT)"
+msgstr ""
+
+msgid "Google (DoT)"
+msgstr ""
+
+msgid "Cloudflare (DoT)"
+msgstr ""
+
+msgid "Google (DoH)"
+msgstr ""
+
+msgid "Quad9 (UDP)"
+msgstr ""
+
+msgid "131072 (~50 MB)"
+msgstr ""
+
+msgid "16384 (~6 MB)"
+msgstr ""
+
+msgid "262144 (~100 MB)"
+msgstr ""
+
+msgid "32768 (~13 MB)"
+msgstr ""
+
+msgid "65536 (~25 MB)"
+msgstr ""
+
+msgid "8192 (~3 MB)"
+msgstr ""
+
+msgid "Could not change service state."
+msgstr ""
+
+msgid "Could not change service state: "
+msgstr ""
+
+msgid "DoH Path"
+msgstr ""
+
+msgid "DoH Port"
+msgstr ""
+
+msgid "DoH Server"
+msgstr ""
+
+msgid "DoH TLS Certificate"
+msgstr ""
+
+msgid "DoH TLS Key"
+msgstr ""
+
+msgid "Listen on TCP"
+msgstr ""
+
+msgid "Listen on UDP"
+msgstr ""
+
+msgid "Loading..."
+msgstr ""
+
+msgid "Maximum number of cached responses (sharded LRU). RAM shown is the ceiling when the cache is fully populated (~400 B/entry); actual use grows lazily."
+msgstr ""
+
+msgid "Path to a PEM certificate chain; leave empty when behind a reverse proxy"
+msgstr ""
+
+msgid "Path to the PEM private key"
+msgstr ""
+
+msgid "Serve DNS over TCP on the listen port (needed for large answers)"
+msgstr ""
+
+msgid "Serve DNS-over-HTTPS (RFC 8484) on the DoH port. Runs plain HTTP unless a certificate is set below - put a TLS reverse proxy (Caddy/nginx) in front, or set cert + key to serve HTTPS directly"
+msgstr ""
+
+msgid "Serve classic DNS over UDP on the listen port"
+msgstr ""
+
+msgid "Service disabled"
+msgstr ""
+
+msgid "Service enabled"
+msgstr ""
+
+msgid "Turn Off"
+msgstr ""
+
+msgid "Turn On"
+msgstr ""
+
+msgid "Update failed to start:"
+msgstr ""
+
+msgid "photondns started."
+msgstr ""
+
+msgid "photondns stopped."
+msgstr ""
+
+msgid "IPv6 (AAAA) handling"
+msgstr ""
+
+msgid "Whether to answer IPv6 (AAAA) lookups. \"Block if IPv4 exists\" suppresses IPv6 only for names that also have an IPv4 address, so IPv6-only sites still work; \"Block all\" forces every client onto IPv4."
+msgstr ""
+
+msgid "Allow (default)"
+msgstr ""
+
+msgid "Block if IPv4 exists"
+msgstr ""
+
+msgid "Block all IPv6"
+msgstr ""
+
+msgid "Block special-use TLDs"
+msgstr ""
+
+msgid "Answer NXDOMAIN for special-use TLDs (.local, .lan, .internal, ...) so mDNS noise never reaches public resolvers"
+msgstr ""
+
+msgid "Block private PTR lookups"
+msgstr ""
+
+msgid "Answer NXDOMAIN for reverse (PTR) lookups of private / link-local address space instead of leaking them upstream"
+msgstr ""
+
+msgid "Prewarm popular domains"
+msgstr ""
+
+msgid "Keep a list of domains (default: YouTube/Google) always resolved so a first visit is never a slow cold miss. Edit the list under Rules."
+msgstr ""
+
+msgid "Prewarm interval (s)"
+msgstr ""
+
+msgid "How often to refresh the prewarm domains; keep it below the cache stale lifetime so they never fully expire. 0 = only at startup."
+msgstr ""
+
+msgid "Verbosity of the daemon log."
+msgstr ""
+
+msgid "Daemon log path. Leave empty to log to the system log (logread) only - no file. Note: /var on OpenWrt is RAM (tmpfs), so a file here lives in memory and is cleared on reboot."
+msgstr ""
+
+msgid "Cache Lookup"
+msgstr ""
+
+msgid "Help"
+msgstr ""
+
+msgid "Type a domain to search what photondns currently has cached. The 15 closest cached records appear as you type (↓/↑ to move, Enter to pick); selecting one runs a full resolve (cache-first) and shows the answers, route, TTL and timing. Pressing Enter without a selection resolves exactly what you typed."
+msgstr ""
+
+msgid "Start typing a domain (e.g. github.com)..."
+msgstr ""
+
+msgid "%d entries cached"
+msgstr ""
+
+msgid "Resolving %s..."
+msgstr ""
+
+msgid "No response from photondns (is it running?)."
+msgstr ""
+
+msgid "Name"
+msgstr ""
+
+msgid "Response code"
+msgstr ""
+
+msgid "Answers"
+msgstr ""
+
+msgid "(no address records)"
+msgstr ""
+
+msgid "TTL"
+msgstr ""
+
+msgid "Elapsed"
+msgstr ""
+
+msgid "fresh"
+msgstr ""
+
+msgid "stale"
+msgstr ""
+
+msgid "Type a domain to search what photondns currently has cached. The 15 closest cached records appear as you type; selecting one runs a full resolve and shows the answers, route, TTL and timing."
+msgstr ""
+
+msgid "Resolving"
+msgstr ""
+
+msgid "entries cached"
+msgstr ""
+
+msgid "Proto"
+msgstr ""
+
+msgid "ms"
+msgstr ""
+
+msgid "TTL multiplier"
+msgstr ""
+
+msgid "Scale upstream TTLs by this factor before the min/max clamp (e.g. 5 turns TTL 90 into 450); 1 = no change"
+msgstr ""
+
+msgid "Resolve LAN hostnames"
+msgstr ""
+
+msgid "Answer DNS for local network devices by name (learned from DHCP leases) plus a manual pin list, without depending on dnsmasq. Names resolve both bare and under the LAN suffix, and reverse (PTR) lookups work too. Edit the pin list under Rules."
+msgstr ""
+
+msgid "LAN domain suffix"
+msgstr ""
+
+msgid "Domain LAN names also answer under, e.g. \"lan\" makes a host \"nas\" resolve as both nas and nas.lan."
+msgstr ""
+
+msgid "DHCP lease file"
+msgstr ""
+
+msgid "dnsmasq lease file to learn hostname → IP mappings from; re-read periodically."
+msgstr ""
+
+msgid "LAN refresh interval (s)"
+msgstr ""
+
+msgid "How often to re-read the lease file so new devices appear; 0 = only at startup."
+msgstr ""
+
+msgid "LAN record TTL (s)"
+msgstr ""
+
+msgid "Answer TTL for LAN forward/reverse records."
+msgstr ""
+
+msgid "Hosts file TTL (s)"
+msgstr ""
+
+msgid "Answer TTL for entries from the hosts rule file (Rules page)"
+msgstr ""
+
+msgid "LAN Hosts"
+msgstr ""
+
+msgid "Extra LAN hosts pinned by name → IP, one \"name ip [ip...]\" per line, for devices that do not advertise a usable DHCP name (e.g. a Mac). Each resolves bare and under the LAN suffix, and answers reverse PTR. DHCP leases are learned automatically; this file is only for pins. Enable \"Resolve LAN hostnames\" in Basic Settings."
+msgstr ""
+
+msgid "Prewarm"
+msgstr ""
+
+msgid "Domains kept always-resolved (one per line) so a first visit is never a slow cold miss. Default set = YouTube/Google. Enable \"Prewarm popular domains\" in Basic Settings."
+msgstr ""
+
+msgid "Free and open-source software, licensed under GPL-3.0-only."
+msgstr ""
+
+msgid "Bypass proxy for China DNS"
+msgstr ""
+
+msgid "Mark these queries with the bypass fwmark so a transparent proxy on this router (e.g. Passwall) sends them out directly"
+msgstr ""
+
+msgid "Bypass proxy for overseas DNS"
+msgstr ""
+
+msgid "Mark these queries with the bypass fwmark so they go out directly instead of through a transparent proxy on this router. Off = they follow your proxy rules (usually recommended in mainland China)"
+msgstr ""
+
+msgid "Bypass fwmark"
+msgstr ""
+
+msgid "SO_MARK value set on upstream sockets of bypassing groups. Passwall / Passwall2 skip mark 255 (0xff)"
+msgstr ""
+
+msgid "Reject HTTPS/SVCB (type 65) setting"
+msgstr ""
+
+msgid "Hosts rule file"
+msgstr ""
+
+msgid "Redirect rule file"
+msgstr ""
+
+msgid "LAN client name (DHCP lease / LAN hosts)"
+msgstr ""
+
+msgid "LAN client reverse lookup"
+msgstr ""
+
+msgid "Block rule file"
+msgstr ""
+
+msgid "Ad block list"
+msgstr ""
+
+msgid "Special-use TLD protection (.local, .lan, ...)"
+msgstr ""
+
+msgid "Private address PTR protection"
+msgstr ""
+
+msgid "Local Domains rule file"
+msgstr ""
+
+msgid "China domain list (geosite:cn)"
+msgstr ""
+
+msgid "No rule matched (default group)"
+msgstr ""
+
+msgid "Exact (full: entry)"
+msgstr ""
+
+msgid "Exact name"
+msgstr ""
+
+msgid "Suffix (domain and all subdomains)"
+msgstr ""
+
+msgid "%ds ago"
+msgstr ""
+
+msgid "%dm ago"
+msgstr ""
+
+msgid "%dh ago"
+msgstr ""
+
+msgid "%s matched no routing rule, so it goes to the default group \"%s\"."
+msgstr ""
+
+msgid "%s matched %s rule %s in %s, so it goes to group \"%s\"."
+msgstr ""
+
+msgid "exact"
+msgstr ""
+
+msgid "suffix"
+msgstr ""
+
+msgid "Type 65 (HTTPS/SVCB) queries are rejected by the \"Reject type 65\" setting."
+msgstr ""
+
+msgid "%s matched %s rule %s in %s, so it is answered NXDOMAIN."
+msgstr ""
+
+msgid "%s is in the hosts rule file and answers %s directly."
+msgstr ""
+
+msgid "%s is redirected to %s by the redirect rule file."
+msgstr ""
+
+msgid "%s is a known LAN client and answers %s locally."
+msgstr ""
+
+msgid "Answered by"
+msgstr ""
+
+msgid "(won the race just now)"
+msgstr ""
+
+msgid "Redirect target"
+msgstr ""
+
+msgid "(cached; filled %s, %s ms)"
+msgstr ""
+
+msgid "Why this route"
+msgstr ""
+
+msgid "Decision"
+msgstr ""
+
+msgid "forward to group"
+msgstr ""
+
+msgid "Rule source"
+msgstr ""
+
+msgid "Match type"
+msgstr ""
+
+msgid "Matched rule"
+msgstr ""
+
+msgid "Rule target"
+msgstr ""
+
+msgid "Note"
+msgstr ""
+
+msgid "No \"local\" group is configured, so the default group is used."
+msgstr ""
+
+msgid "Group upstreams"
+msgstr ""
+
+msgid "(backup)"
+msgstr ""
+
+msgid "IPv6 (AAAA) mode"
+msgstr ""
+
+msgid "%s - clients may get an empty AAAA answer"
+msgstr ""
+
+msgid "Upstream comparison"
+msgstr ""
+
+msgid "Run again"
+msgstr ""
+
+msgid "This name never reaches an upstream; showing how the default group would answer it."
+msgstr ""
+
+msgid "Asks every upstream of the group at the same time, bypassing the cache, so you can compare speed and answers. Does not affect failover health."
+msgstr ""
+
+msgid "Querying all upstreams..."
+msgstr ""
+
+msgid "Avg (EWMA)"
+msgstr ""
+
+msgid "Health"
+msgstr ""
+
+msgid "answered"
+msgstr ""
+
+msgid "fastest"
+msgstr ""
+
+msgid "failed"
+msgstr ""
+
+msgid "healthy"
+msgstr ""
+
+msgid "down"
+msgstr ""
+
+msgid "Group \"%s\" - %d upstreams"
+msgstr ""
+
+
+
+msgid "cached"
+msgstr ""
+
+msgid "(cached answer, fetched %s)"
+msgstr ""
+
+msgid "backup - only used when all primaries time out"
+msgstr ""
+
+msgid "(backup - only used when all primaries time out)"
+msgstr ""
+
+
+
+msgid "Hosting"
+msgstr ""
+
+msgid "The authoritative nameservers hold the real records; the resolvers above just ask them. A CNAME chain or the answer IPs reveal the CDN serving the site."
+msgstr ""
+
+msgid "Looking up nameservers..."
+msgstr ""
+
+msgid "DNS hosted by"
+msgstr ""
+
+msgid "unknown provider"
+msgstr ""
+
+msgid "could not find the zone"
+msgstr ""
+
+msgid "Zone"
+msgstr ""
+
+msgid "Nameservers"
+msgstr ""
+
+msgid "Site served by"
+msgstr ""
+
+msgid "no CDN detected"
+msgstr ""
+
+msgid "CNAME chain"
+msgstr ""
+
+msgid "Detected from"
+msgstr ""
+
+msgid "answer IPs are in %s address ranges"
+msgstr ""
+
+msgid "Type a domain to search what photondns currently has cached. The 15 closest cached records appear as you type (↓/↑ to move, Enter to pick); selecting one runs a full resolve (cache-first) and shows the answers, route, TTL and timing, which routing rule sent it there (suffix / exact match, China list, ad list, ...), which upstream answered, who hosts the domain (DNS provider, nameservers, CDN) and a live speed comparison of every upstream in the group. Answer IPs get a country flag (looked up by your browser at ipwho.is). URLs are reduced to their host name. Pressing Enter without a selection resolves exactly what you typed."
+msgstr ""
+
+msgid "Type a domain to search what photondns currently has cached. The 15 closest cached records appear as you type; selecting one runs a full resolve and shows the answers, route, TTL and timing, which routing rule sent it there, which upstream answered, who hosts the domain (DNS provider, nameservers, CDN) and a live speed comparison of every upstream in the group. Answer IPs get a country flag (looked up by your browser at ipwho.is). URLs are reduced to their host name."
+msgstr ""
+
+msgid "fake-IP range"
+msgstr ""
+
+msgid "private address"
+msgstr ""
+
+
+
+
+
+
+
+msgid "Type or paste a domain or URL (e.g. github.com)..."
+msgstr ""

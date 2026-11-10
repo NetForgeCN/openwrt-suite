@@ -5,7 +5,8 @@
 # 按 sources.conf 的映射表，把各上游仓库以「纯快照」方式拷入本仓库：
 #   - 每个源先 rm 掉旧目录再全量拷贝，不产生陈旧残留，不保留上游 .git
 #   - 每个包目录必须含 Makefile，否则同步失败（CI 报红，绝不静默产出坏快照）
-#   - patches/<slug>.sh 存在时同步后自动执行（重打本地定制补丁）
+#   - patches/<slug>.sh 存在时同步后自动执行（重打本地定制补丁；
+#     参数为包目录，环境变量 SUITE_SRC_DIR 指向本轮上游克隆）
 #   - 上游 commit 号记录进 sources.lock，实现版本可追溯 / 可复现
 #
 # 用法: bash scripts/sync.sh          （在仓库根目录或任意位置执行均可）
@@ -103,14 +104,28 @@ while IFS='|' read -r slug url branch mode payload; do
         copy_meta "$TMP/$slug" "$slug"
 
         local_ok=1
+        dests=()
         for p in $payload; do
             [[ -d "$TMP/$slug/$p" ]] ||
                 { warn "$slug：上游不存在映射目录 $p（上游已重构？请更新 sources.conf 映射）"; local_ok=0; break; }
-            copy_tree "$TMP/$slug/$p" "$ROOT/packages/$p"
-            [[ -f "$ROOT/packages/$p/Makefile" ]] ||
-                { warn "$p 拷贝后缺少 Makefile（同步结果无效）"; local_ok=0; break; }
+            d="$(basename "$p")"
+            copy_tree "$TMP/$slug/$p" "$ROOT/packages/$d"
+            [[ -f "$ROOT/packages/$d/Makefile" ]] ||
+                { warn "$d（来自 $p）拷贝后缺少 Makefile（同步结果无效）"; local_ok=0; break; }
+            dests+=("$ROOT/packages/$d")
         done
         ((local_ok == 1)) || { FAILED=1; continue; }
+
+        # 补丁挂钩：payload 有多个包目录时，每个目录各调用一次
+        if [[ -f "$ROOT/patches/$slug.sh" ]]; then
+            for d in "${dests[@]}"; do
+                log "应用补丁：patches/$slug.sh -> $(basename "$d")"
+                SUITE_SRC_DIR="$TMP/$slug" bash "$ROOT/patches/$slug.sh" "$d" ||
+                    { warn "补丁 $slug.sh 应用失败（上游可能已重构，请检查补丁脚本）"; local_ok=0; break; }
+            done
+            ((local_ok == 1)) || { FAILED=1; continue; }
+        fi
+
         lock_add "$slug" "$sha" "$url"
         rm -rf -- "$TMP/$slug"
         ;;
@@ -127,7 +142,7 @@ while IFS='|' read -r slug url branch mode payload; do
         # 补丁挂钩（本地定制重打）
         if [[ -x "$ROOT/patches/$slug.sh" || -f "$ROOT/patches/$slug.sh" ]]; then
             log "应用补丁：patches/$slug.sh -> $payload"
-            bash "$ROOT/patches/$slug.sh" "$dest" ||
+            SUITE_SRC_DIR="$TMP/$slug" bash "$ROOT/patches/$slug.sh" "$dest" ||
                 { warn "补丁 $slug.sh 应用失败（上游可能已重构，请检查补丁脚本）"; FAILED=1; continue; }
         fi
 

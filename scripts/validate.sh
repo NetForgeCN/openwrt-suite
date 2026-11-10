@@ -77,8 +77,9 @@ grep -Ev '^[[:space:]]*(#|$)' "$ROOT/sources.conf" 2>/dev/null |
 while IFS='|' read -r slug url branch mode payload; do
     [[ "$mode" == "pkg" ]] || continue
     for p in $payload; do
-        [[ -d "$ROOT/packages/$p" ]] ||
-            printf '[校验警告] sources.conf 声明了 %s 但 packages/ 中无此目录\n' "$p" >&2
+        d="${p##*/}"
+        [[ -d "$ROOT/packages/$d" ]] ||
+            printf '[校验警告] sources.conf 声明了 %s（目标目录 %s）但 packages/ 中无此目录\n' "$p" "$d" >&2
     done
 done
 

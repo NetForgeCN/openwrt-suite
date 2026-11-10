@@ -1,0 +1,1151 @@
+//! Upstream transports: UDP (shared-socket demux), TCP & DoT (pipelined
+//! multiplexed connections, RFC 7766), DoH (HTTP/1.1 keep-alive pool).
+//! A UDP upstream transparently falls back to TCP on truncated answers.
+
+use crate::dns;
+use crate::health::UpstreamState;
+use anyhow::{anyhow, bail, Context, Result};
+use parking_lot::{Mutex, RwLock};
+use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::{TcpStream, UdpSocket};
+use tokio::sync::{mpsc, oneshot, watch};
+use tokio_rustls::rustls::pki_types::ServerName;
+use tokio_rustls::rustls::{ClientConfig, RootCertStore};
+use tokio_rustls::TlsConnector;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Scheme {
+    Udp,
+    Tcp,
+    Tls,
+    Https,
+}
+
+impl Scheme {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Scheme::Udp => "udp",
+            Scheme::Tcp => "tcp",
+            Scheme::Tls => "tls",
+            Scheme::Https => "https",
+        }
+    }
+}
+
+/// The upstream answered, but with SERVFAIL/REFUSED: a real DNS response,
+/// so the group must not treat it like a timeout (no backup fallback).
+#[derive(Debug)]
+pub struct RcodeError {
+    pub upstream: String,
+    pub rcode: u8,
+}
+
+impl std::fmt::Display for RcodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: upstream rcode {}", self.upstream, self.rcode)
+    }
+}
+
+impl std::error::Error for RcodeError {}
+
+pub struct Upstream {
+    pub addr_str: String,
+    pub scheme: Scheme,
+    pub host: String,
+    pub port: u16,
+    pub path: String,
+    pub state: UpstreamState,
+    resolved: RwLock<Option<SocketAddr>>,
+    udp: Option<UdpTransport>,
+    pipe: Option<PipePool>, // tcp / dot; also TC-fallback for udp
+    doh: Option<DohPool>,
+}
+
+/// Parse "udp://1.2.3.4", "tcp://1.2.3.4:53", "tls://dns.google",
+/// "https://dns.alidns.com/dns-query", bare "1.2.3.4". IPv6 in brackets.
+pub fn parse_addr(s: &str) -> Result<(Scheme, String, u16, String)> {
+    let (scheme, rest) = match s.split_once("://") {
+        Some(("udp", r)) => (Scheme::Udp, r),
+        Some(("tcp", r)) => (Scheme::Tcp, r),
+        Some(("tls", r)) | Some(("dot", r)) => (Scheme::Tls, r),
+        Some(("https", r)) | Some(("doh", r)) => (Scheme::Https, r),
+        Some((other, _)) => bail!("unsupported scheme '{}'", other),
+        None => (Scheme::Udp, s),
+    };
+    let (hostport, path) = match rest.split_once('/') {
+        Some((hp, p)) => (hp, format!("/{}", p)),
+        None => (rest, "/dns-query".to_string()),
+    };
+    let (host, port) = if let Some(h) = hostport.strip_prefix('[') {
+        // [v6]:port
+        let (v6, tail) = h
+            .split_once(']')
+            .ok_or_else(|| anyhow!("bad IPv6 literal in '{}'", s))?;
+        let port = tail
+            .strip_prefix(':')
+            .map(|p| p.parse::<u16>())
+            .transpose()?
+            .unwrap_or(0);
+        (v6.to_string(), port)
+    } else if hostport.matches(':').count() > 1 {
+        (hostport.to_string(), 0) // bare IPv6
+    } else if let Some((h, p)) = hostport.rsplit_once(':') {
+        (h.to_string(), p.parse::<u16>().context("bad port")?)
+    } else {
+        (hostport.to_string(), 0)
+    };
+    if host.is_empty() {
+        bail!("empty host in '{}'", s);
+    }
+    let port = if port != 0 {
+        port
+    } else {
+        match scheme {
+            Scheme::Udp | Scheme::Tcp => 53,
+            Scheme::Tls => 853,
+            Scheme::Https => 443,
+        }
+    };
+    Ok((scheme, host, port, path))
+}
+
+fn tls_connector(insecure: bool) -> TlsConnector {
+    let config = if insecure {
+        ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoVerify))
+            .with_no_client_auth()
+    } else {
+        let mut roots = RootCertStore::empty();
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth()
+    };
+    TlsConnector::from(Arc::new(config))
+}
+
+#[derive(Debug)]
+struct NoVerify;
+
+impl rustls::client::danger::ServerCertVerifier for NoVerify {
+    fn verify_server_cert(
+        &self,
+        _: &rustls::pki_types::CertificateDer<'_>,
+        _: &[rustls::pki_types::CertificateDer<'_>],
+        _: &ServerName<'_>,
+        _: &[u8],
+        _: rustls::pki_types::UnixTime,
+    ) -> std::result::Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+    fn verify_tls12_signature(
+        &self,
+        _: &[u8],
+        _: &rustls::pki_types::CertificateDer<'_>,
+        _: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+    fn verify_tls13_signature(
+        &self,
+        _: &[u8],
+        _: &rustls::pki_types::CertificateDer<'_>,
+        _: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+impl Upstream {
+    pub fn new(
+        addr: &str,
+        insecure: bool,
+        idle_timeout: u64,
+        query_timeout: Duration,
+        bootstrap: SocketAddr,
+        mark: u32,
+    ) -> Result<Arc<Self>> {
+        let (scheme, host, port, path) = parse_addr(addr)?;
+        let ip: Option<IpAddr> = host.parse().ok();
+        let sni = host.clone();
+        let idle = Duration::from_secs(idle_timeout.max(5));
+        let tune = TcpTuning {
+            keepalive: idle,
+            user_timeout: query_timeout.max(Duration::from_secs(1)),
+            mark,
+        };
+
+        let up = Arc::new(Upstream {
+            addr_str: addr.to_string(),
+            scheme,
+            host: host.clone(),
+            port,
+            path,
+            state: UpstreamState::new(),
+            resolved: RwLock::new(ip.map(|i| SocketAddr::new(i, port))),
+            udp: matches!(scheme, Scheme::Udp).then(|| UdpTransport::new(mark)),
+            pipe: matches!(scheme, Scheme::Udp | Scheme::Tcp | Scheme::Tls).then(|| {
+                PipePool::new(
+                    matches!(scheme, Scheme::Tls).then(|| (tls_connector(insecure), sni.clone())),
+                    idle,
+                    tune,
+                )
+            }),
+            doh: matches!(scheme, Scheme::Https)
+                .then(|| DohPool::new(tls_connector(insecure), sni, idle, tune)),
+        });
+
+        // hostname upstreams resolve via bootstrap, refreshed periodically
+        if ip.is_none() {
+            let u = up.clone();
+            tokio::spawn(async move {
+                loop {
+                    match bootstrap_resolve(&u.host, bootstrap, mark).await {
+                        Ok(addr) => {
+                            let sa = SocketAddr::new(addr, u.port);
+                            let changed = *u.resolved.read() != Some(sa);
+                            if changed {
+                                log::info!("upstream {} resolved to {}", u.addr_str, sa);
+                                *u.resolved.write() = Some(sa);
+                            }
+                            tokio::time::sleep(Duration::from_secs(900)).await;
+                        }
+                        Err(e) => {
+                            log::warn!("bootstrap resolve {} failed: {}", u.host, e);
+                            tokio::time::sleep(Duration::from_secs(10)).await;
+                        }
+                    }
+                }
+            });
+        }
+        Ok(up)
+    }
+
+    fn target(&self) -> Result<SocketAddr> {
+        self.resolved
+            .read()
+            .ok_or_else(|| anyhow!("{}: not resolved yet", self.addr_str))
+    }
+
+    /// Send `query` (any ID; transports assign their own) and return the raw response.
+    pub async fn query(&self, query: &[u8], deadline: Instant) -> Result<Vec<u8>> {
+        let target = self.target()?;
+        match self.scheme {
+            Scheme::Udp => {
+                let resp = self
+                    .udp
+                    .as_ref()
+                    .unwrap()
+                    .query(target, query, deadline)
+                    .await?;
+                if dns::is_truncated(&resp) {
+                    // blazing-fast method fallback: retry over TCP
+                    log::debug!("{}: truncated, retrying over TCP", self.addr_str);
+                    return self
+                        .pipe
+                        .as_ref()
+                        .unwrap()
+                        .query(target, query, deadline)
+                        .await;
+                }
+                Ok(resp)
+            }
+            Scheme::Tcp | Scheme::Tls => {
+                self.pipe
+                    .as_ref()
+                    .unwrap()
+                    .query(target, query, deadline)
+                    .await
+            }
+            Scheme::Https => {
+                self.doh
+                    .as_ref()
+                    .unwrap()
+                    .query(target, &self.host, &self.path, query, deadline)
+                    .await
+            }
+        }
+    }
+
+    /// Query with latency + health accounting (the failover feed).
+    ///
+    /// `probe` = the active health check (a known-good name). Probes are
+    /// strict: SERVFAIL/REFUSED or any error counts against the upstream.
+    /// Client queries are lenient so one broken *name* cannot take every
+    /// upstream down at once:
+    ///   - SERVFAIL/REFUSED is returned as a `RcodeError` (the group tries the
+    ///     others) but is not a health failure - the upstream did answer;
+    ///   - a timeout/transport error counts only if the upstream answered
+    ///     nothing else while this query was pending.
+    pub async fn query_measured(
+        &self,
+        query: &[u8],
+        deadline: Instant,
+        fail_threshold: u32,
+        recover_threshold: u32,
+        cooldown: Duration,
+        probe: bool,
+    ) -> Result<Vec<u8>> {
+        let start = Instant::now();
+        let start_ms = crate::health::UpstreamState::now_ms();
+        let res = self.query(query, deadline).await;
+        match res {
+            Ok(resp) => {
+                let rc = dns::rcode(&resp);
+                if rc == dns::RCODE_SERVFAIL || rc == 5 {
+                    if probe {
+                        self.state
+                            .record_failure(fail_threshold, cooldown, &self.addr_str);
+                    }
+                    return Err(RcodeError {
+                        upstream: self.addr_str.clone(),
+                        rcode: rc,
+                    }
+                    .into());
+                }
+                self.state
+                    .record_success(start.elapsed(), recover_threshold, &self.addr_str);
+                Ok(resp)
+            }
+            Err(e) => {
+                if !probe && self.state.answered_since(start_ms) {
+                    log::debug!(
+                        "{}: query failed ({}) but upstream is answering others; not counted",
+                        self.addr_str,
+                        e
+                    );
+                    return Err(e);
+                }
+                log::debug!("{}: query failed: {}", self.addr_str, e);
+                let went_down = self
+                    .state
+                    .record_failure(fail_threshold, cooldown, &self.addr_str);
+                if went_down {
+                    // the breaker just opened: whatever connection we were
+                    // using is suspect, so make sure the half-open probes
+                    // after cooldown get a fresh socket instead of re-testing
+                    // a possibly dead one forever
+                    self.reset_conns();
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// Drop pooled stream connections so the next query reconnects.
+    pub fn reset_conns(&self) {
+        if let Some(p) = &self.pipe {
+            p.reset();
+        }
+        if let Some(d) = &self.doh {
+            d.reset();
+        }
+    }
+}
+
+/// Kernel-side backstops for stream upstreams. `keepalive` probes idle
+/// connections (also keeps NAT state alive); `user_timeout` (Linux only)
+/// aborts a connection whose sent data stays unacked that long, so a
+/// blackholed socket errors out in seconds instead of the ~15 min default
+/// retransmission cycle. `mark` is the SO_MARK applied before connect
+/// (0 = none).
+#[derive(Clone, Copy)]
+struct TcpTuning {
+    keepalive: Duration,
+    user_timeout: Duration,
+    mark: u32,
+}
+
+/// Stamp SO_MARK on an upstream socket (0 = leave unmarked). Needs
+/// CAP_NET_ADMIN; on failure the socket still works, just unmarked, so warn
+/// once rather than fail every query.
+fn set_mark(sock: socket2::SockRef<'_>, mark: u32) {
+    if mark == 0 {
+        return;
+    }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if let Err(e) = sock.set_mark(mark) {
+        static WARNED: AtomicBool = AtomicBool::new(false);
+        if !WARNED.swap(true, Ordering::Relaxed) {
+            log::warn!("SO_MARK {:#x} failed ({}); upstream traffic is unmarked", mark, e);
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let _ = sock;
+}
+
+/// TCP connect with the fwmark set before the SYN goes out.
+async fn connect_tcp(target: SocketAddr, mark: u32) -> std::io::Result<TcpStream> {
+    if mark == 0 {
+        return TcpStream::connect(target).await;
+    }
+    let sock = if target.is_ipv4() {
+        tokio::net::TcpSocket::new_v4()?
+    } else {
+        tokio::net::TcpSocket::new_v6()?
+    };
+    set_mark(socket2::SockRef::from(&sock), mark);
+    sock.connect(target).await
+}
+
+fn tune_tcp(tcp: &TcpStream, t: TcpTuning) {
+    tcp.set_nodelay(true).ok();
+    let sock = socket2::SockRef::from(tcp);
+    let ka = socket2::TcpKeepalive::new()
+        .with_time(t.keepalive)
+        .with_interval(t.user_timeout);
+    sock.set_tcp_keepalive(&ka).ok();
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    sock.set_tcp_user_timeout(Some(t.user_timeout)).ok();
+}
+
+/// Resolve a hostname via the bootstrap plain-DNS server (A, then AAAA).
+async fn bootstrap_resolve(host: &str, bootstrap: SocketAddr, mark: u32) -> Result<IpAddr> {
+    let sock = UdpSocket::bind(if bootstrap.is_ipv4() {
+        "0.0.0.0:0"
+    } else {
+        "[::]:0"
+    })
+    .await?;
+    set_mark(socket2::SockRef::from(&sock), mark);
+    for qtype in [dns::TYPE_A, dns::TYPE_AAAA] {
+        let q = dns::build_query(host, qtype, 1).ok_or_else(|| anyhow!("bad name"))?;
+        for _ in 0..2 {
+            sock.send_to(&q, bootstrap).await?;
+            let mut buf = vec![0u8; 2048];
+            match tokio::time::timeout(Duration::from_secs(2), sock.recv_from(&mut buf)).await {
+                Ok(Ok((n, from))) if from == bootstrap => {
+                    buf.truncate(n);
+                    if let Some(meta) = dns::parse_query(&buf) {
+                        let ips = dns::extract_ips(&buf, meta.question_end);
+                        if let Some(ip) = ips.first() {
+                            return Ok(*ip);
+                        }
+                    }
+                    break; // valid empty answer -> try next qtype
+                }
+                _ => continue,
+            }
+        }
+    }
+    bail!("no address for {}", host)
+}
+
+// ---------------------------------------------------------------- UDP
+
+const UDP_SOCKETS: usize = 4;
+
+struct UdpSock {
+    sock: Arc<UdpSocket>,
+    pending: Mutex<HashMap<u16, oneshot::Sender<Vec<u8>>>>,
+}
+
+struct UdpTransport {
+    socks: tokio::sync::OnceCell<Vec<Arc<UdpSock>>>,
+    mark: u32,
+}
+
+impl UdpTransport {
+    fn new(mark: u32) -> Self {
+        Self {
+            socks: tokio::sync::OnceCell::new(),
+            mark,
+        }
+    }
+
+    /// Lazily create the shared sockets + reader tasks on first use.
+    async fn socks(&self) -> Result<&Vec<Arc<UdpSock>>> {
+        self.socks
+            .get_or_try_init(|| async {
+                let mut socks = Vec::with_capacity(UDP_SOCKETS);
+                for _ in 0..UDP_SOCKETS {
+                    let sock = UdpSocket::bind("0.0.0.0:0").await?;
+                    set_mark(socket2::SockRef::from(&sock), self.mark);
+                    let sock = Arc::new(sock);
+                    let us = Arc::new(UdpSock {
+                        sock,
+                        pending: Mutex::new(HashMap::new()),
+                    });
+                    let us2 = us.clone();
+                    tokio::spawn(async move {
+                        let mut buf = vec![0u8; 4096];
+                        loop {
+                            match us2.sock.recv_from(&mut buf).await {
+                                Ok((n, _from)) if n >= dns::HEADER_LEN => {
+                                    let id = dns::get_id(&buf[..n]);
+                                    if let Some(tx) = us2.pending.lock().remove(&id) {
+                                        let _ = tx.send(buf[..n].to_vec());
+                                    }
+                                }
+                                Ok(_) => {}
+                                Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+                            }
+                        }
+                    });
+                    socks.push(us);
+                }
+                Ok::<_, anyhow::Error>(socks)
+            })
+            .await
+    }
+
+    async fn query(&self, target: SocketAddr, query: &[u8], deadline: Instant) -> Result<Vec<u8>> {
+        let socks = self.socks().await?;
+        let us = &socks[fastrand::usize(..socks.len())];
+        let (tx, rx) = oneshot::channel();
+        let id = {
+            let mut pending = us.pending.lock();
+            // reap entries whose callers were cancelled (hedged losers)
+            if pending.len() > 32 {
+                pending.retain(|_, tx| !tx.is_closed());
+            }
+            let mut id = fastrand::u16(..);
+            let mut tries = 0;
+            while pending.contains_key(&id) {
+                id = fastrand::u16(..);
+                tries += 1;
+                if tries > 32 {
+                    bail!("udp id space exhausted");
+                }
+            }
+            pending.insert(id, tx);
+            id
+        };
+        let mut pkt = query.to_vec();
+        dns::set_id(&mut pkt, id);
+        if let Err(e) = us.sock.send_to(&pkt, target).await {
+            us.pending.lock().remove(&id);
+            return Err(e.into());
+        }
+        match tokio::time::timeout_at(deadline.into(), rx).await {
+            Ok(Ok(resp)) => Ok(resp),
+            Ok(Err(_)) => {
+                us.pending.lock().remove(&id);
+                bail!("udp response channel closed")
+            }
+            Err(_) => {
+                us.pending.lock().remove(&id);
+                bail!("udp query timeout")
+            }
+        }
+    }
+}
+
+// ------------------------------------------------- TCP / DoT (pipelined)
+
+trait Io: AsyncRead + AsyncWrite + Send + Unpin {}
+impl<T: AsyncRead + AsyncWrite + Send + Unpin> Io for T {}
+
+type PipeReq = (Vec<u8>, oneshot::Sender<Vec<u8>>);
+
+struct PipeConn {
+    tx: mpsc::UnboundedSender<PipeReq>,
+    shared: Arc<PipeShared>,
+}
+
+/// Hard cap on in-flight requests per connection; beyond this the ID
+/// search could otherwise spin forever on a full 16-bit space.
+const PIPE_MAX_PENDING: usize = 4096;
+
+struct PipeShared {
+    pending: Mutex<HashMap<u16, oneshot::Sender<Vec<u8>>>>,
+    alive: AtomicBool,
+    next_id: AtomicU16,
+    /// µs since `epoch` of the last frame read on this connection, stored as
+    /// at least 1 so 0 always means "nothing received yet"
+    last_rx_us: AtomicU64,
+    epoch: Instant,
+    /// flips to true on kill(); both I/O tasks select on it so a dead
+    /// connection's socket is actually closed instead of a reader task
+    /// sitting in read_exact() until the kernel gives up on it
+    close_tx: watch::Sender<bool>,
+}
+
+impl PipeShared {
+    fn now_us(&self) -> u64 {
+        self.epoch.elapsed().as_micros() as u64
+    }
+
+    /// Has any frame arrived at or after `since_us`? (A query sent in the
+    /// connection's first microsecond has since_us == 0, which must not match
+    /// the "never received" initial value.)
+    fn received_since(&self, since_us: u64) -> bool {
+        let rx = self.last_rx_us.load(Ordering::Acquire);
+        rx != 0 && rx >= since_us
+    }
+
+    /// Tear the connection down: fail every waiter (they retry on a fresh
+    /// connection), and stop both I/O tasks. Idempotent.
+    fn kill(&self) {
+        self.alive.store(false, Ordering::Release);
+        self.pending.lock().clear();
+        self.close_tx.send_replace(true);
+    }
+
+    /// Drop waiters whose callers already gave up (timeouts, hedged losers).
+    fn reap(pending: &mut HashMap<u16, oneshot::Sender<Vec<u8>>>) {
+        pending.retain(|_, tx| !tx.is_closed());
+    }
+}
+
+impl PipeConn {
+    fn spawn(stream: Box<dyn Io>, idle: Duration) -> PipeConn {
+        let (tx, mut rx) = mpsc::unbounded_channel::<PipeReq>();
+        let (close_tx, _) = watch::channel(false);
+        let shared = Arc::new(PipeShared {
+            pending: Mutex::new(HashMap::new()),
+            alive: AtomicBool::new(true),
+            next_id: AtomicU16::new(fastrand::u16(..)),
+            last_rx_us: AtomicU64::new(0),
+            epoch: Instant::now(),
+            close_tx,
+        });
+        let (mut rd, mut wr) = tokio::io::split(stream);
+
+        // writer + idle watchdog
+        let ws = shared.clone();
+        let mut w_close = shared.close_tx.subscribe();
+        tokio::spawn(async move {
+            loop {
+                let msg = tokio::select! {
+                    m = rx.recv() => m,
+                    _ = w_close.changed() => None,
+                    _ = tokio::time::sleep(idle) => {
+                        let mut pending = ws.pending.lock();
+                        // stale waiters must not keep the connection open
+                        PipeShared::reap(&mut pending);
+                        if pending.is_empty() {
+                            None // idle close
+                        } else {
+                            continue;
+                        }
+                    }
+                };
+                let Some((mut buf, resp_tx)) = msg else { break };
+                let id = {
+                    let mut pending = ws.pending.lock();
+                    if pending.len() > 32 {
+                        PipeShared::reap(&mut pending);
+                    }
+                    if pending.len() >= PIPE_MAX_PENDING {
+                        drop(resp_tx); // caller sees "connection closed" and retries
+                        continue;
+                    }
+                    let mut id = ws.next_id.fetch_add(1, Ordering::Relaxed);
+                    while pending.contains_key(&id) {
+                        id = ws.next_id.fetch_add(1, Ordering::Relaxed);
+                    }
+                    pending.insert(id, resp_tx);
+                    id
+                };
+                dns::set_id(&mut buf, id);
+                let mut frame = Vec::with_capacity(buf.len() + 2);
+                frame.extend_from_slice(&(buf.len() as u16).to_be_bytes());
+                frame.extend_from_slice(&buf);
+                if wr.write_all(&frame).await.is_err() {
+                    break;
+                }
+            }
+            ws.kill();
+            let _ = wr.shutdown().await;
+        });
+
+        // reader
+        let rs = shared.clone();
+        let mut r_close = shared.close_tx.subscribe();
+        tokio::spawn(async move {
+            let mut lenbuf = [0u8; 2];
+            loop {
+                let read_frame = async {
+                    rd.read_exact(&mut lenbuf).await?;
+                    let len = u16::from_be_bytes(lenbuf) as usize;
+                    let mut buf = vec![0u8; len];
+                    rd.read_exact(&mut buf).await?;
+                    Ok::<_, std::io::Error>(buf)
+                };
+                let buf = tokio::select! {
+                    r = read_frame => match r {
+                        Ok(b) => b,
+                        Err(_) => break,
+                    },
+                    _ = r_close.changed() => break,
+                };
+                rs.last_rx_us.store(rs.now_us().max(1), Ordering::Release);
+                if buf.len() >= dns::HEADER_LEN {
+                    let id = dns::get_id(&buf);
+                    if let Some(tx) = rs.pending.lock().remove(&id) {
+                        let _ = tx.send(buf);
+                    }
+                }
+            }
+            rs.kill();
+        });
+
+        PipeConn { tx, shared }
+    }
+
+    fn is_alive(&self) -> bool {
+        self.shared.alive.load(Ordering::Acquire) && !self.tx.is_closed()
+    }
+}
+
+struct PipePool {
+    tls: Option<(TlsConnector, String)>,
+    idle: Duration,
+    tune: TcpTuning,
+    conn: tokio::sync::Mutex<Option<Arc<PipeConn>>>,
+}
+
+impl PipePool {
+    fn new(tls: Option<(TlsConnector, String)>, idle: Duration, tune: TcpTuning) -> Self {
+        Self {
+            tls,
+            idle,
+            tune,
+            conn: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    /// Kill the pooled connection (if any); the next query reconnects.
+    fn reset(&self) {
+        // try_lock: never block a sync caller; if a connect is in progress
+        // the connection being built is brand new anyway
+        if let Ok(guard) = self.conn.try_lock() {
+            if let Some(c) = guard.as_ref() {
+                c.shared.kill();
+            }
+        }
+    }
+
+    async fn get_conn(&self, target: SocketAddr, deadline: Instant) -> Result<Arc<PipeConn>> {
+        let mut guard = self.conn.lock().await;
+        if let Some(c) = guard.as_ref() {
+            if c.is_alive() {
+                return Ok(c.clone());
+            }
+        }
+        let connect = async {
+            let tcp = connect_tcp(target, self.tune.mark).await?;
+            tune_tcp(&tcp, self.tune);
+            let stream: Box<dyn Io> = match &self.tls {
+                None => Box::new(tcp),
+                Some((connector, sni)) => {
+                    let name = ServerName::try_from(sni.clone())
+                        .map_err(|_| anyhow!("bad SNI '{}'", sni))?;
+                    Box::new(connector.connect(name, tcp).await?)
+                }
+            };
+            Ok::<_, anyhow::Error>(stream)
+        };
+        let stream = tokio::time::timeout_at(deadline.into(), connect)
+            .await
+            .map_err(|_| anyhow!("connect timeout"))??;
+        let conn = Arc::new(PipeConn::spawn(stream, self.idle));
+        *guard = Some(conn.clone());
+        Ok(conn)
+    }
+
+    async fn query(&self, target: SocketAddr, query: &[u8], deadline: Instant) -> Result<Vec<u8>> {
+        for attempt in 0..2 {
+            let conn = self.get_conn(target, deadline).await?;
+            let (tx, rx) = oneshot::channel();
+            let sent_at = conn.shared.now_us();
+            if conn.tx.send((query.to_vec(), tx)).is_err() {
+                continue; // conn died between get and send
+            }
+            match tokio::time::timeout_at(deadline.into(), rx).await {
+                Ok(Ok(resp)) => return Ok(resp),
+                Ok(Err(_)) if attempt == 0 => continue, // conn broke mid-flight
+                Ok(Err(_)) => bail!("stream connection closed"),
+                Err(_) => {
+                    // Dropping `rx` lets the writer reap our pending slot. If
+                    // the connection produced *nothing* for the whole wait it
+                    // is almost certainly blackholed (NAT/WAN flap, peer hung):
+                    // kill it so the next query - and the health prober -
+                    // reconnect instead of timing out on it until the kernel
+                    // notices. A connection still delivering other answers is
+                    // healthy and is left alone.
+                    if !conn.shared.received_since(sent_at) {
+                        log::debug!("stream connection silent through timeout, dropping it");
+                        conn.shared.kill();
+                    }
+                    bail!("stream query timeout")
+                }
+            }
+        }
+        bail!("stream connection failed twice")
+    }
+}
+
+// ------------------------------------------------------------- DoH (h1.1)
+
+struct DohConn {
+    stream: Box<dyn Io>,
+    last_use: Instant,
+}
+
+struct DohPool {
+    connector: TlsConnector,
+    sni: String,
+    idle: Duration,
+    tune: TcpTuning,
+    conns: Mutex<Vec<DohConn>>,
+}
+
+impl DohPool {
+    fn new(connector: TlsConnector, sni: String, idle: Duration, tune: TcpTuning) -> Self {
+        Self {
+            connector,
+            sni,
+            idle,
+            tune,
+            conns: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Drop every idle keep-alive connection.
+    fn reset(&self) {
+        self.conns.lock().clear();
+    }
+
+    async fn dial(&self, target: SocketAddr) -> Result<Box<dyn Io>> {
+        let tcp = connect_tcp(target, self.tune.mark).await?;
+        tune_tcp(&tcp, self.tune);
+        let name = ServerName::try_from(self.sni.clone())
+            .map_err(|_| anyhow!("bad SNI '{}'", self.sni))?;
+        Ok(Box::new(self.connector.connect(name, tcp).await?))
+    }
+
+    async fn query(
+        &self,
+        target: SocketAddr,
+        host: &str,
+        path: &str,
+        query: &[u8],
+        deadline: Instant,
+    ) -> Result<Vec<u8>> {
+        // RFC 8484 wants ID 0 for cache friendliness
+        let mut body = query.to_vec();
+        dns::set_id(&mut body, 0);
+
+        let work = async {
+            for attempt in 0..2 {
+                let pooled = {
+                    let mut conns = self.conns.lock();
+                    let mut got = None;
+                    while let Some(c) = conns.pop() {
+                        if c.last_use.elapsed() < self.idle {
+                            got = Some(c.stream);
+                            break;
+                        }
+                        // expired conns are simply dropped
+                    }
+                    got
+                };
+                let reused = pooled.is_some();
+                let mut s = match pooled {
+                    Some(s) => s,
+                    None => self.dial(target).await?,
+                };
+                let req = format!(
+                    "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/dns-message\r\nAccept: application/dns-message\r\nContent-Length: {}\r\nUser-Agent: photondns\r\n\r\n",
+                    path, host, body.len()
+                );
+                let mut out = req.into_bytes();
+                out.extend_from_slice(&body);
+                if s.write_all(&out).await.is_err() {
+                    if reused && attempt == 0 {
+                        continue; // stale keep-alive conn; retry fresh
+                    }
+                    bail!("doh write failed");
+                }
+                match read_h1_response(&mut s).await {
+                    Ok((resp, keep)) => {
+                        if keep {
+                            self.conns.lock().push(DohConn {
+                                stream: s,
+                                last_use: Instant::now(),
+                            });
+                        }
+                        return Ok(resp);
+                    }
+                    Err(e) => {
+                        if reused && attempt == 0 {
+                            continue;
+                        }
+                        return Err(e);
+                    }
+                }
+            }
+            bail!("doh failed")
+        };
+        tokio::time::timeout_at(deadline.into(), work)
+            .await
+            .map_err(|_| anyhow!("doh timeout"))?
+    }
+}
+
+/// Minimal HTTP/1.1 response reader (content-length or chunked).
+async fn read_h1_response(s: &mut Box<dyn Io>) -> Result<(Vec<u8>, bool)> {
+    let mut head = Vec::with_capacity(512);
+    let mut byte = [0u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        if head.len() > 16384 {
+            bail!("doh headers too large");
+        }
+        let n = s.read(&mut byte).await?;
+        if n == 0 {
+            bail!("doh connection closed");
+        }
+        head.push(byte[0]);
+    }
+    let head_text = String::from_utf8_lossy(&head).to_ascii_lowercase();
+    let status = head_text
+        .split_whitespace()
+        .nth(1)
+        .and_then(|c| c.parse::<u16>().ok())
+        .unwrap_or(0);
+    if status != 200 {
+        bail!("doh http status {}", status);
+    }
+    let keep = !head_text.contains("connection: close");
+    let content_length = head_text.lines().find_map(|l| {
+        l.strip_prefix("content-length:")
+            .and_then(|v| v.trim().parse::<usize>().ok())
+    });
+    let chunked = head_text.contains("transfer-encoding: chunked");
+    if let Some(len) = content_length {
+        if len > 65535 {
+            bail!("doh body too large");
+        }
+        let mut body = vec![0u8; len];
+        s.read_exact(&mut body).await?;
+        Ok((body, keep))
+    } else if chunked {
+        let mut body = Vec::with_capacity(1024);
+        loop {
+            let mut line = Vec::new();
+            loop {
+                s.read_exact(&mut byte).await?;
+                line.push(byte[0]);
+                if line.ends_with(b"\r\n") {
+                    break;
+                }
+                if line.len() > 32 {
+                    bail!("bad chunk header");
+                }
+            }
+            let sz = usize::from_str_radix(
+                std::str::from_utf8(&line[..line.len() - 2])
+                    .unwrap_or("")
+                    .trim()
+                    .split(';')
+                    .next()
+                    .unwrap_or(""),
+                16,
+            )
+            .map_err(|_| anyhow!("bad chunk size"))?;
+            if sz == 0 {
+                let mut crlf = [0u8; 2];
+                s.read_exact(&mut crlf).await.ok();
+                break;
+            }
+            if body.len() + sz > 65535 {
+                bail!("doh body too large");
+            }
+            let start = body.len();
+            body.resize(start + sz, 0);
+            s.read_exact(&mut body[start..]).await?;
+            let mut crlf = [0u8; 2];
+            s.read_exact(&mut crlf).await?;
+        }
+        Ok((body, keep))
+    } else {
+        bail!("doh response without length")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn addr_parsing() {
+        let (s, h, p, _) = parse_addr("8.8.8.8").unwrap();
+        assert!(matches!(s, Scheme::Udp));
+        assert_eq!((h.as_str(), p), ("8.8.8.8", 53));
+
+        let (s, h, p, _) = parse_addr("tls://dns.google").unwrap();
+        assert!(matches!(s, Scheme::Tls));
+        assert_eq!((h.as_str(), p), ("dns.google", 853));
+
+        let (s, h, p, path) = parse_addr("https://dns.alidns.com/dns-query").unwrap();
+        assert!(matches!(s, Scheme::Https));
+        assert_eq!(
+            (h.as_str(), p, path.as_str()),
+            ("dns.alidns.com", 443, "/dns-query")
+        );
+
+        let (s, h, p, _) = parse_addr("tcp://[2001:4860:4860::8888]:53").unwrap();
+        assert!(matches!(s, Scheme::Tcp));
+        assert_eq!((h.as_str(), p), ("2001:4860:4860::8888", 53));
+
+        let (_, h, p, _) = parse_addr("udp://223.5.5.5:5353").unwrap();
+        assert_eq!((h.as_str(), p), ("223.5.5.5", 5353));
+
+        assert!(parse_addr("ftp://x").is_err());
+    }
+
+    /// Fake TCP DNS peer. `silent_conns` accepted connections read queries
+    /// but never answer (a blackholed socket); later connections echo each
+    /// query back with QR set, except names containing `hang` which are
+    /// swallowed. Returns (addr, accepted-connection counter).
+    async fn fake_peer(
+        silent_conns: usize,
+        hang: &'static str,
+    ) -> (SocketAddr, Arc<std::sync::atomic::AtomicUsize>) {
+        use tokio::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accepted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let acc = accepted.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut s, _)) = listener.accept().await else { break };
+                let n = acc.fetch_add(1, Ordering::SeqCst);
+                let silent = n < silent_conns;
+                tokio::spawn(async move {
+                    let mut lenbuf = [0u8; 2];
+                    loop {
+                        if s.read_exact(&mut lenbuf).await.is_err() {
+                            return;
+                        }
+                        let len = u16::from_be_bytes(lenbuf) as usize;
+                        let mut q = vec![0u8; len];
+                        if s.read_exact(&mut q).await.is_err() {
+                            return;
+                        }
+                        if silent {
+                            continue; // hold the connection open, never reply
+                        }
+                        let name = dns::parse_query(&q).map(|m| m.qname).unwrap_or_default();
+                        if !hang.is_empty() && name.contains(hang) {
+                            continue;
+                        }
+                        q[2] |= 0x80; // QR
+                        let mut frame = (len as u16).to_be_bytes().to_vec();
+                        frame.extend_from_slice(&q);
+                        if s.write_all(&frame).await.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        (addr, accepted)
+    }
+
+    fn tcp_upstream(addr: SocketAddr, timeout: Duration) -> Arc<Upstream> {
+        Upstream::new(
+            &format!("tcp://{}", addr),
+            false,
+            30,
+            timeout,
+            "127.0.0.1:53".parse().unwrap(),
+            0,
+        )
+        .unwrap()
+    }
+
+    async fn pooled_conn_alive(up: &Upstream) -> Option<bool> {
+        let guard = up.pipe.as_ref().unwrap().conn.lock().await;
+        guard.as_ref().map(|c| c.is_alive())
+    }
+
+    #[tokio::test]
+    async fn silent_stream_conn_is_dropped_and_next_query_reconnects() {
+        let (addr, accepted) = fake_peer(1, "").await;
+        let timeout = Duration::from_millis(300);
+        let up = tcp_upstream(addr, timeout);
+        let q = dns::build_query("example.com", dns::TYPE_A, 1).unwrap();
+
+        // 1st connection is blackholed: the query must time out ...
+        let err = up
+            .query(&q, Instant::now() + timeout)
+            .await
+            .expect_err("silent peer must time out");
+        assert!(err.to_string().contains("timeout"), "{}", err);
+        // ... and the connection must be discarded, not kept "alive"
+        assert_eq!(pooled_conn_alive(&up).await, Some(false));
+        assert!(up.pipe.as_ref().unwrap().conn.lock().await.as_ref().unwrap()
+            .shared.pending.lock().is_empty());
+
+        // 2nd query gets a fresh connection to a peer that answers
+        let resp = up
+            .query(&q, Instant::now() + Duration::from_secs(2))
+            .await
+            .expect("reconnect must succeed");
+        assert!(dns::is_response(&resp));
+        assert_eq!(accepted.load(Ordering::SeqCst), 2, "must have reconnected");
+        assert_eq!(pooled_conn_alive(&up).await, Some(true));
+    }
+
+    #[tokio::test]
+    async fn healthy_conn_survives_one_hung_query() {
+        // peer answers everything except names containing "hang"
+        let (addr, accepted) = fake_peer(0, "hang").await;
+        let timeout = Duration::from_millis(400);
+        let up = tcp_upstream(addr, timeout);
+        let fast = dns::build_query("fast.example.com", dns::TYPE_A, 1).unwrap();
+        let hung = dns::build_query("hang.example.com", dns::TYPE_A, 1).unwrap();
+
+        up.query(&fast, Instant::now() + timeout).await.unwrap();
+        let up2 = up.clone();
+        let fast2 = fast.clone();
+        // while the hung query waits, other traffic keeps flowing
+        let side = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            up2.query(&fast2, Instant::now() + Duration::from_secs(1))
+                .await
+                .unwrap();
+        });
+        let err = up.query(&hung, Instant::now() + timeout).await.unwrap_err();
+        assert!(err.to_string().contains("timeout"), "{}", err);
+        side.await.unwrap();
+        // the connection delivered an answer during the wait, so it stays
+        assert_eq!(pooled_conn_alive(&up).await, Some(true));
+        assert_eq!(accepted.load(Ordering::SeqCst), 1, "no reconnect expected");
+    }
+
+    #[tokio::test]
+    async fn breaker_opening_resets_pooled_conn() {
+        let (addr, accepted) = fake_peer(0, "").await;
+        let up = tcp_upstream(addr, Duration::from_secs(1));
+        let q = dns::build_query("example.com", dns::TYPE_A, 1).unwrap();
+        up.query(&q, Instant::now() + Duration::from_secs(1)).await.unwrap();
+        assert_eq!(pooled_conn_alive(&up).await, Some(true));
+
+        // simulate what query_measured does when the breaker trips
+        let cd = Duration::from_millis(50);
+        assert!(!up.state.record_failure(2, cd, "t"));
+        assert!(up.state.record_failure(2, cd, "t"));
+        up.reset_conns();
+        assert_eq!(pooled_conn_alive(&up).await, Some(false));
+
+        // half-open probe after cooldown uses a new socket
+        tokio::time::sleep(cd).await;
+        up.query(&q, Instant::now() + Duration::from_secs(1)).await.unwrap();
+        assert_eq!(accepted.load(Ordering::SeqCst), 2);
+    }
+}

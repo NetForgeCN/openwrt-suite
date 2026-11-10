@@ -1,0 +1,69 @@
+#!/bin/sh
+
+mkdir -p /etc/photondns
+[ -f /etc/photondns/hosts.txt ] || cat > /etc/photondns/hosts.txt <<'EOF'
+# static hosts: <name> <ip> [ip...]
+# router.lan 192.168.1.1
+EOF
+[ -f /etc/photondns/block.txt ] || cat > /etc/photondns/block.txt <<'EOF'
+# blocked domains (NXDOMAIN). one per line:
+#   example.com          matches the domain and all subdomains
+#   full:example.com     exact match only
+EOF
+[ -f /etc/photondns/local_domains.txt ] || cat > /etc/photondns/local_domains.txt <<'EOF'
+# domains resolved by the "local" upstream group (if configured):
+# cn
+# taobao.com
+EOF
+[ -f /etc/photondns/redirect.txt ] || cat > /etc/photondns/redirect.txt <<'EOF'
+# redirect rules: <from-domain> <to-domain>
+# old.example.com new.example.com
+EOF
+[ -f /etc/photondns/lan_hosts.txt ] || cat > /etc/photondns/lan_hosts.txt <<'EOF'
+# Extra LAN hosts pinned by name -> IP, for devices that don't advertise a
+# usable name over DHCP (e.g. a Mac). Format: <name> <ip> [ip...], one per line.
+# Each name resolves both bare and under the lan suffix (e.g. c2h2mbp16 and
+# c2h2mbp16.lan), and the IP answers reverse PTR lookups. DHCP leases are
+# learned automatically; this file is only for names/pins leases don't cover.
+# c2h2mbp16 172.16.10.92
+EOF
+[ -f /etc/photondns/prewarm.txt ] || cat > /etc/photondns/prewarm.txt <<'EOF'
+# Domains kept warm in cache so a first visit is never a slow cold miss.
+# One per line; blank lines and #comments ignored. Both A and AAAA are warmed.
+# Default set = YouTube / Google (the domains a video page pulls). Add your own.
+www.youtube.com
+youtube.com
+m.youtube.com
+i.ytimg.com
+i9.ytimg.com
+s.ytimg.com
+yt3.ggpht.com
+yt4.ggpht.com
+googlevideo.com
+i.googlevideo.com
+manifest.googlevideo.com
+redirector.googlevideo.com
+www.google.com
+clients1.google.com
+apis.google.com
+accounts.google.com
+play.google.com
+fonts.googleapis.com
+fonts.gstatic.com
+www.gstatic.com
+ssl.gstatic.com
+googleads.g.doubleclick.net
+static.doubleclick.net
+pubads.g.doubleclick.net
+securepubads.g.doubleclick.net
+pagead2.googlesyndication.com
+tpc.googlesyndication.com
+www.googletagservices.com
+www.google-analytics.com
+ssl.google-analytics.com
+s0.2mdn.net
+youtubei.googleapis.com
+jnn-pa.googleapis.com
+EOF
+
+exit 0
