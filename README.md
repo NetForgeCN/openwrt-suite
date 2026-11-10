@@ -131,6 +131,21 @@ bash openwrt-suite/build/compile.sh
 打官方 feed 补丁 → 写入 `.config` → 打内核补丁 → 下载 → 编译。
 常用变量：`WORKDIR`（默认 `~/openwrt`）、`JOBS`、`SKIP_BUILD=1`（只准备不编译）。
 
+### 每日固件构建（GitHub Actions）
+
+`.github/workflows/build.yml` 每天**北京时间 02:45**（18:45 UTC，紧跟 02:30 的
+daily-sync，留 15 分钟给它收尾）用 `build/compile.sh` 出一版 x86-64 固件，并发布
+Release（保留最近 7 个，artifact 保留 3 天）。触发方式是独立 cron：同步失败不阻塞
+出固件，只是当晚沿用前一天的快照。
+
+构建直接使用 workflow 所在提交的 suite（脚本、`packages/`、`config/dot.config`
+同源），缓存策略与其他构建仓库一致 —— dl（key 绑 dot.config / compile.sh）、
+staging_dir 工具链（含 photondns 需要的 rust/host）、ccache（key 带 run_id）。
+参考其他两个构建仓库的真实数据：热构建约 3~3.5 小时，正常 **06:00 前后完成**；
+**首次冷构建会超 5 小时**，启用本 workflow 后应先手动 Run workflow 预热一次缓存。
+honk 的宿主机工具链由 `compile.sh` 里的 `ensure_honk_toolchain` 按 `.config`
+自动准备（不选 honk 则整段跳过）。
+
 ## 关键设计
 
 ### feeds 顺序与包名冲突
