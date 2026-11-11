@@ -35,8 +35,9 @@ jobs:
         run: |
           set -euo pipefail
           RELEASE=$(sed -n 's/^PULSE_RELEASE[[:space:]]*:=[[:space:]]*//p' Makefile | tr -d '\r')
-          if [[ "$GITHUB_REF" == refs/tags/v* && "$GITHUB_REF_NAME" != "v${RELEASE}" ]]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} does not match release ${RELEASE}"
+          REVISION=$(sed -n 's/^PKG_RELEASE[[:space:]]*:=[[:space:]]*//p' Makefile | tr -d '\r')
+          if [[ "$GITHUB_REF" == refs/tags/v* && "$GITHUB_REF_NAME" != "v${RELEASE}" && "$GITHUB_REF_NAME" != "v${RELEASE}-${REVISION}" ]]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} must match v${RELEASE} or v${RELEASE}-${REVISION}"
             exit 1
           fi
           VERSION=$(sh ./generate-version.sh --resolve "$RELEASE")
@@ -209,7 +210,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
-          prerelease: ${{ startsWith(github.ref_name, 'dev-') || contains(github.ref_name, '-') }}
+          prerelease: ${{ startsWith(github.ref_name, 'dev-') }}
           make_latest: "false"
           fail_on_unmatched_files: true
           files: dist/*.apk
