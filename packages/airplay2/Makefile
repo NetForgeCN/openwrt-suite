@@ -7,12 +7,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=airplay2
-PKG_VERSION:=5.6.2
+PKG_VERSION:=5.6.3
 PKG_RELEASE:=1
 
 PKG_SOURCE:=shairport-sync-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/mikebrady/shairport-sync/tar.gz/$(PKG_VERSION)?
-PKG_HASH:=0747706e19a64ec550ec8a6a5c26bf8e231a4d032de31644f5a5daa0632c41c4
+PKG_HASH:=670f9cefdb9c2d70f7df71890e63ab0a31d08a815dd0734245d935bfd01e766e
 
 PKG_MAINTAINER:=Ted Hess <thess@kitschensync.net>, \
 		Mike Brady <mikebrady@eircom.net>
