@@ -1,6 +1,6 @@
 # openwrt-suite
 
-OpenWrt 第三方组件**单一聚合 feed 仓库**：把 23 个第三方包（25 个包源目录，含
+OpenWrt 第三方组件**单一聚合 feed 仓库**：把 27 个第三方包（29 个包源目录，含
 argon 自带的 `compat/luci-app-argon-config` 与 oxidns 自带的 `oxidns-core` 两个
 嵌套子包）+ 一份固件 `.config` 统一收进本仓库，每日由 GitHub Actions 从各上游
 同步（纯快照方式）。使用时**只需克隆本仓库**，第三方包就会出现在 `make menuconfig` 里。
@@ -9,7 +9,7 @@ argon 自带的 `compat/luci-app-argon-config` 与 oxidns 自带的 `oxidns-core
 
 ```
 openwrt-suite/
-├── packages/          23 个包（feed 主体，OpenWrt 递归扫描含 Makefile 的目录）
+├── packages/          27 个包（feed 主体，OpenWrt 递归扫描含 Makefile 的目录）
 ├── config/
 │   └── dot.config     固件 .config 快照（跟随 NetForgeCN/OpenWRT main 分支）
 ├── sources.conf       上游同步映射表（源地址、分支、路径映射模式）
@@ -44,7 +44,7 @@ bash openwrt-suite/build/compile.sh --menuconfig
 bash openwrt-suite/build/compile.sh
 ```
 
-第 2 步完成后，23 个第三方包已全部出现在 `make menuconfig` 中，且
+第 2 步完成后，27 个第三方包已全部出现在 `make menuconfig` 中，且
 `config/dot.config` 里原有的选择会自动勾选好：16 个包 + `v2ray-geoip` /
 `v2ray-geosite`（v2ray-geodata 源里的实际数据包，`v2ray-geodata` 本身是虚包）。
 
@@ -52,9 +52,9 @@ bash openwrt-suite/build/compile.sh
 
 | 菜单路径 | 包 |
 |---|---|
-| LuCI → Applications | luci-app-airplay2、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-honk、luci-app-kixdns、luci-app-oxidns、luci-app-photondns、luci-app-photondns-compat、luci-app-pulse、luci-app-temp-status |
+| LuCI → Applications | luci-app-airplay2、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-honk、luci-app-kixdns、luci-app-oxidns、luci-app-nikki、luci-app-photondns、luci-app-photondns-compat、luci-app-pulse、luci-app-temp-status |
 | LuCI → Themes | luci-theme-argon |
-| Network | dae、ddns-go、kixdns、kixdns-stats、nqptp、open-nexttrace-core、v2ray-geodata |
+| Network | dae、ddns-go、kixdns、kixdns-stats、mihomo-alpha、mihomo-meta、nikki、nqptp、open-nexttrace-core、v2ray-geodata |
 | Network → IP Addresses and Names | photondns（Rust DNS 转发器） |
 | Network → Web Servers/Proxies | honk（eBPF 核心，仅 x86_64 / aarch64_generic） |
 | LuCI | luci-app-open_nexttrace（该包 CATEGORY 直接声明为 LuCI） |
@@ -307,6 +307,31 @@ Cargo 工程（`cargo install --path $(PKG_BUILD_DIR)`，默认 `Build/Prepare` 
 - `Cargo.toml` 里除了 `photondns` 还声明了 4 个 bench 用的 bin，`cargo install` 会一并编译
   （LTO），但产物只装 `photondns`。嫌慢可以在上游 Makefile 里加
   `Build/Compile=$(call Build/Compile/Cargo,,--bin photondns)`。
+
+### nikki 的处理
+
+上游 [nikkinikki-org/OpenWrt-nikki](https://github.com/nikkinikki-org/OpenWrt-nikki) 是
+mihomo（Clash.Meta）的整套 OpenWrt 方案，**一个仓库四个包**，四个目录都在顶层、
+各自带 Makefile：
+
+| 目录 | 包 | 说明 |
+|---|---|---|
+| `nikki/` | nikki | 主包：nftables 脚本、ucode 模板、init.d、UCI 默认配置 |
+| `mihomo-meta/` | mihomo-meta | 稳定版内核（`VARIANT:=meta` + `DEFAULT_VARIANT:=1`） |
+| `mihomo-alpha/` | mihomo-alpha | alpha 内核，与 meta 互斥（双方 `PROVIDES:=mihomo` / `CONFLICTS` 互指） |
+| `luci-app-nikki/` | luci-app-nikki | LuCI 界面（JS 视图 + ucode rpcd 后端 + 三种语言 po） |
+
+根目录的 `install.sh` / `uninstall.sh` / `feed.sh` 是上游的一键安装脚本，不参与构建，
+所以按 `mode=pkg` 只拷这四个目录。
+
+选择关系：`nikki` 的 DEPENDS 写的是**虚拟包** `+mihomo`，由两个内核包之一 `PROVIDES`；
+因为 `mihomo-meta` 带 `DEFAULT_VARIANT:=1`，勾 `nikki` 时默认拉的是稳定版内核。
+需要 alpha 时在 menuconfig 里换成 `mihomo-alpha`（同时选会冲突，两者 `CONFLICTS` 互相声明）。
+
+构建注意：两个内核包走 `golang-package.mk`，`PKG_SOURCE_PROTO:=git` 指向
+`MetaCubeX/mihomo`，`golang/host` 由 buildroot 自动准备 —— **不需要额外的宿主机工具**
+（与 honk 的 Zig/bpf-linker 不同，和 photondns 一样省心）。`make download` 阶段会把
+mihomo 源码克隆进 `dl/`，之后编译只是 `go build`。
 
 ### 版本锁定与可复现
 
