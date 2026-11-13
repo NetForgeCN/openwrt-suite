@@ -14,11 +14,16 @@
 # When a new OxiDNS core is released, bump PKG_VERSION and refresh the
 # hashes below (or use the LuCI "Check Update" button at runtime, which is
 # not limited to the pinned version).
+#
+# Bundle choice: this pins the "full" assets (unsuffixed oxidns-<target>.tar.gz).
+# OxiDNS 1.7 also publishes oxidns-standard-* and oxidns-minimal-*, but only
+# for x86_64/aarch64, and "minimal" drops executors such as arbitrary/response.
+# Staying on "full" keeps every architecture on the same feature set.
 
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=oxidns-core
-PKG_VERSION:=1.6.1
+PKG_VERSION:=1.7.1
 PKG_RELEASE:=1
 PKG_LICENSE:=GPL-3.0-or-later
 PKG_MAINTAINER:=NetForgeCN
@@ -28,20 +33,20 @@ PKG_SOURCE_URL:=https://github.com/svenshi/oxidns/releases/download/v$(PKG_VERSI
 # Map OpenWrt ARCH / CPU_TYPE to OxiDNS release targets.
 ifeq ($(ARCH),x86_64)
   OXIDNS_RUST_TARGET:=x86_64-unknown-linux-musl
-  OXIDNS_PKG_HASH:=2ac8e103e03407a73c29da848f6ce2d524e751ce1da8a744aa9168fc1384e3b0
+  OXIDNS_PKG_HASH:=6c82984e477d70d0c9259a6c7997496e248c78a384b2b7585908bba7f4af854c
 else ifeq ($(ARCH),aarch64)
   OXIDNS_RUST_TARGET:=aarch64-unknown-linux-musl
-  OXIDNS_PKG_HASH:=d879d4b9199c5c911d296af4df8d9e974523fb98a6ee2418ae7274d152365e42
+  OXIDNS_PKG_HASH:=2e58721f840c3a4f1b92ed953857f14a65d2e825f8072917c262f7e34e2f21bd
 else ifeq ($(ARCH),i386)
   OXIDNS_RUST_TARGET:=i686-unknown-linux-musl
-  OXIDNS_PKG_HASH:=1696dc4db29a0eee90540d0ab5a01f58ffcbfd70e9e3d0c68b6047854042c2ab
+  OXIDNS_PKG_HASH:=453ad3f7a975183ea084a3d72cedf7a6701c881df1ffa6dfd37ddc0f32b24d93
 else ifeq ($(ARCH),arm)
   ifneq ($(findstring cortex,$(CPU_TYPE)),)
     OXIDNS_RUST_TARGET:=armv7-unknown-linux-musleabihf
-    OXIDNS_PKG_HASH:=369739e626e2664131d91b7f2b9b4cf396475672ed3086d07358675f390e9786
+    OXIDNS_PKG_HASH:=ea9c078d5eb2bbddf0b545e5959c687bb5b5a4e6e7b8ba326deb4386fd4e54bd
   else
     OXIDNS_RUST_TARGET:=arm-unknown-linux-musleabihf
-    OXIDNS_PKG_HASH:=bde4518f430fa29d1f63d86844c4a5063a1d9c74a411b31eaeda03d35564f08c
+    OXIDNS_PKG_HASH:=3f43e2eaab61682fcbc8de1ed5a37a2f5fab0611f5e3c0ad032e65b2570c5d83
   endif
 else
   OXIDNS_RUST_TARGET:=unsupported-arch
