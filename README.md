@@ -230,9 +230,31 @@ Rust + Zig 编译后再塞进 ipk 的，所以每台构建机（含 GitHub Actio
 | bpf-linker | `0.11.0` | musl 静态包，按 sha256 校验；`--version` 报 0.0.0 是正常的 |
 | Rust | 任意 rustup 稳定版 | eBPF 部分脚本会自动 `rustup toolchain install nightly --component rust-src,llvm-tools` |
 
+> ⚠️ **这里装的是「宿主机」工具，不是目标架构的工具。** Zig 与 bpf-linker 都按
+> 构建机架构发布，两个架构的资产名和 sha256 各不相同 —— 在 aarch64 机器上装
+> x86_64 的 Zig，报错会伪装成 `zig 版本不符： != 0.14.1`（`zig version` 直接
+> 执行失败），bpf-linker 则是 honk 编译到一半才 `cannot execute binary file`。
+> `build/compile.sh` 里的 `ensure_honk_toolchain` 已按 `uname -m` 自动选，
+> 手工安装时按下面表格替换 `ARCH`：
+>
+> | 宿主机 `uname -m` | 资产里的 ARCH | bpf-linker sha256 |
+> |---|---|---|
+> | `x86_64` / `amd64` | `x86_64` | `10f62ba9ab7e544d538370552660efcb4f1a19153d5752bbf0f6b51f3bada450` |
+> | `aarch64` / `arm64` | `aarch64` | `d09ddd83303e9ab1443f51e0e284680154009646a3ce141c63d838ee61b73eb9` |
+>
+> Zig 的下载地址同理：`https://ziglang.org/download/0.14.1/zig-<ARCH>-linux-0.14.1.tar.xz`。
+
 Debian / Ubuntu 宿主机可直接粘这一段：
 
 ```bash
+# 0) 先确定宿主机架构（x86_64 / aarch64 都支持）
+ARCH=$(uname -m); case "$ARCH" in amd64) ARCH=x86_64 ;; arm64) ARCH=aarch64 ;; esac
+case "$ARCH" in
+  x86_64)  SHA=10f62ba9ab7e544d538370552660efcb4f1a19153d5752bbf0f6b51f3bada450 ;;
+  aarch64) SHA=d09ddd83303e9ab1443f51e0e284680154009646a3ce141c63d838ee61b73eb9 ;;
+  *) echo "unsupported arch: $ARCH"; return 1 ;;
+esac
+
 # 1) 编译 honk-core 需要的系统依赖（bindgen / eBPF / 解压用）
 sudo apt-get update
 sudo apt-get install -y clang llvm libbpf-dev cmake libclang-dev zstd \
@@ -242,16 +264,17 @@ sudo apt-get install -y clang llvm libbpf-dev cmake libclang-dev zstd \
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
 . "$HOME/.cargo/env"
 
-# 3) bpf-linker 0.11.0（务必保留 sha256 校验）
+# 3) bpf-linker 0.11.0（按宿主机架构下，务必保留 sha256 校验）
 curl -fsSL -o /tmp/bpf-linker.tar.zst \
-  https://github.com/aya-rs/bpf-linker/releases/download/v0.11.0/bpf-linker-x86_64-unknown-linux-musl.tar.zst
-echo "10f62ba9ab7e544d538370552660efcb4f1a19153d5752bbf0f6b51f3bada450  /tmp/bpf-linker.tar.zst" | sha256sum -c -
+  "https://github.com/aya-rs/bpf-linker/releases/download/v0.11.0/bpf-linker-${ARCH}-unknown-linux-musl.tar.zst"
+echo "$SHA  /tmp/bpf-linker.tar.zst" | sha256sum -c -
 sudo tar --zstd -xf /tmp/bpf-linker.tar.zst -C /usr/local/bin
 
-# 4) Zig 0.14.1（版本必须一模一样）
-curl -fsSL -o /tmp/zig.tar.xz https://ziglang.org/download/0.14.1/zig-x86_64-linux-0.14.1.tar.xz
+# 4) Zig 0.14.1（版本必须一模一样，架构也要对）
+curl -fsSL -o /tmp/zig.tar.xz \
+  "https://ziglang.org/download/0.14.1/zig-${ARCH}-linux-0.14.1.tar.xz"
 sudo tar -xJf /tmp/zig.tar.xz -C /usr/local
-sudo ln -sf /usr/local/zig-x86_64-linux-0.14.1/zig /usr/local/bin/zig
+sudo ln -sf "/usr/local/zig-${ARCH}-linux-0.14.1/zig" /usr/local/bin/zig
 
 # 5) 自检
 zig version && bpf-linker --version && cargo --version
@@ -263,6 +286,11 @@ zig version && bpf-linker --version && cargo --version
   断言，缺失就报错退出，不会替你 `apt install`；这一步必须人来做（或交给 CI）。
 - **不要用发行版包管理器装 Zig**：Debian/Ubuntu 源里的 zig 是旧版本，`zig version`
   对不上 pin 一样会失败；bpf-linker 同理，必须用 aya-rs 的 release 资产。
+- **别装错架构**：x86_64 的 zig/bpf-linker 放到 aarch64 上，`zig version` 会直接
+  报 `cannot execute binary file`，脚本里表现为「zig 版本不符： != 0.14.1」。
+  换架构重装时记得把旧的 `/usr/local/zig-<旧架构>-linux-0.14.1` 和
+  `/usr/local/bin/zig` 一起清掉（`build/compile.sh` 会自动按 `uname -m` 选，
+  但残留的符号链接会挡住判断）。
 - **换机器/换 CI 都要重做**：这套工具在宿主机全局，不随 OpenWrt 构建树或
   `staging_dir` 缓存走。
 - **CI 里怎么用**：`NetForgeCN/OpenWrt-ScriptBuild` 的 `compile.sh`（`ensure_honk_toolchain`）
