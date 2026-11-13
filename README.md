@@ -301,6 +301,21 @@ zig version && bpf-linker --version && cargo --version
   这时要同步更新本节的 Zig / bpf-linker 版本号，以及上面两处 CI 里的同名常量
   （`HONK_ZIG_VERSION` / `HONK_BPF_LINKER_VERSION`）。三处对不上就会编译失败。
 
+**编译时提示「honk 工具链不完整」怎么查**：`build/compile.sh` 会逐项列出缺什么
+（cargo 不在 PATH / bpf-linker 无法执行 / zig 版本不符 / zig 无法执行），按提示处理即可。
+想让它自己装：先 `sudo -v` 刷新凭据，再 `HONK_TOOLCHAIN_AUTO=1 bash build/compile.sh`
+（脚本会按 `uname -m` 选对架构）。也可以先手动跑一遍体检：
+
+```bash
+uname -m
+command -v cargo && cargo --version
+command -v zig && zig version
+command -v bpf-linker && bpf-linker --version
+file -L "$(command -v zig)" 2>/dev/null；file -L "$(command -v bpf-linker)" 2>/dev/null
+```
+
+`file` 那两行最关键：如果显示的是 `x86-64` 而你在 `aarch64` 机器上，就是架构装错了。
+
 架构只支持 `x86_64` 与 `aarch64_generic`（Makefile 里的 `HONK_RUST_ARCH_DEPENDS` 限定）。
 
 ### photondns 的处理
