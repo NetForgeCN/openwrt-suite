@@ -7,6 +7,7 @@ diskman|be87fcb92c472821bcedbefbfc8b7e8d9e039449|2026-11-08T04:32:51Z|https://gi
 geodata|2e3845caae172326f02b3406048c7a3613f3dee5|2026-11-08T04:32:51Z|https://github.com/sbwml/v2ray-geodata.git
 honk|749b446ceacb5bca79851b852c6c5de06f4e89a9|2026-11-13T09:48:06Z|https://github.com/QiuSimons/luci-app-honk.git
 kixdns|bea466368823dfc829a13151f804b29b5ab2ca67|2026-11-08T04:32:51Z|https://github.com/JohnsonRan/luci-app-kixdns.git
+mosdns|dbdd91ab8ac8b079b6a3ca1a48d99e970d17111b|2026-11-14T14:51:06Z|https://github.com/sbwml/luci-app-mosdns.git
 nikki|aaf46bf02a9ab2b5a8ab3fcaa5f84c99e56585bf|2026-11-13T10:53:39Z|https://github.com/nikkinikki-org/OpenWrt-nikki.git
 opennexttrace|fcac844b466e22d94da3aef39049cb4ae5ee6f35|2026-11-08T04:32:51Z|https://github.com/haohaoget/luci-app-open_nexttrace.git
 oxidns|1c22f2188b4e92a677c5525f078c59c18f7d84f6|2026-11-13T14:46:31Z|https://github.com/NetForgeCN/luci-app-oxidns.git

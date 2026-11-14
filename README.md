@@ -1,6 +1,6 @@
 # openwrt-suite
 
-OpenWrt 第三方组件**单一聚合 feed 仓库**：把 27 个第三方包（29 个包源目录，含
+OpenWrt 第三方组件**单一聚合 feed 仓库**：把 30 个第三方包（32 个包源目录，含
 argon 自带的 `compat/luci-app-argon-config` 与 oxidns 自带的 `oxidns-core` 两个
 嵌套子包）+ 一份固件 `.config` 统一收进本仓库，每日由 GitHub Actions 从各上游
 同步（纯快照方式）。使用时**只需克隆本仓库**，第三方包就会出现在 `make menuconfig` 里。
@@ -9,7 +9,7 @@ argon 自带的 `compat/luci-app-argon-config` 与 oxidns 自带的 `oxidns-core
 
 ```
 openwrt-suite/
-├── packages/          27 个包（feed 主体，OpenWrt 递归扫描含 Makefile 的目录）
+├── packages/          30 个包（feed 主体，OpenWrt 递归扫描含 Makefile 的目录）
 ├── config/
 │   └── dot.config     固件 .config 快照（跟随 NetForgeCN/OpenWRT main 分支）
 ├── sources.conf       上游同步映射表（源地址、分支、路径映射模式）
@@ -44,7 +44,7 @@ bash openwrt-suite/build/compile.sh --menuconfig
 bash openwrt-suite/build/compile.sh
 ```
 
-第 2 步完成后，27 个第三方包已全部出现在 `make menuconfig` 中，且
+第 2 步完成后，30 个第三方包已全部出现在 `make menuconfig` 中，且
 `config/dot.config` 里原有的选择会自动勾选好：16 个包 + `v2ray-geoip` /
 `v2ray-geosite`（v2ray-geodata 源里的实际数据包，`v2ray-geodata` 本身是虚包）。
 
@@ -52,13 +52,14 @@ bash openwrt-suite/build/compile.sh
 
 | 菜单路径 | 包 |
 |---|---|
-| LuCI → Applications | luci-app-airplay2、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-honk、luci-app-kixdns、luci-app-oxidns、luci-app-nikki、luci-app-photondns、luci-app-photondns-compat、luci-app-pulse、luci-app-temp-status |
+| LuCI → Applications | luci-app-airplay2、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-honk、luci-app-kixdns、luci-app-mosdns、luci-app-nikki、luci-app-oxidns、luci-app-photondns、luci-app-photondns-compat、luci-app-pulse、luci-app-temp-status |
 | LuCI → Themes | luci-theme-argon |
 | Network | dae、ddns-go、kixdns、kixdns-stats、mihomo-alpha、mihomo-meta、nikki、nqptp、open-nexttrace-core、v2ray-geodata |
-| Network → IP Addresses and Names | photondns（Rust DNS 转发器） |
+| Network → IP Addresses and Names | mosdns（Go DNS 转发器）、photondns（Rust DNS 转发器）、v2ray-geoip / v2ray-geosite |
 | Network → Web Servers/Proxies | honk（eBPF 核心，仅 x86_64 / aarch64_generic） |
 | LuCI | luci-app-open_nexttrace（该包 CATEGORY 直接声明为 LuCI） |
 | Sound | airplay2 |
+| Utilities | geo2txt（解包 geosite.dat / geoip.dat 的 C 工具） |
 
 > 自己的配置改动只留在本地 `.config`，不会被覆盖；想强制回到仓库快照版本时用
 > `REFRESH_CONFIG=1`（旧配置会自动备份）。想临时试另一份配置（比如对比测试），
@@ -375,6 +376,40 @@ mihomo（Clash.Meta）的整套 OpenWrt 方案，**一个仓库四个包**，四
 `MetaCubeX/mihomo`，`golang/host` 由 buildroot 自动准备 —— **不需要额外的宿主机工具**
 （与 honk 的 Zig/bpf-linker 不同，和 photondns 一样省心）。`make download` 阶段会把
 mihomo 源码克隆进 `dl/`，之后编译只是 `go build`。
+
+### mosdns 的处理
+
+上游 [sbwml/luci-app-mosdns](https://github.com/sbwml/luci-app-mosdns) 的默认分支是
+**`v5`**（既不是 main 也不是 master，`sources.conf` 里必须写死），一个仓库三个包，
+目录都在顶层、各自带 Makefile：
+
+| 目录 | 包 | 说明 |
+|---|---|---|
+| `mosdns/` | mosdns | Go 主程序：`GoBinPackage` 从 `IrineSistiana/mosdns` v5.3.4 源码编译，带 **30 个上游补丁**（`patches/` 整目录随快照拷入） |
+| `luci-app-mosdns/` | luci-app-mosdns | LuCI 界面：`htdocs/` 下 5 个 JS 视图 + CodeMirror、`ucode` rpcd 后端、ACL、中文 po |
+| `geo2txt/` | geo2txt | 解包 `geosite.dat` / `geoip.dat` 的 C 小工具，是 luci-app 的硬依赖 |
+
+根目录的 `install.sh` 是给终端用户装预编译 ipk 的，不参与构建，所以按 `mode=pkg`
+只拷这三个目录。上游 LICENSE（GPL-3.0）由 `sync.sh` 自动收进 `meta/mosdns/`。
+
+**上游 README 里两条构建前置，在这里都不做**（两处都由本仓库/构建库自己解决）：
+
+1. 「删 `feeds/packages/lang/golang` 换 `sbwml/packages_lang_golang -b 26.x`」——
+   `mosdns/Makefile` 只用官方 `$(TOPDIR)/feeds/packages/lang/golang/golang-package.mk`，
+   `golang/host` 由 buildroot 自动准备；构建库已自行处理 golang 版本与 `GO_AMD64`，
+   不需要替换 feed（替换反而会引入 branch drift）。
+2. 「删官方 `v2ray-geodata` 再 clone `sbwml/v2ray-geodata`」——
+   `luci-app-mosdns` 的 `LUCI_DEPENDS` 是 `+v2ray-geoip +v2ray-geosite +geo2txt +ucode +mosdns`，
+   前两个由本仓库的 `geodata` 源（`packages/v2ray-geodata` + `patches/geodata.sh`
+   的全量 `geoip.dat` 定制）提供；再放一份会撞包名。两个构建库同理已有
+   `replace_v2ray_geodata`。
+
+补充一点：上游的 `.github/workflows/release-build.yml` 在打包前会 `sed` 往
+`mosdns/Makefile` 注入 `GO_PKG_DEFAULT_LDFLAGS:=-w -s -extldflags "-static"`（让它出
+纯静态二进制）。那是上游 SDK 打包的做法，**不属于 README 的构建前置**，本仓库按
+「纯快照、不改上游代码」的原则没有照搬；官方 `golang-package.mk` 默认
+`CGO_ENABLED=1`，产物会动态链接 musl libc，打包时依赖自动解析，不影响固件。
+真需要纯静态时用 `patches/mosdns.sh` 每次同步后注入，不要直接改快照。
 
 ### 版本锁定与可复现
 
