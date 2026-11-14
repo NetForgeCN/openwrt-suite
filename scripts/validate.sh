@@ -5,7 +5,7 @@
 # 校验项:
 #   1. packages/ 下每个目录都必须含 Makefile（feed 可被 OpenWrt 正确扫描）
 #   2. 快照内不得残留 .git 目录
-#   3. sources.lock 与 sources.conf 条目一一对应
+#   3. sources.lock 与 sources.conf 条目一一对应（slug 与源地址都比对）
 #   4. config/dot.config 存在、非空、含有效 Kconfig 行
 #
 
@@ -59,6 +59,20 @@ if [[ -f "$ROOT/sources.conf" && -f "$ROOT/sources.lock" ]]; then
     lock:  $(echo "$lock_slugs"   | tr '\n' ' ')"
     else
         log "sources.lock 覆盖全部 $(echo "$conf_slugs" | wc -l | tr -d ' ') 个源"
+    fi
+
+    # 源地址也要一致：以前只比 slug，手工编辑 lock 时把 URL 大小写写错
+    # （如 gSpotx2f -> gspotx2f）或换错仓库都查不出来，直到同步才暴露。
+    # conf 的 URL 在第 2 字段，lock 的 URL 在第 4 字段。
+    conf_map="$(grep -Ev '^[[:space:]]*(#|$)' "$ROOT/sources.conf" |
+        awk -F'|' '{ print $1, $2 }' | sort)"
+    lock_map="$(awk -F'|' 'NF >= 4 { print $1, $4 }' "$ROOT/sources.lock" | sort)"
+    if [[ "$conf_map" != "$lock_map" ]]; then
+        fail "sources.conf 与 sources.lock 的源地址不一致：
+    conf:  $(echo "$conf_map" | tr '\n' ' ')
+    lock:  $(echo "$lock_map" | tr '\n' ' ')"
+    else
+        log "源地址与 sources.conf 一致（$(printf '%s\n' "$conf_map" | grep -c . || true) 个源）"
     fi
 else
     fail "缺少 sources.conf 或 sources.lock"

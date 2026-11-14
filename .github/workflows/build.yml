@@ -5,7 +5,8 @@ on:
     # 每天 18:45 UTC = 北京时间 02:45。
     # daily-sync 是 18:30 UTC（02:30 北京），留 15 分钟给它收尾；构建用独立 cron，
     # 同步失败不阻塞出固件（只是当晚用前一天的快照）。
-    # 热构建约 3~3.5 小时，08:00 前完成；首次冷构建可能超 5 小时，建议先手动跑一次预热。
+    # 热构建约 3~3.5 小时，正常 06:00 前后完成（不晚于 08:00）；
+    # 首次冷构建可能超 5 小时，建议先手动跑一次预热缓存。
     - cron: "45 18 * * *"
   workflow_dispatch:
 
@@ -22,7 +23,9 @@ env:
   DEBIAN_FRONTEND: noninteractive
   WORKDIR: ${{ github.workspace }}/openwrt
   # 用本次 checkout 的 suite（脚本、packages、config/dot.config 都来自同一提交，
-  # compile.sh 默认就从 $SUITE_DIR/config/dot.config 取配置），不再让脚本自己克隆/更新
+  # compile.sh 默认就从 $SUITE_DIR/config/dot.config 取配置），不再让脚本自己克隆/更新。
+  # 00-feeds-order.sh 检测到这个本地目录会用 src-link 直接挂成 feed，
+  # 避免 feeds update -a 又去克隆远端 main 导致包与配置来自不同提交。
   SUITE_DIR: ${{ github.workspace }}
   SKIP_UPDATE: "1"
   RELEASE_DIR: ${{ github.workspace }}/release-assets

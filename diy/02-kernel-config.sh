@@ -12,7 +12,8 @@
 # 环境变量:
 #   TARGET_SUBDIR   target/linux 下的子目录（默认 x86）
 #   KERNEL_CONFIG   手动指定内核配置文件路径（默认自动探测最新版本）
-#   KERNEL_OPTIONS  要设定的内核选项，格式 "KEY|value"，空格分隔多项
+# 说明: KERNEL_OPTIONS 是脚本内置的固定清单（见下方数组），不从环境变量读取 ——
+#       这些选项跟内核版本和目标硬件绑定，需要改时直接改数组。
 #
 # 状态输出: 追加写入 <openwrt>/.suite-diy-state.env（KERNEL_CHANGED）
 #
@@ -28,6 +29,7 @@ TARGET_SUBDIR="${TARGET_SUBDIR:-x86}"
 KERNEL_CONFIG="${KERNEL_CONFIG:-}"
 STATE_FILE="$OW/.suite-diy-state.env"
 
+# 内置清单，不读环境变量（与上方「环境变量」说明一致）
 KERNEL_OPTIONS=(
     "NETKIT|CONFIG_NETKIT=y"
     "X86_NATIVE_CPU|# CONFIG_X86_NATIVE_CPU is not set"

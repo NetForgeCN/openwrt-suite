@@ -2,8 +2,8 @@
 #
 # OpenWrt (x86-64) 一键构建脚本 —— openwrt-suite 单源版
 #
-# 与旧版的区别: 所有第三方组件（18 个包 + .config）全部来自自有的聚合仓库
-# openwrt-suite（https://github.com/NetForgeCN/openwrt-suite），构建时只需
+# 与旧版的区别: 所有第三方组件（30 个包 / 32 个包源目录 + .config）全部来自
+# 自有的聚合仓库 openwrt-suite（https://github.com/NetForgeCN/openwrt-suite），构建时只需
 # 拉取这一个源；官方 feed 同名包（nqptp / v2ray-geodata / ddns-go 等）由
 # feeds.conf 顺序保证优先使用 suite 版本，不再需要任何特判。
 # 不能聚合的部分（官方 feed 补丁 / 内核配置）由仓库内 diy/ 脚本现场处理。
@@ -258,7 +258,10 @@ prepare_suite() {
 
 configure_feeds() {
     log "配置 suite feed（置于官方 feeds 之前）"
-    bash "$SUITE_DIR/diy/00-feeds-order.sh" "$WORKDIR" ||
+    # SUITE_DIR 是脚本内部变量（未必被 export），显式传给子脚本：
+    # 00-feeds-order.sh 靠它判断能否用 src-link 挂载本地 checkout，
+    # 保证 feeds 里的包与本次运行的 .config / diy 脚本同属一个提交。
+    SUITE_DIR="$SUITE_DIR" bash "$SUITE_DIR/diy/00-feeds-order.sh" "$WORKDIR" ||
         die "feeds 顺序配置失败"
 }
 
@@ -285,9 +288,13 @@ resolve_link() {
 verify_feed_priority() {
     log "校验第三方包来源（防止被官方同名包抢占）"
 
-    local suite_feeds_dir pkg link real fixed=0 total=0 bad=""
-    suite_feeds_dir="$(cd "$WORKDIR/feeds/suite" 2>/dev/null && pwd -P || true)"
-    [[ -n "$suite_feeds_dir" ]] || die "找不到 $WORKDIR/feeds/suite（feeds update 未成功？）"
+    # 基准取 packages/ 的真实路径，而不是 feeds/suite 本身：src-link 模式下
+    # feeds/suite 与 feeds/suite/packages 都是软链，package/feeds/suite/<pkg>
+    # 会一路解析到 suite 仓库的 packages/<pkg>；拿 feeds/suite 做前缀会把
+    # 所有包误判成「来自别的 feed」，进而反复重装并报错。
+    local suite_pkg_dir pkg link real fixed=0 total=0 bad=""
+    suite_pkg_dir="$(cd "$WORKDIR/feeds/suite/packages" 2>/dev/null && pwd -P || true)"
+    [[ -n "$suite_pkg_dir" ]] || die "找不到 $WORKDIR/feeds/suite/packages（feeds update 未成功？）"
 
     shopt -s nullglob
 
@@ -301,7 +308,7 @@ verify_feed_priority() {
             [[ -e "$link" || -L "$link" ]] || continue
             real="$(resolve_link "$link")"
 
-            [[ -n "$real" && "$real" == "$suite_feeds_dir"/* ]] && continue   # 已指向 feeds/suite
+            [[ -n "$real" && "$real" == "$suite_pkg_dir"/* ]] && continue   # 已指向 suite 的 packages/
 
             warn "包 $pkg 当前指向 $(basename "$(dirname "$link")") feed，改用 suite 版本"
             rm -f -- package/feeds/*/"$pkg"                        # 清掉错误/悬空链接
@@ -319,7 +326,7 @@ verify_feed_priority() {
         for link in package/feeds/*/"$pkg"; do
             [[ -e "$link" || -L "$link" ]] || continue
             real="$(resolve_link "$link")"
-            [[ -n "$real" && "$real" == "$suite_feeds_dir"/* ]] || bad="$bad $pkg"
+            [[ -n "$real" && "$real" == "$suite_pkg_dir"/* ]] || bad="$bad $pkg"
         done
     done
 
@@ -329,7 +336,7 @@ verify_feed_priority() {
     if ((fixed == 1)); then
         log "已纠正同名包来源（共检查 ${total} 个包目录）"
     else
-        log "同名包来源正确（共检查 ${total} 个包目录，全部指向 feeds/suite）"
+        log "同名包来源正确（共检查 ${total} 个包目录，全部指向 suite 的 packages/）"
     fi
 }
 
@@ -670,7 +677,8 @@ OpenWrt 一键构建脚本（openwrt-suite 单源版）
   -h, --help        显示本帮助
   -j, --jobs N      指定并行编译任务数（默认自动探测 CPU 核心数）
   -m, --menuconfig  只准备到可配置状态并打开 make menuconfig（更新源码/feeds、
-                    安装第三方包、写入 .config），退出后可直接再运行本脚本编译
+                    安装第三方包、写入 .config；跳过仅编译期需要的 honk 工具链
+                    预检），退出后可直接再运行本脚本编译
 
 环境变量：
   WORKDIR           OpenWrt 源码目录（默认 $HOME/openwrt）
@@ -722,12 +730,18 @@ main() {
     verify_feed_priority
     feed_patches
     prepare_config
-    ensure_honk_toolchain
+    # honk 的 Rust/Zig/bpf-linker 是【编译期】的宿主机依赖，配置阶段不该拦路：
+    # --menuconfig 的目的正是让用户进界面勾选/取消包（可能正好要取消 honk），
+    # 因此在只做配置时跳过预检；正式编译前仍会逐项检查。
+    if [[ "$MENUCONFIG_ONLY" != "1" ]]; then
+        ensure_honk_toolchain
+    fi
     kernel_patches
     clean_stale_artifacts
 
     # --menuconfig: 准备完就打开配置界面，供手工勾选第三方包
     if [[ "$MENUCONFIG_ONLY" == "1" ]]; then
+        log "已跳过 honk 宿主机工具链预检（--menuconfig 只做配置，不编译）"
         log "第三方包已全部安装到 package/feeds/，打开 make menuconfig"
         log "提示：在 LuCI / Network / Utilities 等菜单下可找到 suite 提供的包"
         log "选完保存退出后，直接重新运行本脚本（不加 --menuconfig）即可按新配置编译"

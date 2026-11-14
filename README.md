@@ -16,7 +16,10 @@ openwrt-suite/
 ├── sources.lock       最近一次同步对应的上游 commit（版本可追溯 / 构建可复现）
 ├── meta/              多包上游的许可证文件副本（许可证随快照保留）
 ├── patches/
-│   └── geodata.sh     v2ray-geodata 同步后补丁（GEOIP_URL 改用全量 geoip.dat）
+│   ├── geodata.sh     v2ray-geodata 同步后补丁（GEOIP_URL 改用全量 geoip.dat）
+│   └── photondns.sh   把上游仓库根的 Cargo 工程原样 stage 进 photondns 包目录
+├── .github/workflows/ sync.yml（每日同步上游）、build.yml（每日固件构建 + Release）
+├── renovate.json      忽略 packages/ 快照，只升级本仓库自身的 workflow 依赖
 ├── diy/               构建期现场脚本（聚合不进 feed 的部分）
 │   ├── 00-feeds-order.sh    feeds.conf 顺序：suite 置于官方 feeds 之前
 │   ├── 01-feed-patches.sh   官方 packages feed 补丁（Rust LLVM / Golang GOAMD64）
@@ -45,21 +48,31 @@ bash openwrt-suite/build/compile.sh
 ```
 
 第 2 步完成后，30 个第三方包已全部出现在 `make menuconfig` 中，且
-`config/dot.config` 里原有的选择会自动勾选好：16 个包 + `v2ray-geoip` /
-`v2ray-geosite`（v2ray-geodata 源里的实际数据包，`v2ray-geodata` 本身是虚包）。
+`config/dot.config` 里原有的选择会自动勾选好：当前快照是 **22 个 suite 包 +
+`v2ray-geoip` / `v2ray-geosite`**（后者是 v2ray-geodata 源里的实际数据包，
+`v2ray-geodata` 本身是虚包）。这份 `.config` 由 `sources.conf` 的 `config` 源
+从 NetForgeCN/OpenWRT 同步，不会自动包含后来新接入的包（如 mosdns、
+luci-app-mosdns、geo2txt），需要时在 menuconfig 里自行勾选；实际以
+`config/dot.config` 为准。
 
-这些包在 menuconfig 中的位置：
+这些包在 menuconfig 中的位置（按各包 Makefile 的 `CATEGORY` / `SUBMENU` 实核对）：
 
 | 菜单路径 | 包 |
 |---|---|
-| LuCI → Applications | luci-app-airplay2、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-honk、luci-app-kixdns、luci-app-mosdns、luci-app-nikki、luci-app-oxidns、luci-app-photondns、luci-app-photondns-compat、luci-app-pulse、luci-app-temp-status |
-| LuCI → Themes | luci-theme-argon |
-| Network | dae、ddns-go、kixdns、kixdns-stats、mihomo-alpha、mihomo-meta、nikki、nqptp、open-nexttrace-core、v2ray-geodata |
-| Network → IP Addresses and Names | mosdns（Go DNS 转发器）、photondns（Rust DNS 转发器）、v2ray-geoip / v2ray-geosite |
-| Network → Web Servers/Proxies | honk（eBPF 核心，仅 x86_64 / aarch64_generic） |
-| LuCI | luci-app-open_nexttrace（该包 CATEGORY 直接声明为 LuCI） |
+| LuCI → 3. Applications | luci-app-airplay2、luci-app-argon-config、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-honk、luci-app-kixdns、luci-app-mosdns、luci-app-nikki、luci-app-open_nexttrace、luci-app-oxidns、luci-app-photondns、luci-app-photondns-compat、luci-app-pulse、luci-app-temp-status |
+| LuCI → 4. Themes | luci-theme-argon |
+| Network → IP Addresses and Names | ddns-go、kixdns、mosdns（Go DNS 转发器）、photondns（Rust DNS 转发器）、v2ray-geodata（虚包，实际产出 v2ray-geoip / v2ray-geosite） |
+| Network → Web Servers/Proxies | dae、honk（eBPF 核心，仅 x86_64 / aarch64_generic） |
+| Network → DNS | oxidns-core |
+| Network（无子菜单） | kixdns-stats、mihomo-alpha、mihomo-meta、nikki、nqptp、open-nexttrace-core |
 | Sound | airplay2 |
 | Utilities | geo2txt（解包 geosite.dat / geoip.dat 的 C 工具） |
+
+> LuCI 包不写 `CATEGORY` / `SUBMENU` 时由 `luci.mk` 按 `LUCI_TYPE` 归类：
+> `app` → `LuCI / 3. Applications`，`theme` → `LuCI / 4. Themes`。
+> `luci-app-open_nexttrace` 显式写了 `CATEGORY:=LuCI` + `SUBMENU:=3. Applications`，
+> 结果与默认一致；`luci-app-argon-config` 是 argon 主题目录里的嵌套子包，也在
+> Applications 下。
 
 > 自己的配置改动只留在本地 `.config`，不会被覆盖；想强制回到仓库快照版本时用
 > `REFRESH_CONFIG=1`（旧配置会自动备份）。想临时试另一份配置（比如对比测试），
@@ -80,15 +93,20 @@ make menuconfig
 
 ### 方式二：接入已有构建
 
-在 `./scripts/feeds update -a` 之前执行：
+`./scripts/feeds` 只存在于 OpenWrt 源码树里，所以整段要在源码树内执行；
+三个 `diy/` 脚本用绝对路径调用，第一个参数仍是源码树目录：
 
 ```bash
-bash openwrt-suite/diy/00-feeds-order.sh <你的 openwrt 目录>
+OW=$HOME/openwrt
+SUITE=$HOME/openwrt-suite
+
+cd "$OW"
+bash "$SUITE/diy/00-feeds-order.sh" "$OW"   # 在 feeds update 之前
 ./scripts/feeds update -a
 ./scripts/feeds install -a
-bash openwrt-suite/diy/01-feed-patches.sh <你的 openwrt 目录>
-# .config 直接用 config/dot.config
-bash openwrt-suite/diy/02-kernel-config.sh <你的 openwrt 目录>
+bash "$SUITE/diy/01-feed-patches.sh" "$OW"
+# .config 直接用 "$SUITE/config/dot.config"
+bash "$SUITE/diy/02-kernel-config.sh" "$OW"
 ```
 
 ## 原理：克隆之后到底发生了什么
@@ -96,9 +114,9 @@ bash openwrt-suite/diy/02-kernel-config.sh <你的 openwrt 目录>
 ```
 git clone 本仓库  ──►  一个标准 OpenWrt feed（顶层 packages/ 里每个目录 = 一个包）
                               │
-              feeds.conf 一行 src-git suite <url>
+              feeds.conf 首行 src-git suite <url>（本地 checkout 时为 src-link）
                               │
-   ./scripts/feeds update -a  ──►  克隆到 feeds/suite/
+   ./scripts/feeds update -a  ──►  克隆 / 软链到 feeds/suite/
    ./scripts/feeds install -a ──►  在 package/feeds/suite/ 下为每个包建符号链接
                               │
         OpenWrt 的包扫描（include/scan.mk）递归查找所有含 Makefile
@@ -109,9 +127,15 @@ git clone 本仓库  ──►  一个标准 OpenWrt feed（顶层 packages/ 里
 
 四个关键事实（均已对本仓库实测/源码核对）：
 
-1. **扫描是递归的**：`scan.mk` 用 `find -L $(SCAN_DIR) -name Makefile`，没有
-   `maxdepth` 限制，所以 `feeds/suite/packages/<包名>/` 这种多一层嵌套完全没问题
-   （官方 packages feed 本身就是 `lang/`、`net/` 这种嵌套结构）。
+1. **扫描是递归的，但有深度上限**：`scripts/feeds` 给 `update_index` 传的是
+   `SCAN_DEPTH=5`，`include/scan.mk` 因此执行
+   `find -L $(SCAN_DIR) -mindepth 1 -maxdepth 5 -name Makefile`。
+   所以 `feeds/suite/packages/<包名>/Makefile` 这种多一层嵌套没问题
+   （官方 packages feed 本身也是 `lang/`、`net/` 结构）。
+   **但余量已经用满**：最深的
+   `feeds/suite/packages/luci-theme-argon/compat/luci-app-argon-config/Makefile`
+   正好落在第 5 层。上游哪天再往下嵌一层，那个包会被静默跳过
+   （`feeds install` 不报错、包直接从 menuconfig 消失），新增嵌套包时要留意。
 2. **包路径无关紧要**：本仓库所有 Makefile 都用 `$(TOPDIR)` / `$(INCLUDE_DIR)`
    绝对引用，没有一处相对路径 `include`，因此放在哪一层都能正常解析。
 3. **同名包由 feeds 顺序决定**：`scripts/feeds` 的 `install -a` 按 feeds.conf
@@ -140,10 +164,18 @@ Release（保留最近 7 个，artifact 保留 3 天）。触发方式是独立 
 出固件，只是当晚沿用前一天的快照。
 
 构建直接使用 workflow 所在提交的 suite（脚本、`packages/`、`config/dot.config`
-同源），缓存策略与其他构建仓库一致 —— dl（key 绑 dot.config / compile.sh）、
+同源）：`SUITE_DIR` 指向本次 checkout，`00-feeds-order.sh` 检测到它是本地 suite
+仓库就写 `src-link suite <构建树/feeds/.suite-local>`，该目录里只有一个
+`packages` 软链指向 checkout 的 `packages/`；`feeds update -a` 把它挂成 feed，
+不再克隆远端 main —— 包快照与配置严格同属一个提交。只暴露 `packages/` 一层
+是必要的：`scan.mk` 用 `find -L` 递归扫整个 feed 目录，直接挂 checkout 根会把
+构建树里的 Makefile 一起扫成包，还会形成符号链接环。本地手动跑 `compile.sh`
+时同理（`SUITE_DIR` 由脚本显式传给子脚本）。
+缓存策略与其他构建仓库一致 —— dl（key 绑 dot.config / compile.sh）、
 staging_dir 工具链（含 photondns 需要的 rust/host）、ccache（key 带 run_id）。
-参考其他两个构建仓库的真实数据：热构建约 3~3.5 小时，正常 **06:00 前后完成**；
-**首次冷构建会超 5 小时**，启用本 workflow 后应先手动 Run workflow 预热一次缓存。
+参考其他两个构建仓库的真实数据：热构建约 3~3.5 小时，正常 **06:00 前后完成
+（不晚于 08:00）**；**首次冷构建会超 5 小时**，启用本 workflow 后应先手动
+Run workflow 预热一次缓存。
 honk 的宿主机工具链由 `compile.sh` 里的 `ensure_honk_toolchain` 按 `.config`
 自动准备（不选 honk 则整段跳过）。
 
@@ -153,8 +185,15 @@ honk 的宿主机工具链由 `compile.sh` 里的 `ensure_honk_toolchain` 按 `.
 
 OpenWrt 的 `feeds install -a` 对同名包按 feeds.conf 中的**出现顺序**取先到者。
 官方 packages feed 也有 `nqptp`、`v2ray-geodata`、`ddns-go`、`dae` 等同名包，
-`diy/00-feeds-order.sh` 把 `src-git suite ...` 插到所有官方 feed 之前，
+`diy/00-feeds-order.sh` 把 suite 行插到所有官方 feed 之前，
 因此这些包始终使用本仓库版本，无需任何卸载/删除特判。
+手工接入已有构建（没设置 `SUITE_DIR`）时写入的是 `src-git suite <URL>`；
+由 `compile.sh` 调用时 `SUITE_DIR` 指向本地仓库，会改写为
+`src-link suite <构建树/feeds/.suite-local>`：脚本建一个只含 `packages` 软链的
+干净目录（指向 `SUITE_DIR/packages`），`feeds update -a` 会 `ln -s` 该目录并
+照常生成 index（`scan.mk` 用 `find -L` 跟随符号链接），保证用的是同一份代码。
+`compile.sh` 的同名包校验也以 `feeds/suite/packages` 的真实路径为基准，
+因此 `src-git` 与 `src-link` 两种接入方式行为一致。
 
 **外加一道保险**：`scripts/feeds` 的 `install -a` 会跳过「已安装」的源包名，
 所以旧构建树里残留的官方版本链接**不会被自动纠正**。`compile.sh` 在每个包安装后
@@ -212,8 +251,11 @@ fork 的源头 [sbwml/v2ray-geodata](https://github.com/sbwml/v2ray-geodata)，�
 所以**新同步下来的快照里没有它**。两条路：
 
 1. 宿主机装好工具链后编译（需能访问 crates.io、ziglang.org、aya-rs releases）；
-2. 想跳过编译：把已生成的 `honk-core.bin` 放进 `package/feeds/suite/honk/files/`，
-   构建脚本带 `--if-needed`，无 `.stamp` 时视为预编译产物直接复用。
+2. 想跳过编译：把已生成的 `honk-core.bin` 放进 `package/feeds/suite/honk/files/`。
+   `honk/Makefile` 的 `Build/Compile` 里已经内置
+   `build_honk_core.sh --if-needed`，没有 `.stamp` 时会把现成的 `.bin` 当作
+   预编译产物直接复用 —— **这个参数由 Makefile 传入，不要（也不能）传给
+   `build/compile.sh`**（它只认 `--help` / `--jobs` / `--menuconfig`）。
 
 #### 宿主机依赖（honk 核心专用）
 
@@ -312,7 +354,7 @@ uname -m
 command -v cargo && cargo --version
 command -v zig && zig version
 command -v bpf-linker && bpf-linker --version
-file -L "$(command -v zig)" 2>/dev/null；file -L "$(command -v bpf-linker)" 2>/dev/null
+file -L "$(command -v zig)" 2>/dev/null; file -L "$(command -v bpf-linker)" 2>/dev/null
 ```
 
 `file` 那两行最关键：如果显示的是 `x86-64` 而你在 `aarch64` 机器上，就是架构装错了。
@@ -430,8 +472,9 @@ mihomo 源码克隆进 `dl/`，之后编译只是 `go build`。
 
 **聚合进来的第三方包**许可证**原样保留**：`mode=all` 的包 LICENSE 在包目录内；
 `mode=pkg` 的多包上游其 LICENSE / THIRD-PARTY-NOTICES 副本收于 `meta/<slug>/`。
-本仓库不对任何上游代码做修改，唯一的例外是 `patches/geodata.sh` 声明的
-GEOIP_URL 一行定制。
+本仓库不对任何上游代码做修改：唯一会改动上游 Makefile 内容的是
+`patches/geodata.sh` 声明的 GEOIP_URL 一行定制；`patches/photondns.sh` 只是把
+上游仓库根的 Cargo 工程**原样补齐**到包目录（新增文件、不改动任何已有内容）。
 
 > 换句话说：MIT 只覆盖本仓库自己的脚本与文档；每个 `packages/<name>/` 下的代码
 > 仍按它自己的许可证（GPL-3.0、Apache-2.0 等）分发，装机时以包内 LICENSE 为准。
