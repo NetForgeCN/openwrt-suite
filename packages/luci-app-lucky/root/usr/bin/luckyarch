@@ -1,0 +1,37 @@
+#!/bin/sh
+
+arch="$(uname -m)"
+case "$arch" in
+	x86_64|amd64)
+		cpucore="x86_64"
+		;;
+	i*86)
+		cpucore="i386"
+		;;
+	aarch64*|armv8*)
+		cpucore="arm64"
+		;;
+	armv7*)
+		if grep -q 'vfp' /proc/cpuinfo 2>/dev/null; then
+			cpucore="armv7"
+		else
+			cpucore="armv5"
+		fi
+		;;
+	arm*)
+		cpucore="armv5"
+		;;
+	mips*)
+		mipstype="$(printf 'I' | hexdump -o 2>/dev/null | awk '{ print substr($2,6,1); exit }')"
+		if [ "$mipstype" = "0" ]; then
+			cpucore="mips_softfloat"
+		else
+			cpucore="mipsle_softfloat"
+		fi
+		;;
+	*)
+		cpucore="$arch"
+		;;
+esac
+
+printf '%s\n' "$cpucore"

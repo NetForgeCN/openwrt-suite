@@ -1,0 +1,46 @@
+name: Bump Lucky core
+
+# 每天在北京时间 01:30 检查官网是否有新的稳定版；有则把版本与逐架构
+# sha256 写进 lucky/Makefile 并提交。构建期永远只读仓库里钉死的值，
+# 不会在 make download / menuconfig 时去探测"最新版"。
+on:
+  schedule:
+    - cron: "30 17 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bump-lucky-core
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Check latest release and refresh the pin
+        id: bump
+        run: python3 scripts/bump-version.py
+
+      - name: Verify the offline-bundle contract
+        if: steps.bump.outputs.changed == 'true'
+        run: python3 scripts/verify-bundle.py
+
+      - name: Commit the new pin
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          NEW_VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lucky/Makefile lucky/assets.json
+          git commit -m "chore: pin Lucky core ${NEW_VERSION}" \
+            -m "Automated by scripts/bump-version.py. All 13 Linux assets were
+          downloaded and sha256-verified; the tarball layout was checked for a
+          top-level executable ELF named lucky."
+          git push origin HEAD:main

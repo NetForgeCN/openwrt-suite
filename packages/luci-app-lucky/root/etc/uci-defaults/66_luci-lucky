@@ -1,0 +1,12 @@
+#!/bin/sh
+
+uci -q batch <<-EOF >/dev/null
+	delete ucitrack.@lucky[-1]
+	add ucitrack lucky
+	set ucitrack.@lucky[-1].init=lucky
+	commit ucitrack
+EOF
+
+chmod 0755 /usr/bin/luckyarch 2>/dev/null || true
+rm -rf /tmp/luci-indexcache* /tmp/luci-modulecache/ 2>/dev/null
+exit 0

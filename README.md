@@ -1,15 +1,16 @@
 # openwrt-suite
 
-OpenWrt 第三方组件**单一聚合 feed 仓库**：把 30 个第三方包（32 个包源目录，含
-argon 自带的 `compat/luci-app-argon-config` 与 oxidns 自带的 `oxidns-core` 两个
-嵌套子包）+ 一份固件 `.config` 统一收进本仓库，每日由 GitHub Actions 从各上游
-同步（纯快照方式）。使用时**只需克隆本仓库**，第三方包就会出现在 `make menuconfig` 里。
+OpenWrt 第三方组件**单一聚合 feed 仓库**：把 31 个第三方包（34 个包源目录，含
+argon 自带的 `compat/luci-app-argon-config`、oxidns 自带的 `oxidns-core`、
+lucky 自带的 `lucky/` 三个嵌套子包）+ 一份固件 `.config` 统一收进本仓库，
+每日由 GitHub Actions 从各上游同步（纯快照方式）。使用时**只需克隆本仓库**，
+第三方包就会出现在 `make menuconfig` 里。
 
 ## 仓库结构
 
 ```
 openwrt-suite/
-├── packages/          30 个包（feed 主体，OpenWrt 递归扫描含 Makefile 的目录）
+├── packages/          31 个包（feed 主体，OpenWrt 递归扫描含 Makefile 的目录）
 ├── config/
 │   └── dot.config     固件 .config 快照（跟随 NetForgeCN/OpenWRT main 分支）
 ├── sources.conf       上游同步映射表（源地址、分支、路径映射模式）
@@ -47,24 +48,24 @@ bash openwrt-suite/build/compile.sh --menuconfig
 bash openwrt-suite/build/compile.sh
 ```
 
-第 2 步完成后，30 个第三方包已全部出现在 `make menuconfig` 中，且
+第 2 步完成后，31 个第三方包已全部出现在 `make menuconfig` 中，且
 `config/dot.config` 里原有的选择会自动勾选好：当前快照是 **22 个 suite 包 +
 `v2ray-geoip` / `v2ray-geosite`**（后者是 v2ray-geodata 源里的实际数据包，
 `v2ray-geodata` 本身是虚包）。这份 `.config` 由 `sources.conf` 的 `config` 源
 从 NetForgeCN/OpenWRT 同步，不会自动包含后来新接入的包（如 mosdns、
-luci-app-mosdns、geo2txt），需要时在 menuconfig 里自行勾选；实际以
-`config/dot.config` 为准。
+luci-app-mosdns、geo2txt、lucky、luci-app-lucky），需要时在 menuconfig 里
+自行勾选；实际以 `config/dot.config` 为准。
 
 这些包在 menuconfig 中的位置（按各包 Makefile 的 `CATEGORY` / `SUBMENU` 实核对）：
 
 | 菜单路径 | 包 |
 |---|---|
-| LuCI → 3. Applications | luci-app-airplay2、luci-app-argon-config、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-honk、luci-app-kixdns、luci-app-mosdns、luci-app-nikki、luci-app-open_nexttrace、luci-app-oxidns、luci-app-photondns、luci-app-photondns-compat、luci-app-pulse、luci-app-temp-status |
+| LuCI → 3. Applications | luci-app-airplay2、luci-app-argon-config、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-honk、luci-app-kixdns、luci-app-lucky、luci-app-mosdns、luci-app-nikki、luci-app-open_nexttrace、luci-app-oxidns、luci-app-photondns、luci-app-photondns-compat、luci-app-pulse、luci-app-temp-status |
 | LuCI → 4. Themes | luci-theme-argon |
 | Network → IP Addresses and Names | ddns-go、kixdns、mosdns（Go DNS 转发器）、photondns（Rust DNS 转发器）、v2ray-geodata（虚包，实际产出 v2ray-geoip / v2ray-geosite） |
 | Network → Web Servers/Proxies | dae、honk（eBPF 核心，仅 x86_64 / aarch64_generic） |
 | Network → DNS | oxidns-core |
-| Network（无子菜单） | kixdns-stats、mihomo-alpha、mihomo-meta、nikki、nqptp、open-nexttrace-core |
+| Network（无子菜单） | kixdns-stats、lucky（静态核心，编译期内置）、mihomo-alpha、mihomo-meta、nikki、nqptp、open-nexttrace-core |
 | Sound | airplay2 |
 | Utilities | geo2txt（解包 geosite.dat / geoip.dat 的 C 工具） |
 
@@ -452,6 +453,25 @@ mihomo 源码克隆进 `dl/`，之后编译只是 `go build`。
 「纯快照、不改上游代码」的原则没有照搬；官方 `golang-package.mk` 默认
 `CGO_ENABLED=1`，产物会动态链接 musl libc，打包时依赖自动解析，不影响固件。
 真需要纯静态时用 `patches/mosdns.sh` 每次同步后注入，不要直接改快照。
+
+### lucky 的处理（自有打包层，核心编译期内置）
+
+`lucky` 源指向自有仓库 [NetForgeCN/luci-app-lucky](https://github.com/NetForgeCN/luci-app-lucky)，
+和 oxidns 同形态：`mode=all` 整仓拷成 `packages/luci-app-lucky/`，根 Makefile 是
+`luci-app-lucky`，内部 `lucky/Makefile` 是核心子包，由 OpenWrt 递归扫描识别。
+
+它按「核心必须在编译后的固件中、非极端情况不接受首次在线拉取」的约定实现：
+
+| 约定 | 做法 |
+|---|---|
+| 核心进固件 | `lucky/Makefile` 用标准 `PKG_SOURCE` + 逐架构 sha256 在 `make download` 阶段下载官方静态二进制，`Package/install` 装到 `/usr/bin/lucky`，随 rootfs 打包 |
+| 开机零联网 | `init.d`/`uci-defaults`/`postinst`/LuCI JS 中无任何下载核心的语句；找不到二进制只写日志并 `return 1` |
+| 依赖不脱钩 | `LUCI_DEPENDS` 含 `+lucky`，选界面必然带上核心 |
+| 自动跟进最新版 | 源仓库的 `bump.yml` 每天 01:30（北京）检查官网 `release.66666.host`，重算 13 个 Linux 资产 sha256 并改写 pin；**编译期不探测最新版**，本仓库次日 02:30 同步到新 pin |
+
+当前钉在 3.8.1，x86_64 核心 17.08 MiB 静态 ELF。快照会连 `.github/`、`scripts/`、
+`lucky/assets.json` 一起拷入，这些没有 Makefile，不参与 feed 扫描。
+许可证见包目录内 `LICENSE`（GPL-3.0 全文）与 `NOTICE`（核心 MIT / 界面 GPL-3.0 归属）。
 
 ### 版本锁定与可复现
 

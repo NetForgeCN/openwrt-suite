@@ -1,0 +1,73 @@
+{
+  "assets": {
+    "arm64": {
+      "file": "lucky_3.8.1_Linux_arm64.tar.gz",
+      "sha256": "ba81af2afab7e18b4c403eebaf11dc361ef56282d4912199209db786386293c3",
+      "url": "https://release.66666.host/v3.8.1/3.8.1_lucky/lucky_3.8.1_Linux_arm64.tar.gz"
+    },
+    "armv5": {
+      "file": "lucky_3.8.1_Linux_armv5.tar.gz",
+      "sha256": "caf397b88d7549bf851851f7a3491a99be42378f17994d82430eb9e15f04fd0b",
+      "url": "https://release.66666.host/v3.8.1/3.8.1_lucky/lucky_3.8.1_Linux_armv5.tar.gz"
+    },
+    "armv6": {
+      "file": "lucky_3.8.1_Linux_armv6.tar.gz",
+      "sha256": "ce2a0bd5fabda2c3c0a9c1c1ad4955673bb3f7d05657cd5491b33a5f53e81718",
+      "url": "https://release.66666.host/v3.8.1/3.8.1_lucky/lucky_3.8.1_Linux_armv6.tar.gz"
+    },
+    "armv7": {
+      "file": "lucky_3.8.1_Linux_armv7.tar.gz",
+      "sha256": "d7175479056237b48e36521e55ef5f042fae95c4df18fc42a173fbee79aa36ef",
+      "url": "https://release.66666.host/v3.8.1/3.8.1_lucky/lucky_3.8.1_Linux_armv7.tar.gz"
+    },
+    "i386": {
+      "file": "lucky_3.8.1_Linux_i386.tar.gz",
+      "sha256": "2825c177dd2a3f4e04d1bf92437dd711b08054123e062e8b418215ca845c6209",
+      "url": "https://release.66666.host/v3.8.1/3.8.1_lucky/lucky_3.8.1_Linux_i386.tar.gz"
+    },
+    "mips64_hardfloat": {
+      "file": "lucky_3.8.1_Linux_mips64_hardfloat.tar.gz",
+      "sha256": "9cb3b6845c4da347bc5678886686fb44a808b63c4eaaaf59b4782447929f797a",
+      "url": "https://release.66666.host/v3.8.1/3.8.1_lucky/lucky_3.8.1_Linux_mips64_hardfloat.tar.gz"
+    },
+    "mips64_softfloat": {
+      "file": "lucky_3.8.1_Linux_mips64_softfloat.tar.gz",
+      "sha256": "634043984f6dfb0fbb30e0c529de04094615a01fa5ac3548f3a424fe04409ded",
+      "url": "https://release.66666.host/v3.8.1/3.8.1_lucky/lucky_3.8.1_Linux_mips64_softfloat.tar.gz"
+    },
+    "mips_hardfloat": {
+      "file": "lucky_3.8.1_Linux_mips_hardfloat.tar.gz",
+      "sha256": "1f01079726b5a22cd3e1790ded187f6bb2a738a19539036452fee799470878fe",
+      "url": "https://release.66666.host/v3.8.1/3.8.1_lucky/lucky_3.8.1_Linux_mips_hardfloat.tar.gz"
+    },
+    "mips_softfloat": {
+      "file": "lucky_3.8.1_Linux_mips_softfloat.tar.gz",
+      "sha256": "9e4a82285fc5f726b6c859b5fd1cc9906d5c40a1284ae223eaf06a50ccaeab68",
+      "url": "https://release.66666.host/v3.8.1/3.8.1_lucky/lucky_3.8.1_Linux_mips_softfloat.tar.gz"
+    },
+    "mipsle_hardfloat": {
+      "file": "lucky_3.8.1_Linux_mipsle_hardfloat.tar.gz",
+      "sha256": "d48ea9f0cc7249fa7cdd9f98874eb38253acb59a2f315868aed7b760d495e93a",
+      "url": "https://release.66666.host/v3.8.1/3.8.1_lucky/lucky_3.8.1_Linux_mipsle_hardfloat.tar.gz"
+    },
+    "mipsle_softfloat": {
+      "file": "lucky_3.8.1_Linux_mipsle_softfloat.tar.gz",
+      "sha256": "0528a877225c14428a85de00814c43174e0023f5d826be43ebcc86bc0187fad0",
+      "url": "https://release.66666.host/v3.8.1/3.8.1_lucky/lucky_3.8.1_Linux_mipsle_softfloat.tar.gz"
+    },
+    "riscv64": {
+      "file": "lucky_3.8.1_Linux_riscv64.tar.gz",
+      "sha256": "f445ad4c47fc339fcfb7e9ca04142c3c56d3a4177993031d4d61793d588c7966",
+      "url": "https://release.66666.host/v3.8.1/3.8.1_lucky/lucky_3.8.1_Linux_riscv64.tar.gz"
+    },
+    "x86_64": {
+      "file": "lucky_3.8.1_Linux_x86_64.tar.gz",
+      "sha256": "b9d49448f24b7d285622bd0e7adc18e4b101caf4ad8c7f7e9fca11ace1dc1053",
+      "url": "https://release.66666.host/v3.8.1/3.8.1_lucky/lucky_3.8.1_Linux_x86_64.tar.gz"
+    }
+  },
+  "checked_at": "2026-11-15T05:44:24Z",
+  "release_dir": "v3.8.1/3.8.1_lucky",
+  "source": "https://release.66666.host/",
+  "version": "3.8.1"
+}
