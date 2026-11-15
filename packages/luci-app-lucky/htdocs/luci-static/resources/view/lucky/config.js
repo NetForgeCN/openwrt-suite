@@ -193,8 +193,15 @@ return view.extend({
 		};
 
 		function refreshAll() {
-			return uci.unload('lucky')
-				.then(function() { return uci.load('lucky'); })
+			/* LuCI's uci.unload() is synchronous and returns undefined.
+			 * Chaining .then() onto it throws
+			 * "Cannot read properties of undefined (reading 'then')" after the
+			 * init script action already succeeded, which surfaced as a bogus
+			 * "Service operation failed" toast on every start/stop/restart.
+			 * Run the unload by itself, then chain on uci.load() which does
+			 * return a Promise (wrapped for compatibility with older LuCI). */
+			uci.unload('lucky');
+			return L.resolveDefault(uci.load('lucky'), null)
 				.then(function() { return queryLuckyData(); })
 				.then(function(nextState) {
 					state = nextState;
@@ -659,12 +666,17 @@ return view.extend({
 
 	handleSaveApply: function(ev, mode) {
 		var self = this;
-		return this.super('handleSaveApply', [ev, mode]).then(function() {
-			if (typeof self._refreshLuckyDashboard === 'function') {
+		return L.resolveDefault(this.super('handleSaveApply', [ev, mode]), null)
+			.then(function() {
+				if (typeof self._refreshLuckyDashboard !== 'function')
+					return;
 				window.setTimeout(function() {
-					self._refreshLuckyDashboard();
+					/* Save & Apply may reload the page; never let a deferred
+					 * refresh on a detached view become an unhandled error. */
+					try {
+						L.resolveDefault(self._refreshLuckyDashboard(), null);
+					} catch (e) {}
 				}, 900);
-			}
-		});
+			});
 	}
 });
