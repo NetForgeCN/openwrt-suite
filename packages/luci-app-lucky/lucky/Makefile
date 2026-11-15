@@ -27,7 +27,7 @@ PKG_MAINTAINER:=NetForgeCN
 PKG_LICENSE_FILES:=LICENSE
 
 # BEGIN AUTO-GENERATED (scripts/bump-version.py) -- DO NOT EDIT BY HAND
-# Source: https://release.66666.host/  (latest stable v3.8.1, checked 2026-11-15T05:44:24Z)
+# Source: https://release.66666.host/  (latest stable v3.8.1, checked 2026-11-15T06:03:00Z)
 PKG_VERSION:=3.8.1
 LUCKY_RELEASE_DIR:=v3.8.1/3.8.1_lucky
 ifeq ($(ARCH),x86_64)

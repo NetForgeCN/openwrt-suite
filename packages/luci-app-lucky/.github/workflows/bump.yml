@@ -7,6 +7,11 @@ on:
   schedule:
     - cron: "30 17 * * *"
   workflow_dispatch:
+    inputs:
+      force:
+        description: "强制重新下载并校验全部资产（版本未变也刷新 pin）"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -25,10 +30,11 @@ jobs:
 
       - name: Check latest release and refresh the pin
         id: bump
+        env:
+          FORCE_BUMP: ${{ inputs.force && '1' || '0' }}
         run: python3 scripts/bump-version.py
 
       - name: Verify the offline-bundle contract
-        if: steps.bump.outputs.changed == 'true'
         run: python3 scripts/verify-bundle.py
 
       - name: Commit the new pin
@@ -43,4 +49,4 @@ jobs:
             -m "Automated by scripts/bump-version.py. All 13 Linux assets were
           downloaded and sha256-verified; the tarball layout was checked for a
           top-level executable ELF named lucky."
-          git push origin HEAD:main
+          git push origin "HEAD:${GITHUB_REF_NAME}"

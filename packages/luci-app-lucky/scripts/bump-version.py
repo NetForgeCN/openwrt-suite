@@ -74,6 +74,9 @@ BRANCHES = [
 REQUIRED_ARCHES = {key for _, key, _ in BRANCHES}
 
 UA = {"User-Agent": "NetForgeCN-lucky-version-bump/1.0"}
+# workflow_dispatch 的 force 输入：即使版本没变也重新下载/校验全部资产并刷新 pin，
+# 用来验证整条「检测 -> 改写 -> 提交」链路，或在上游替换了同名资产后强制重算。
+FORCE = os.environ.get("FORCE_BUMP") == "1"
 
 
 def fetch(url: str, timeout: int = 180) -> bytes:
@@ -205,7 +208,7 @@ def main() -> int:
                 old = json.loads(ASSETS.read_text(encoding="utf-8"))
             except (ValueError, OSError):
                 old = {}
-        if old.get("version") == ver and old.get("release_dir") == release_dir:
+        if not FORCE and old.get("version") == ver and old.get("release_dir") == release_dir:
             print(f"[bump] already pinned to latest stable {ver}; nothing to do")
             gh_output("changed", "false")
             gh_output("version", ver)
