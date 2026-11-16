@@ -1,6 +1,6 @@
 # openwrt-suite
 
-OpenWrt 第三方组件**单一聚合 feed 仓库**：把 31 个第三方包（34 个包源目录，含
+OpenWrt 第三方组件**单一聚合 feed 仓库**：把 34 个第三方包（37 个包源目录，含
 argon 自带的 `compat/luci-app-argon-config`、oxidns 自带的 `oxidns-core`、
 lucky 自带的 `lucky/` 三个嵌套子包）+ 一份固件 `.config` 统一收进本仓库，
 每日由 GitHub Actions 从各上游同步（纯快照方式）。使用时**只需克隆本仓库**，
@@ -10,7 +10,7 @@ lucky 自带的 `lucky/` 三个嵌套子包）+ 一份固件 `.config` 统一收
 
 ```
 openwrt-suite/
-├── packages/          31 个包（feed 主体，OpenWrt 递归扫描含 Makefile 的目录）
+├── packages/          34 个包（feed 主体，OpenWrt 递归扫描含 Makefile 的目录）
 ├── config/
 │   └── dot.config     固件 .config 快照（跟随 NetForgeCN/OpenWRT main 分支）
 ├── sources.conf       上游同步映射表（源地址、分支、路径映射模式）
@@ -48,19 +48,19 @@ bash openwrt-suite/build/compile.sh --menuconfig
 bash openwrt-suite/build/compile.sh
 ```
 
-第 2 步完成后，31 个第三方包已全部出现在 `make menuconfig` 中，且
+第 2 步完成后，34 个第三方包已全部出现在 `make menuconfig` 中，且
 `config/dot.config` 里原有的选择会自动勾选好：当前快照是 **22 个 suite 包 +
 `v2ray-geoip` / `v2ray-geosite`**（后者是 v2ray-geodata 源里的实际数据包，
 `v2ray-geodata` 本身是虚包）。这份 `.config` 由 `sources.conf` 的 `config` 源
 从 NetForgeCN/OpenWRT 同步，不会自动包含后来新接入的包（如 mosdns、
-luci-app-mosdns、geo2txt、lucky、luci-app-lucky），需要时在 menuconfig 里
-自行勾选；实际以 `config/dot.config` 为准。
+luci-app-mosdns、geo2txt、lucky、luci-app-lucky、luci-app-oaf、appfilter、
+kmod-oaf），需要时在 menuconfig 里自行勾选；实际以 `config/dot.config` 为准。
 
 这些包在 menuconfig 中的位置（按各包 Makefile 的 `CATEGORY` / `SUBMENU` 实核对）：
 
 | 菜单路径 | 包 |
 |---|---|
-| LuCI → 3. Applications | luci-app-airplay2、luci-app-argon-config、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-honk、luci-app-kixdns、luci-app-lucky、luci-app-mosdns、luci-app-nikki、luci-app-open_nexttrace、luci-app-oxidns、luci-app-photondns、luci-app-photondns-compat、luci-app-pulse、luci-app-temp-status |
+| LuCI → 3. Applications | luci-app-airplay2、luci-app-argon-config、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-honk、luci-app-kixdns、luci-app-lucky、luci-app-mosdns、luci-app-nikki、luci-app-oaf、luci-app-open_nexttrace、luci-app-oxidns、luci-app-photondns、luci-app-photondns-compat、luci-app-pulse、luci-app-temp-status |
 | LuCI → 4. Themes | luci-theme-argon |
 | Network → IP Addresses and Names | ddns-go、kixdns、mosdns（Go DNS 转发器）、photondns（Rust DNS 转发器）、v2ray-geodata（虚包，实际产出 v2ray-geoip / v2ray-geosite） |
 | Network → Web Servers/Proxies | dae、honk（eBPF 核心，仅 x86_64 / aarch64_generic） |
@@ -68,6 +68,8 @@ luci-app-mosdns、geo2txt、lucky、luci-app-lucky），需要时在 menuconfig 
 | Network（无子菜单） | kixdns-stats、lucky（静态核心，编译期内置）、mihomo-alpha、mihomo-meta、nikki、nqptp、open-nexttrace-core |
 | Sound | airplay2 |
 | Utilities | geo2txt（解包 geosite.dat / geoip.dat 的 C 工具） |
+| Base system | appfilter（OAF 服务守护，由 `open-app-filter/` 目录产出） |
+| Kernel modules → Netfilter Extensions | kmod-oaf（由 `oaf/` 目录产出的 netfilter 内核模块） |
 
 > LuCI 包不写 `CATEGORY` / `SUBMENU` 时由 `luci.mk` 按 `LUCI_TYPE` 归类：
 > `app` → `LuCI / 3. Applications`，`theme` → `LuCI / 4. Themes`。
@@ -473,6 +475,41 @@ mihomo 源码克隆进 `dl/`，之后编译只是 `go build`。
 `lucky/assets.json` 一起拷入，这些没有 Makefile，不参与 feed 扫描。
 许可证见包目录内 `LICENSE`（GPL-3.0 全文）与 `NOTICE`（核心 MIT / 界面 GPL-3.0 归属）。
 
+### openappfilter 的处理（三包 + Lua LuCI + 内核模块）
+
+上游 [destan19/OpenAppFilter](https://github.com/destan19/OpenAppFilter) 默认分支是
+**`master`**（不是 main）。一个仓库三个包目录，都在顶层，但**目录名和包名不一致**：
+
+| 目录 | 包名 | 说明 |
+|---|---|---|
+| `luci-app-oaf/` | luci-app-oaf | Lua/CBI 界面（`luasrc/` + `htdocs/` 静态资源 + 中文 po），`LUCI_DEPENDS:=+appfilter +kmod-oaf +luci-compat +luci-lib-jsonc` |
+| `open-app-filter/` | appfilter | 用户态守护 `oafd`、特征库 `feature.bin`、`rule_manager.lua`、init.d 与 ACL；`CATEGORY:=Base system` |
+| `oaf/` | kmod-oaf | netfilter 内核模块（`src/` 下 C 源码），`SUBMENU:=Netfilter Extensions`，`DEPENDS:=+kmod-nf-conntrack +kmod-nf-reject` |
+
+所以 `sources.conf` 用 `mode=pkg` 只拷这三个目录，勾选 `luci-app-oaf` 会自动带齐
+另外两个。上游根 `LICENSE`（GPL-2.0 全文）由 `sync.sh` 收进 `meta/openappfilter/`。
+三个目录都在 `packages/` 第一层，离 `SCAN_DEPTH=5` 的上限还很远；`oaf/src/Makefile`
+和 `open-app-filter/src/Makefile` 是子工程的内核/C 构建文件、不含 `BuildPackage`，
+扫描时不会产生包条目。
+
+三点需要留意：
+
+1. **是 Lua LuCI，不是 JS LuCI**：`luci-app-oaf` 靠 `luci-compat`（→ `luci-lua-runtime`）
+   和 `luci-lib-jsonc` 提供 Lua 运行时，`appfilter` 还依赖 `libuci-lua` 来跑
+   `rule_manager.lua`。这些包在 openwrt/openwrt main 与 openwrt/luci master 里都还存在
+   （已逐个核对），依赖可以解析；但 `.config` 若显式裁掉 Lua 运行时，界面会打不开。
+2. **内核模块要和内核同批编译**：`kmod-oaf` 用 `$(LINUX_DIR)` + `M=$(PKG_BUILD_DIR)`
+   编译，不能只装 ipk 了事。上游源码里有 `LINUX_VERSION_CODE` 分支覆盖到
+   6.16 / 6.15 / 6.12（`nf_register_net_hooks`、`class_create`、`timer_setup` 等），
+   但内核 API 变动仍可能让新内核编译失败，以实际编译结果为准。
+3. **许可证附加声明**：上游 README 写「个人免费、衍生开发须遵守 GPL 2.0、
+   公司使用需联系作者授权」，与仓库里 GPL-2.0 全文的条款并不完全一致
+   （GPLv2 不允许按使用者身份附加限制）。本仓库只做快照、保留原文，
+   商用场景请自行评估。
+
+另外上游 `luci-app-oaf/luasrc/view/oaf/.dashboard.htm.swp` 是误提交的 Vim 交换文件，
+按「纯快照、不改上游代码」的原则原样保留，不参与构建。
+
 ### 版本锁定与可复现
 
 构建用的所有第三方代码严格等于本仓库快照；每个快照对应的上游 commit 记录在
@@ -497,4 +534,6 @@ mihomo 源码克隆进 `dl/`，之后编译只是 `go build`。
 上游仓库根的 Cargo 工程**原样补齐**到包目录（新增文件、不改动任何已有内容）。
 
 > 换句话说：MIT 只覆盖本仓库自己的脚本与文档；每个 `packages/<name>/` 下的代码
-> 仍按它自己的许可证（GPL-3.0、Apache-2.0 等）分发，装机时以包内 LICENSE 为准。
+> 仍按它自己的许可证（GPL-2.0、GPL-3.0、Apache-2.0 等）分发，装机时以包内
+> LICENSE 或 `meta/<slug>/LICENSE` 为准。`openappfilter` 的上游 README 另有
+> 「公司使用需联系作者授权」的附加声明，见上文对应章节。
