@@ -2272,8 +2272,24 @@ rules_space_check() {
 rules_latest_tag() {
 	LIST_FILE="$1"
 	command -v jsonfilter >/dev/null 2>&1 || return 2
-	jsonfilter -i "$LIST_FILE" -e '@.[*].tag_name' 2>/dev/null \
-		| grep "^$RULES_TAG_PREFIX" | LC_ALL=C sort | tail -n 1 || true
+
+	# Root-level array iteration is "@[*].field". The shape "@.[*].field" (a dot
+	# before the bracket) is rejected by jsonfilter's parser: it exits non-zero
+	# and prints nothing, which is indistinguishable from "no matching release"
+	# and produced a bogus no_rules_release error while the release existed.
+	RULES_TAGS="$(jsonfilter -i "$LIST_FILE" -e '@[*].tag_name' 2>/dev/null || true)"
+	if [ -z "$RULES_TAGS" ]; then
+		# Fallback for jsonfilter builds without array-root support. The
+		# listing is machine-generated and tag names never contain escapes,
+		# so scanning the text is safe here.
+		RULES_TAGS="$(grep -o '"tag_name":"[^"]*"' "$LIST_FILE" 2>/dev/null \
+			| sed 's/^"tag_name":"//; s/"$//' || true)"
+	fi
+	if [ -z "$RULES_TAGS" ]; then
+		core_progress_log "error" "release listing contains no tag_name field"
+		return 1
+	fi
+	printf '%s\n' "$RULES_TAGS" | grep "^$RULES_TAG_PREFIX" | LC_ALL=C sort | tail -n 1 || true
 }
 
 # Resolve the newest rules release (tag rules-vYYYY.MM.DD) in RULES_REPOSITORY

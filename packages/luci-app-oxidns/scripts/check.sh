@@ -76,3 +76,11 @@ sh -n scripts/integration-check.sh
 sh -n scripts/service-check.sh
 sh -n scripts/release-check.sh
 sh -n scripts/build-rules-baseline.sh
+
+# jsonfilter rejects "@.[*]" (dot before the bracket): it exits non-zero and
+# prints nothing, which is indistinguishable from an empty result and once
+# surfaced as a bogus "no release" error. Only the "@[*].field" form is valid.
+if grep -v '^[[:space:]]*#' root/usr/libexec/rpcd/luci.oxidns | grep -q '@\.\['; then
+	echo "invalid jsonfilter expression in luci.oxidns: use @[*].field, not @.[*].field" >&2
+	exit 1
+fi
