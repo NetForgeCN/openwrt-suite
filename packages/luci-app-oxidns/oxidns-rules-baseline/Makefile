@@ -26,7 +26,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=oxidns-rules-baseline
 PKG_VERSION:=2026.11.17.0223
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKGARCH:=all
 
 PKG_LICENSE:=GPL-3.0-or-later MIT 0BSD
