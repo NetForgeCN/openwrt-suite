@@ -76,6 +76,7 @@ sh -n scripts/integration-check.sh
 sh -n scripts/service-check.sh
 sh -n scripts/release-check.sh
 sh -n scripts/build-rules-baseline.sh
+sh -n oxidns-rules-baseline/files/90-oxidns-rules
 
 # jsonfilter rejects "@.[*]" (dot before the bracket): it exits non-zero and
 # prints nothing, which is indistinguishable from an empty result and once

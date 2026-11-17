@@ -75,6 +75,8 @@ endef
 define Package/oxidns-rules-baseline/install
 	$(INSTALL_DIR) $(1)/usr/share/oxidns/rules-baseline
 	$(CP) $(PKG_BUILD_DIR)/. $(1)/usr/share/oxidns/rules-baseline/
+	$(INSTALL_DIR) $(1)/etc/uci-defaults
+	$(INSTALL_BIN) ./files/90-oxidns-rules $(1)/etc/uci-defaults/90-oxidns-rules
 endef
 
 # Seed the working copy at install time as well, so the files exist before the
