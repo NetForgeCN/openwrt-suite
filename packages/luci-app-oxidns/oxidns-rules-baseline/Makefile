@@ -64,17 +64,18 @@ define Build/Compile
 endef
 
 # The archive has exactly one top-level directory (oxidns-rules-baseline/), so
-# strip it explicitly instead of relying on the default unpack behaviour: the
-# install rule below copies $(PKG_BUILD_DIR)/. and must not end up with a
-# nested oxidns-rules-baseline/ directory inside /usr/share.
+# strip it explicitly instead of relying on the default unpack behaviour. Unpack
+# into $(PKG_BUILD_DIR)/src rather than $(PKG_BUILD_DIR) itself: the package
+# staging directory ($(1) in the install rule) lives *inside* PKG_BUILD_DIR, so
+# copying "$(PKG_BUILD_DIR)/." into "$(1)/usr/share/..." is a copy into itself.
 define Build/Prepare
-	mkdir -p $(PKG_BUILD_DIR)
-	$(TAR) -xzf $(DL_DIR)/$(PKG_SOURCE) -C $(PKG_BUILD_DIR) --strip-components=1
+	mkdir -p $(PKG_BUILD_DIR)/src
+	$(TAR) -xzf $(DL_DIR)/$(PKG_SOURCE) -C $(PKG_BUILD_DIR)/src --strip-components=1
 endef
 
 define Package/oxidns-rules-baseline/install
 	$(INSTALL_DIR) $(1)/usr/share/oxidns/rules-baseline
-	$(CP) $(PKG_BUILD_DIR)/. $(1)/usr/share/oxidns/rules-baseline/
+	$(CP) $(PKG_BUILD_DIR)/src/. $(1)/usr/share/oxidns/rules-baseline/
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) ./files/90-oxidns-rules $(1)/etc/uci-defaults/90-oxidns-rules
 endef
