@@ -11,6 +11,9 @@ PERSIST_DIR="/etc/oxidns/core"
 PERSIST_BIN="$PERSIST_DIR/oxidns"
 PERSIST_WEBUI="$PERSIST_DIR/webui"
 WEBUI_DIR="/usr/share/oxidns/webui"
+RULES_DIR="/etc/oxidns/rules"
+RULES_BASELINE_DIR="/usr/share/oxidns/rules-baseline"
+RULE_FILES="adguard-antiad.txt adguard-hostlist.txt anti-ad-domains.txt adrules-domains.txt neodevhost-domains.txt accelerated-domains.china.conf cn-domains.txt"
 
 load_oxidns_settings() {
 	config_load oxidns
@@ -38,9 +41,31 @@ restore_core_links() {
 	fi
 }
 
+# Boot self-heal for rule subscriptions. File-backed providers (domain_set,
+# adguard_rule) abort the whole process when a rule file is missing, and every
+# download/convert path runs *after* plugin initialisation, so OxiDNS can never
+# repair this itself. Seed missing files from the bundled baseline package
+# instead: local copy, no network, no boot delay.
+seed_rule_files() {
+	[ -d "$RULES_BASELINE_DIR" ] || return 0
+	mkdir -p "$RULES_DIR" 2>/dev/null || return 0
+	for rule_file in $RULE_FILES; do
+		[ -s "$RULES_DIR/$rule_file" ] && continue
+		[ -s "$RULES_BASELINE_DIR/$rule_file" ] || continue
+		if cp "$RULES_BASELINE_DIR/$rule_file" "$RULES_DIR/$rule_file"; then
+			logger -t oxidns "seeded $rule_file from rules baseline"
+		fi
+	done
+	if [ ! -s "$RULES_DIR/.installed-version" ] && [ -s "$RULES_BASELINE_DIR/VERSION" ]; then
+		cp "$RULES_BASELINE_DIR/VERSION" "$RULES_DIR/.installed-version" 2>/dev/null
+	fi
+	return 0
+}
+
 start_service() {
 	load_oxidns_settings
 	restore_core_links
+	seed_rule_files
 
 	if [ ! -x "$PROG" ]; then
 		echo "oxidns binary not found or not executable: $PROG" >&2

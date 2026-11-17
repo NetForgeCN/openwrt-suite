@@ -8,7 +8,8 @@ PKG_LICENSE:=GPL-3.0-or-later
 PKG_MAINTAINER:=Sven Shi <isvenshi@gmail.com>
 
 LUCI_TITLE:=LuCI support for OxiDNS
-LUCI_DEPENDS:=+luci-base +rpcd +jsonfilter +uclient-fetch +ca-bundle +oxidns-core
+LUCI_DEPENDS:=+luci-base +rpcd +jsonfilter +uclient-fetch +ca-bundle +oxidns-core \
+	+PACKAGE_oxidns-rules-baseline:oxidns-rules-baseline
 LUCI_PKGARCH:=all
 
 define Package/luci-app-oxidns/postinst

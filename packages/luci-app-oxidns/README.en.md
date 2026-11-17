@@ -16,6 +16,7 @@ This is a re-implementation on top of [svenshi/luci-app-oxidns](https://github.c
 | Core upgrades | no LuCI entry, must use the core's own WebUI/API | `Check Update` button on the `Core` page |
 | Logs | plain listing | keyword filter plus `plugin` / `qtype` / `rcode` field filters |
 | Low-flash devices | — | persistence can be disabled in `Settings` |
+| Rule subscriptions | Six lists must be downloaded on first boot, a missing file aborts the service | `oxidns-rules-baseline` ships the baseline; files are seeded locally at boot, the `Rules` page updates from a repository release |
 
 ## Building From Source
 
@@ -102,6 +103,8 @@ Without "keep settings", everything is wiped — that is the OpenWrt mechanism i
 - Config: `/etc/oxidns/config.yaml`
 - Working directory: `/var/lib/oxidns` (tmpfs, runtime only)
 - Init script: `/etc/init.d/oxidns`
+- Rule baseline (read-only): `/usr/share/oxidns/rules-baseline`
+- Rule working copy: `/etc/oxidns/rules` (seeded from the baseline when missing)
 
 ## Known Limitations
 

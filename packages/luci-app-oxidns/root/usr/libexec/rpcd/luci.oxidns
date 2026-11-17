@@ -4,7 +4,7 @@ set -eu
 
 UCI_PACKAGE="oxidns"
 UCI_SECTION="main"
-OXIDNS_BIN="/usr/bin/oxidns"
+OXIDNS_BIN="${OXIDNS_BIN:-/usr/bin/oxidns}"
 WEBUI_DIR="/usr/share/oxidns/webui"
 PERSIST_DIR="/etc/oxidns/core"
 PERSIST_BIN="$PERSIST_DIR/oxidns"
@@ -15,12 +15,25 @@ DEFAULT_WORKING_DIR="/var/lib/oxidns"
 DEFAULT_SERVICE_NAME="oxidns"
 DEFAULT_CORE_REPOSITORY="svenshi/oxidns"
 DEFAULT_CORE_BUNDLE="full"
-GITHUB_API_BASE="https://api.github.com"
+GITHUB_API_BASE="${OXIDNS_GITHUB_API:-https://api.github.com}"
 TMP_ROOT="${TMPDIR:-/tmp}"
 CORE_PROGRESS_DIR="$TMP_ROOT/luci-oxidns"
 CORE_PROGRESS_LOG="$CORE_PROGRESS_DIR/core-progress.log"
 CORE_LOCK_DIR="$CORE_PROGRESS_DIR/core-operation.lock"
 CORE_LOCK_HELD=0
+
+# Rule subscriptions. The baseline ships with the oxidns-rules-baseline
+# package under /usr/share (read-only, replaced on package/firmware upgrade),
+# while the working copy lives in /etc so it survives sysupgrade. Missing
+# files are seeded from the baseline by /etc/init.d/oxidns at boot, which is
+# what keeps "a rule file disappeared" from turning into "the service refuses
+# to start".
+RULES_DIR="${OXIDNS_RULES_DIR:-/etc/oxidns/rules}"
+RULES_BASELINE_DIR="${OXIDNS_RULES_BASELINE_DIR:-/usr/share/oxidns/rules-baseline}"
+RULES_REPOSITORY="${OXIDNS_RULES_REPOSITORY:-NetForgeCN/luci-app-oxidns}"
+RULES_TAG_PREFIX="rules-v"
+RULES_ASSET_PREFIX="oxidns-rules-baseline-"
+RULES_VERSION_FILE=".installed-version"
 
 CONFIG_PATH="$DEFAULT_CONFIG_PATH"
 WORKING_DIR="$DEFAULT_WORKING_DIR"
@@ -2150,6 +2163,485 @@ emit_core_remove() {
 	run_with_core_lock emit_core_remove_locked
 }
 
+# ---------------------------------------------------------------------------
+# Rule subscriptions
+#
+# The seven files below are read by file-backed providers during plugin
+# initialisation. domain_set/adguard_rule abort the whole process when a file
+# is missing or contains an unparsable line, so every update is staged and
+# validated before it replaces the live directory, and the previous set is
+# kept as a rollback target.
+# ---------------------------------------------------------------------------
+
+rules_files() {
+	printf '%s\n' \
+		adguard-antiad.txt \
+		adguard-hostlist.txt \
+		anti-ad-domains.txt \
+		adrules-domains.txt \
+		neodevhost-domains.txt \
+		accelerated-domains.china.conf \
+		cn-domains.txt
+}
+
+rules_min_lines() {
+	case "$1" in
+		adguard-antiad.txt) printf '50000' ;;
+		adguard-hostlist.txt) printf '50000' ;;
+		anti-ad-domains.txt) printf '50000' ;;
+		adrules-domains.txt) printf '100000' ;;
+		neodevhost-domains.txt) printf '100000' ;;
+		accelerated-domains.china.conf) printf '50000' ;;
+		cn-domains.txt) printf '50000' ;;
+		*) printf '1000' ;;
+	esac
+}
+
+rules_line_count() {
+	if [ -f "$1" ]; then
+		wc -l < "$1" 2>/dev/null | awk '{ print $1 + 0 }'
+	else
+		printf '0'
+	fi
+}
+
+rules_version_of() {
+	sed -n '1p' "$1" 2>/dev/null || true
+}
+
+rules_stage_check() {
+	RULES_STAGE="$1"
+	for FILE_NAME in $(rules_files); do
+		if [ ! -s "$RULES_STAGE/$FILE_NAME" ]; then
+			core_progress_log "error" "staged rule file missing: $FILE_NAME"
+			return 1
+		fi
+		FILE_LINES="$(rules_line_count "$RULES_STAGE/$FILE_NAME")"
+		FILE_MIN="$(rules_min_lines "$FILE_NAME")"
+		if [ "$FILE_LINES" -lt "$FILE_MIN" ]; then
+			core_progress_log "error" "staged $FILE_NAME has only $FILE_LINES lines (minimum $FILE_MIN)"
+			return 1
+		fi
+	done
+	return 0
+}
+
+# Validate the staged files with the real OxiDNS binary, without touching the
+# live directory: a copy of config.yaml has its rules path rewritten to point
+# at the staging directory.
+rules_validate_stage() {
+	RULES_STAGE="$1"
+	if [ ! -r "$CONFIG_PATH" ]; then
+		core_progress_log "warn" "config not readable ($CONFIG_PATH), skipping pre-flight check"
+		return 0
+	fi
+	if ! grep -qF "$RULES_DIR/" "$CONFIG_PATH" 2>/dev/null; then
+		core_progress_log "warn" "config does not reference $RULES_DIR, pre-flight check is not meaningful"
+	fi
+	STAGE_CONFIG="$(mktemp "$TMP_ROOT/oxidns-rules-config.XXXXXX")"
+	sed "s|$RULES_DIR/|$RULES_STAGE/|g" "$CONFIG_PATH" > "$STAGE_CONFIG"
+	core_progress_command "$OXIDNS_BIN check (staged rules)"
+	STAGE_RC=0
+	STAGE_OUTPUT="$("$OXIDNS_BIN" check -c "$STAGE_CONFIG" -d "$WORKING_DIR" 2>&1)" || STAGE_RC=$?
+	rm -f "$STAGE_CONFIG"
+	if [ "$STAGE_RC" -ne 0 ]; then
+		RULES_VALIDATE_ERROR="$(printf '%.500s' "${STAGE_OUTPUT:-oxidns check failed}")"
+		core_progress_log "error" "oxidns check rejected the staged rules: $RULES_VALIDATE_ERROR"
+		return 1
+	fi
+	core_progress_log "success" "staged rules accepted by oxidns check"
+	return 0
+}
+
+rules_space_check() {
+	RULES_STAGE="$1"
+	NEED_KB="$(du -sk "$RULES_STAGE" 2>/dev/null | awk '{ print $1 + 0 }')"
+	FREE_KB="$(df -k "$RULES_DIR" 2>/dev/null | awk 'NR == 2 { print $4 + 0 }')"
+	if [ -z "$FREE_KB" ] || [ "$FREE_KB" -eq 0 ]; then
+		return 0
+	fi
+	if [ "$FREE_KB" -lt "$NEED_KB" ]; then
+		core_progress_log "error" "not enough free space: need ${NEED_KB}KiB, have ${FREE_KB}KiB"
+		RULES_SPACE_ERROR="need ${NEED_KB}KiB, have ${FREE_KB}KiB"
+		return 1
+	fi
+	core_progress_log "info" "free space ok: need ${NEED_KB}KiB, have ${FREE_KB}KiB"
+	return 0
+}
+
+rules_latest_tag() {
+	LIST_FILE="$1"
+	command -v jsonfilter >/dev/null 2>&1 || return 2
+	jsonfilter -i "$LIST_FILE" -e '@.[*].tag_name' 2>/dev/null \
+		| grep "^$RULES_TAG_PREFIX" | LC_ALL=C sort | tail -n 1 || true
+}
+
+# Resolve the newest rules release (tag rules-vYYYY.MM.DD) in RULES_REPOSITORY
+# and its asset digest. Returns 2 when the repository has no rules release yet.
+rules_resolve_release() {
+	WORK_DIR="$1"
+	RULES_TAG=""
+	RULES_VERSION=""
+	RULES_ASSET=""
+	RULES_URL=""
+	RULES_SHA256=""
+	RULES_SIZE=""
+
+	RELEASES_FILE="$WORK_DIR/releases.json"
+	if ! download_file "$GITHUB_API_BASE/repos/$RULES_REPOSITORY/releases?per_page=100" "$RELEASES_FILE"; then
+		core_progress_log "error" "failed to list releases: ${DOWNLOAD_ERROR:-unknown}"
+		return 1
+	fi
+	TAG_RC=0
+	RULES_TAG="$(rules_latest_tag "$RELEASES_FILE")" || TAG_RC=$?
+	if [ "$TAG_RC" -eq 2 ]; then
+		core_progress_log "error" "jsonfilter is required to read release metadata"
+		return 1
+	fi
+	if [ -z "$RULES_TAG" ]; then
+		core_progress_log "warn" "no $RULES_TAG_PREFIX* release in $RULES_REPOSITORY"
+		return 2
+	fi
+	RULES_VERSION="${RULES_TAG#"$RULES_TAG_PREFIX"}"
+	core_progress_log "info" "latest rules release: $RULES_TAG"
+
+	RELEASE_FILE="$WORK_DIR/release.json"
+	if ! download_file "$GITHUB_API_BASE/repos/$RULES_REPOSITORY/releases/tags/$RULES_TAG" "$RELEASE_FILE"; then
+		core_progress_log "error" "failed to fetch release metadata: ${DOWNLOAD_ERROR:-unknown}"
+		return 1
+	fi
+	RULES_ASSET="${RULES_ASSET_PREFIX}${RULES_VERSION}.tar.gz"
+	SELECT_RC=0
+	select_release_asset "$RELEASE_FILE" "$RULES_ASSET" || SELECT_RC=$?
+	if [ "$SELECT_RC" -ne 0 ]; then
+		core_progress_log "error" "release $RULES_TAG has no asset $RULES_ASSET"
+		return 1
+	fi
+	RULES_URL="$SELECT_URL"
+	RULES_SHA256="$SELECT_SHA256"
+	RULES_SIZE="$SELECT_SIZE"
+	return 0
+}
+
+emit_rules_status() {
+	printf '{"ok":true,"rules_dir":'
+	json_string "$RULES_DIR"
+	printf ',"baseline_dir":'
+	json_string "$RULES_BASELINE_DIR"
+	printf ',"baseline_version":'
+	json_string "$(rules_version_of "$RULES_BASELINE_DIR/VERSION")"
+	printf ',"installed_version":'
+	json_string "$(rules_version_of "$RULES_DIR/$RULES_VERSION_FILE")"
+	printf ',"repository":'
+	json_string "$RULES_REPOSITORY"
+	if service_running; then
+		printf ',"service_running":true'
+	else
+		printf ',"service_running":false'
+	fi
+	printf ',"files":['
+	RULES_FIRST=1
+	for FILE_NAME in $(rules_files); do
+		if [ "$RULES_FIRST" = "1" ]; then
+			RULES_FIRST=0
+		else
+			printf ','
+		fi
+		printf '{"name":'
+		json_string "$FILE_NAME"
+		printf ',"bytes":'
+		json_string "$(file_size_bytes "$RULES_DIR/$FILE_NAME")"
+		printf ',"lines":'
+		json_string "$(rules_line_count "$RULES_DIR/$FILE_NAME")"
+		if [ -s "$RULES_DIR/$FILE_NAME" ]; then
+			printf ',"present":true'
+		else
+			printf ',"present":false'
+		fi
+		if [ -s "$RULES_DIR/$FILE_NAME" ] && cmp -s "$RULES_DIR/$FILE_NAME" "$RULES_BASELINE_DIR/$FILE_NAME" 2>/dev/null; then
+			printf ',"matches_baseline":true'
+		else
+			printf ',"matches_baseline":false'
+		fi
+		printf '}'
+	done
+	printf ']}\n'
+}
+
+emit_rules_check() {
+	load_settings
+	require_download_transport || return 1
+	core_progress_reset "check rule subscription updates"
+
+	CHECK_DIR="$(mktemp -d "$TMP_ROOT/oxidns-rules-check.XXXXXX")"
+	RESOLVE_RC=0
+	rules_resolve_release "$CHECK_DIR" || RESOLVE_RC=$?
+	if [ "$RESOLVE_RC" -eq 2 ]; then
+		rm -rf "$CHECK_DIR"
+		json_detailed_error "no_rules_release" "no rules release has been published for this repository yet" "resolve_release" "repository=$RULES_REPOSITORY"
+		return 1
+	fi
+	if [ "$RESOLVE_RC" -ne 0 ]; then
+		rm -rf "$CHECK_DIR"
+		json_detailed_error "rules_release_unavailable" "failed to resolve the rules release" "resolve_release" "${RULES_VALIDATE_ERROR:-${DOWNLOAD_ERROR:-unknown error}}"
+		return 1
+	fi
+	if ! valid_sha256 "$RULES_SHA256"; then
+		rm -rf "$CHECK_DIR"
+		json_detailed_error "release_digest_missing" "the rules release asset has no SHA256 digest" "verify_release_digest" "asset=$RULES_ASSET"
+		return 1
+	fi
+
+	CURRENT_VERSION="$(rules_version_of "$RULES_DIR/$RULES_VERSION_FILE")"
+	UPDATE_AVAILABLE=0
+	if [ "$CURRENT_VERSION" != "$RULES_VERSION" ]; then
+		UPDATE_AVAILABLE=1
+	fi
+	for FILE_NAME in $(rules_files); do
+		if [ ! -s "$RULES_DIR/$FILE_NAME" ]; then
+			UPDATE_AVAILABLE=1
+		fi
+	done
+
+	printf '{"ok":true,"repository":'
+	json_string "$RULES_REPOSITORY"
+	printf ',"current_version":'
+	json_string "$CURRENT_VERSION"
+	printf ',"baseline_version":'
+	json_string "$(rules_version_of "$RULES_BASELINE_DIR/VERSION")"
+	printf ',"latest_version":'
+	json_string "$RULES_VERSION"
+	printf ',"asset":'
+	json_string "$RULES_ASSET"
+	printf ',"size":'
+	json_string "$RULES_SIZE"
+	if [ "$UPDATE_AVAILABLE" = "1" ]; then
+		printf ',"update_available":true'
+	else
+		printf ',"update_available":false'
+	fi
+	printf '}\n'
+	rm -rf "$CHECK_DIR"
+}
+
+emit_rules_update() {
+	run_with_core_lock emit_rules_update_locked
+}
+
+emit_rules_update_locked() {
+	load_settings
+	require_download_transport || return 1
+	core_progress_reset "update rule subscriptions"
+
+	WORK_DIR="$(mktemp -d "$TMP_ROOT/oxidns-rules-update.XXXXXX")"
+	RESOLVE_RC=0
+	rules_resolve_release "$WORK_DIR" || RESOLVE_RC=$?
+	if [ "$RESOLVE_RC" -eq 2 ]; then
+		rm -rf "$WORK_DIR"
+		json_detailed_error "no_rules_release" "no rules release has been published for this repository yet" "resolve_release" "repository=$RULES_REPOSITORY"
+		return 1
+	fi
+	if [ "$RESOLVE_RC" -ne 0 ]; then
+		rm -rf "$WORK_DIR"
+		json_detailed_error "rules_release_unavailable" "failed to resolve the rules release" "resolve_release" "${DOWNLOAD_ERROR:-unknown error}"
+		return 1
+	fi
+	if ! valid_sha256 "$RULES_SHA256"; then
+		rm -rf "$WORK_DIR"
+		json_detailed_error "release_digest_missing" "the rules release asset has no SHA256 digest" "verify_release_digest" "asset=$RULES_ASSET"
+		return 1
+	fi
+
+	ARCHIVE="$WORK_DIR/$RULES_ASSET"
+	if ! download_file "$RULES_URL" "$ARCHIVE"; then
+		rm -rf "$WORK_DIR"
+		json_detailed_error "rules_download_failed" "failed to download the rules archive" "download_archive" "asset=$RULES_ASSET; ${DOWNLOAD_ERROR:-unknown}"
+		return 1
+	fi
+	ACTUAL_SHA="$(sha256_file "$ARCHIVE" || true)"
+	if [ "$ACTUAL_SHA" != "$RULES_SHA256" ]; then
+		rm -rf "$WORK_DIR"
+		json_detailed_error "rules_checksum_failed" "rules archive SHA256 does not match the release digest" "verify_checksum" "expected=$RULES_SHA256 actual=${ACTUAL_SHA:-missing}"
+		return 1
+	fi
+	core_progress_log "success" "checksum verified: $ACTUAL_SHA"
+
+	if ! validate_safe_archive "$ARCHIVE"; then
+		rm -rf "$WORK_DIR"
+		json_detailed_error "rules_archive_unsafe" "rules archive contains unsafe paths or links" "validate_archive" "asset=$RULES_ASSET"
+		return 1
+	fi
+
+	mkdir -p "$WORK_DIR/unpack"
+	core_progress_command "tar -xzf $RULES_ASSET"
+	if ! tar -xzf "$ARCHIVE" -C "$WORK_DIR/unpack" >"$WORK_DIR/tar.log" 2>&1; then
+		TAR_DETAIL="$(read_error_detail_file "$WORK_DIR/tar.log" 2>/dev/null || true)"
+		rm -rf "$WORK_DIR"
+		json_detailed_error "rules_unpack_failed" "failed to unpack the rules archive" "unpack_archive" "${TAR_DETAIL:-tar extraction failed}"
+		return 1
+	fi
+	STAGED="$WORK_DIR/unpack/oxidns-rules-baseline"
+	if [ ! -d "$STAGED" ]; then
+		FOUND_CN="$(find "$WORK_DIR/unpack" -name cn-domains.txt -print 2>/dev/null | head -n 1 || true)"
+		if [ -n "$FOUND_CN" ]; then
+			STAGED="$(dirname "$FOUND_CN")"
+		fi
+	fi
+	if [ ! -d "$STAGED" ]; then
+		rm -rf "$WORK_DIR"
+		json_detailed_error "rules_archive_invalid" "rules archive does not contain the expected directory" "unpack_archive" "asset=$RULES_ASSET"
+		return 1
+	fi
+	if ! rules_stage_check "$STAGED"; then
+		rm -rf "$WORK_DIR"
+		json_detailed_error "rules_content_invalid" "rules archive content failed the sanity checks" "validate_rules" "asset=$RULES_ASSET"
+		return 1
+	fi
+	core_progress_log "success" "all 7 rule files present and above the minimum line count"
+
+	# Stage inside /etc so the final swap is a same-filesystem rename.
+	STAGE_DIR="$RULES_DIR.stage.$$"
+	rm -rf "$STAGE_DIR" 2>/dev/null || true
+	mkdir -p "$STAGE_DIR" || {
+		rm -rf "$WORK_DIR"
+		json_detailed_error "rules_stage_failed" "cannot create the staging directory" "stage_rules" "$STAGE_DIR"
+		return 1
+	}
+	if ! cp -R "$STAGED/." "$STAGE_DIR/" 2>/dev/null; then
+		rm -rf "$STAGE_DIR" "$WORK_DIR"
+		json_detailed_error "rules_stage_failed" "cannot copy the staged rules into place" "stage_rules" "$STAGE_DIR"
+		return 1
+	fi
+	rm -rf "$WORK_DIR"
+
+	if ! rules_space_check "$STAGE_DIR"; then
+		rm -rf "$STAGE_DIR"
+		json_detailed_error "rules_no_space" "not enough free space on the rules filesystem" "check_space" "${RULES_SPACE_ERROR:-insufficient space}"
+		return 1
+	fi
+	if ! rules_validate_stage "$STAGE_DIR"; then
+		rm -rf "$STAGE_DIR"
+		json_detailed_error "rules_validation_failed" "staged rules were rejected by oxidns check" "validate_rules" "${RULES_VALIDATE_ERROR:-oxidns check failed}"
+		return 1
+	fi
+	printf '%s\n' "$RULES_VERSION" > "$STAGE_DIR/$RULES_VERSION_FILE"
+
+	WAS_RUNNING=0
+	if service_running; then
+		WAS_RUNNING=1
+	fi
+
+	BACKUP_DIR="$RULES_DIR.backup"
+	rm -rf "$BACKUP_DIR" 2>/dev/null || true
+	if [ -d "$RULES_DIR" ]; then
+		mv "$RULES_DIR" "$BACKUP_DIR" || {
+			rm -rf "$STAGE_DIR"
+			json_detailed_error "rules_swap_failed" "cannot move the current rules directory aside" "install_rules" "$RULES_DIR"
+			return 1
+		}
+	fi
+	if ! mv "$STAGE_DIR" "$RULES_DIR"; then
+		if [ -d "$BACKUP_DIR" ]; then
+			mv "$BACKUP_DIR" "$RULES_DIR" 2>/dev/null || true
+		fi
+		rm -rf "$STAGE_DIR"
+		json_detailed_error "rules_swap_failed" "cannot move the staged rules into place" "install_rules" "$RULES_DIR"
+		return 1
+	fi
+	core_progress_log "success" "rules installed: version $RULES_VERSION"
+
+	RESTART_STATUS="not_requested"
+	if [ "$WAS_RUNNING" = "1" ]; then
+		INIT="$(init_script)"
+		if [ -x "$INIT" ]; then
+			core_progress_command "$INIT restart"
+			run_init_action "$INIT" restart >/dev/null 2>&1 || true
+			RUNNING=0
+			for _try in 1 2 3 4 5 6 7 8 9 10; do
+				if service_running; then
+					RUNNING=1
+					break
+				fi
+				sleep 1
+			done
+			if [ "$RUNNING" = "1" ]; then
+				RESTART_STATUS="restarted"
+			else
+				RESTART_STATUS="failed"
+				core_progress_log "error" "service did not come back, rolling back to the previous rules"
+				rm -rf "$RULES_DIR" 2>/dev/null || true
+				if [ -d "$BACKUP_DIR" ]; then
+					mv "$BACKUP_DIR" "$RULES_DIR" 2>/dev/null || true
+				fi
+				run_init_action "$INIT" restart >/dev/null 2>&1 || true
+				json_detailed_error "rules_restart_failed" "the service failed to start with the new rules; the previous set was restored" "restart_service" "version=$RULES_VERSION"
+				return 1
+			fi
+		fi
+	else
+		RESTART_STATUS="service_stopped"
+	fi
+
+	printf '{"ok":true,"version":'
+	json_string "$RULES_VERSION"
+	printf ',"tag":'
+	json_string "$RULES_TAG"
+	printf ',"restart":'
+	json_string "$RESTART_STATUS"
+	printf '}\n'
+}
+
+emit_rules_restore() {
+	run_with_core_lock emit_rules_restore_locked
+}
+
+emit_rules_restore_locked() {
+	core_progress_reset "restore rules from bundled baseline"
+	if [ ! -d "$RULES_BASELINE_DIR" ]; then
+		json_detailed_error "baseline_missing" "the rules baseline is not installed" "restore_rules" "hint: install the oxidns-rules-baseline package"
+		return 1
+	fi
+	mkdir -p "$RULES_DIR" || {
+		json_error "rules_dir_failed" "cannot create $RULES_DIR"
+		return 1
+	}
+	RESTORED=0
+	for FILE_NAME in $(rules_files); do
+		if [ ! -s "$RULES_BASELINE_DIR/$FILE_NAME" ]; then
+			core_progress_log "warn" "baseline has no $FILE_NAME, skipped"
+			continue
+		fi
+		if cp "$RULES_BASELINE_DIR/$FILE_NAME" "$RULES_DIR/$FILE_NAME"; then
+			RESTORED=$((RESTORED + 1))
+			core_progress_log "info" "restored $FILE_NAME"
+		else
+			json_detailed_error "restore_failed" "failed to restore $FILE_NAME" "restore_rules" "$FILE_NAME"
+			return 1
+		fi
+	done
+	BASELINE_VERSION="$(rules_version_of "$RULES_BASELINE_DIR/VERSION")"
+	if [ -n "$BASELINE_VERSION" ]; then
+		printf '%s\n' "$BASELINE_VERSION" > "$RULES_DIR/$RULES_VERSION_FILE"
+	fi
+
+	RESTART_STATUS="not_requested"
+	if service_running; then
+		INIT="$(init_script)"
+		if [ -x "$INIT" ]; then
+			run_init_action "$INIT" restart >/dev/null 2>&1 || true
+			RESTART_STATUS="restarted"
+		fi
+	fi
+
+	core_progress_log "success" "restored $RESTORED file(s) from baseline $BASELINE_VERSION"
+	printf '{"ok":true,"restored":%s,"version":' "$RESTORED"
+	json_string "$BASELINE_VERSION"
+	printf ',"restart":'
+	json_string "$RESTART_STATUS"
+	printf '}\n'
+}
+
+
 case "${1:-}" in
 	list)
 		printf '{'
@@ -2161,6 +2653,10 @@ case "${1:-}" in
 		printf '"core_upload_install":{"path":"string"},'
 		printf '"core_progress":{},'
 		printf '"core_remove":{"remove_config":"boolean","remove_workdir":"boolean"},'
+		printf '"rules_status":{},'
+		printf '"rules_check":{},'
+		printf '"rules_update":{},'
+		printf '"rules_restore":{},'
 		printf '"service_start":{},'
 		printf '"service_stop":{},'
 		printf '"service_restart":{},'
@@ -2199,6 +2695,18 @@ case "${1:-}" in
 				;;
 			core_remove)
 				emit_core_remove
+				;;
+			rules_status)
+				emit_rules_status
+				;;
+			rules_check)
+				emit_rules_check
+				;;
+			rules_update)
+				emit_rules_update
+				;;
+			rules_restore)
+				emit_rules_restore
 				;;
 			service_start)
 				run_service start

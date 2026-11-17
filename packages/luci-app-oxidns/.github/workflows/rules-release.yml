@@ -1,0 +1,137 @@
+name: rules-baseline
+
+# Rebuilds the bundled OxiDNS rule baseline from the four upstream projects and
+# publishes it as a release asset (tag rules-vYYYY.MM.DD[.HHMM]) of this
+# repository.
+#
+# The device side (LuCI "Rules" page) only ever talks to this repository's
+# releases, so jsDelivr/GitHub availability of the upstream projects no longer
+# affects routers. Releases are only published when the rule data actually
+# changed (CONTENT-SHA256 differs from the previous release), so devices are not
+# woken up for a byte-identical rebuild. Versions carry a UTC timestamp because
+# a published version is immutable: the package Makefile pins its SHA256, so an
+# asset must never be replaced in place.
+#
+# After a new release, bump PKG_VERSION/PKG_HASH in
+# oxidns-rules-baseline/Makefile (the job summary prints both values).
+
+on:
+  schedule:
+    - cron: '23 19 * * *'   # 03:23 Asia/Shanghai
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (YYYY.MM.DD.HHMM). Empty = now (UTC)'
+        required: false
+        type: string
+      force:
+        description: 'Publish even when the rule content is unchanged'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rules-baseline
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          version="${INPUT_VERSION:-}"
+          [ -n "$version" ] || version="$(date -u +%Y.%m.%d.%H%M)"
+          case "$version" in
+            [0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9].[0-9][0-9][0-9][0-9]) ;;
+            [0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9]) ;;
+            *) echo "invalid version: $version (expected YYYY.MM.DD or YYYY.MM.DD.HHMM)" >&2; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build baseline
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          chmod +x scripts/build-rules-baseline.sh
+          ./scripts/build-rules-baseline.sh "$VERSION"
+
+      - name: Publish release when the rule content changed
+        id: publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          FORCE: ${{ inputs.force }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          content="$(cat dist/CONTENT-SHA256)"
+          asset="dist/oxidns-rules-baseline-${VERSION}.tar.gz"
+          previous="$(gh release list --limit 100 --json tagName --jq '.[].tagName' \
+            | grep '^rules-v' | LC_ALL=C sort | tail -n 1 || true)"
+          if [ -n "$previous" ]; then
+            previous_content="$(gh release view "$previous" --json body --jq '.body' \
+              | sed -n 's/^content-sha256: //p' | head -n 1)"
+            echo "previous release: $previous (content $previous_content)"
+            if [ "$previous_content" = "$content" ] && [ "${FORCE:-false}" != "true" ]; then
+              echo "rule content unchanged, no release published"
+              echo "published=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          tag="rules-v${VERSION}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "release $tag already exists; a published version is immutable, bump the version instead" >&2
+            exit 1
+          fi
+          notes="$(mktemp)"
+          {
+            echo "content-sha256: ${content}"
+            echo
+            echo "Bundled OxiDNS rule baseline, built by scripts/build-rules-baseline.sh."
+            echo
+            echo "| file | lines | sha256 |"
+            echo "| --- | --- | --- |"
+            while read -r sha name; do
+              lines="$(wc -l < "dist/oxidns-rules-baseline/$name" | tr -d ' ')"
+              printf '| %s | %s | %s |\n' "$name" "$lines" "${sha:0:12}…"
+            done < "dist/oxidns-rules-baseline/SHA256SUMS"
+            echo
+            echo "Archive sha256: $(cat "$asset.sha256")"
+          } > "$notes"
+          gh release create "$tag" "$asset" \
+            --title "OxiDNS rule baseline ${VERSION}" \
+            --notes-file "$notes"
+          echo "published=true" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        if: always()
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          {
+            echo "### OxiDNS rule baseline ${VERSION}"
+            echo
+            if [ -f dist/CONTENT-SHA256 ]; then
+              echo "- content-sha256: \`$(cat dist/CONTENT-SHA256)\`"
+            fi
+            if [ -f "dist/oxidns-rules-baseline-${VERSION}.tar.gz.sha256" ]; then
+              echo "- archive-sha256: \`$(cat "dist/oxidns-rules-baseline-${VERSION}.tar.gz.sha256")\`"
+              echo
+              echo "Update \`oxidns-rules-baseline/Makefile\` with:"
+              echo
+              echo '```make'
+              echo "PKG_VERSION:=${VERSION}"
+              echo "PKG_HASH:=$(cat "dist/oxidns-rules-baseline-${VERSION}.tar.gz.sha256")"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

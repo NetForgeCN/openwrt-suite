@@ -2,7 +2,7 @@
 
 set -eu
 
-node -e "for (const f of ['htdocs/luci-static/resources/view/oxidns/overview.js','htdocs/luci-static/resources/view/oxidns/core.js','htdocs/luci-static/resources/view/oxidns/config.js','htdocs/luci-static/resources/view/oxidns/logs.js','htdocs/luci-static/resources/view/oxidns/settings.js']) new Function(require('fs').readFileSync(f,'utf8'));"
+node -e "for (const f of ['htdocs/luci-static/resources/view/oxidns/overview.js','htdocs/luci-static/resources/view/oxidns/core.js','htdocs/luci-static/resources/view/oxidns/config.js','htdocs/luci-static/resources/view/oxidns/logs.js','htdocs/luci-static/resources/view/oxidns/settings.js','htdocs/luci-static/resources/view/oxidns/rules.js']) new Function(require('fs').readFileSync(f,'utf8'));"
 node -e "for (const f of ['root/usr/share/luci/menu.d/luci-app-oxidns.json','root/usr/share/rpcd/acl.d/luci-app-oxidns.json','root/usr/share/oxidns/targets.json']) JSON.parse(require('fs').readFileSync(f,'utf8'));"
 node <<'NODE'
 const fs = require('fs');
@@ -14,6 +14,7 @@ for (const file of [
 	'htdocs/luci-static/resources/view/oxidns/config.js',
 	'htdocs/luci-static/resources/view/oxidns/logs.js',
 	'htdocs/luci-static/resources/view/oxidns/settings.js',
+	'htdocs/luci-static/resources/view/oxidns/rules.js',
 ]) {
 	const source = fs.readFileSync(file, 'utf8');
 	const re = /_\(\s*(['"])((?:\\.|[^\\])*?)\1\s*\)/g;
@@ -74,3 +75,4 @@ sh -n scripts/build-luci-package.sh
 sh -n scripts/integration-check.sh
 sh -n scripts/service-check.sh
 sh -n scripts/release-check.sh
+sh -n scripts/build-rules-baseline.sh

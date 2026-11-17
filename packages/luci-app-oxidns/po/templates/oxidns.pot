@@ -137,9 +137,6 @@ msgstr ""
 msgid "Install the OxiDNS core before using service controls."
 msgstr ""
 
-msgid "Install or repair the OxiDNS core binary. Runtime upgrades are handled by OxiDNS itself."
-msgstr ""
-
 msgid "Installed"
 msgstr ""
 
@@ -153,9 +150,6 @@ msgid "Logs"
 msgstr ""
 
 msgid "LuCI backend"
-msgstr ""
-
-msgid "LuCI can download the official OxiDNS release archive or install an uploaded .tar.gz archive or single oxidns binary. Future upgrades are handled by the OxiDNS core."
 msgstr ""
 
 msgid "Manage the OxiDNS runtime, service, configuration, and logs from LuCI."
@@ -356,9 +350,6 @@ msgstr ""
 msgid "Version"
 msgstr ""
 
-msgid "View recent OxiDNS entries from OpenWrt logread."
-msgstr ""
-
 msgid "WebUI"
 msgstr ""
 
@@ -393,9 +384,6 @@ msgid "Archive"
 msgstr ""
 
 msgid "Check Update"
-msgstr ""
-
-msgid "Core Update"
 msgstr ""
 
 msgid "Current version"
@@ -468,4 +456,85 @@ msgid "Persist core across upgrades"
 msgstr ""
 
 msgid "Store the core binary and webui under /etc/oxidns/core, which is kept during firmware upgrades. Requires enough free space on the overlay partition."
+msgstr ""
+
+msgid "Baseline version"
+msgstr ""
+
+msgid "Bundled"
+msgstr ""
+
+msgid "Check for updates"
+msgstr ""
+
+msgid "Domain lists used for China/ad split and ad blocking. The working copy is seeded from the bundled baseline at boot and can be updated from a published release."
+msgstr ""
+
+msgid "File"
+msgstr ""
+
+msgid "Installed version"
+msgstr ""
+
+msgid "Lines"
+msgstr ""
+
+msgid "Local copy"
+msgstr ""
+
+msgid "Missing"
+msgstr ""
+
+msgid "No rule update available."
+msgstr ""
+
+msgid "Release asset"
+msgstr ""
+
+msgid "Restore baseline"
+msgstr ""
+
+msgid "Restoring rules from the bundled baseline..."
+msgstr ""
+
+msgid "Rule Subscriptions"
+msgstr ""
+
+msgid "Rule files"
+msgstr ""
+
+msgid "Rule operation completed."
+msgstr ""
+
+msgid "Rule operation failed"
+msgstr ""
+
+msgid "Rule update available."
+msgstr ""
+
+msgid "Size"
+msgstr ""
+
+msgid "State"
+msgstr ""
+
+msgid "This overwrites every rule file in the working copy with the bundled baseline."
+msgstr ""
+
+msgid "Update now"
+msgstr ""
+
+msgid "Updates are downloaded from the repository release, verified with SHA256 and validated with oxidns check before they replace the working copy. Restoring the baseline works offline."
+msgstr ""
+
+msgid "Updating rule subscriptions..."
+msgstr ""
+
+msgid "Versions"
+msgstr ""
+
+msgid "Working copy"
+msgstr ""
+
+msgid "Rules"
 msgstr ""

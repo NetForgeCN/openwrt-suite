@@ -16,6 +16,7 @@
 | 内核升级 | LuCI 无入口，需去内核自带 WebUI/API | `Core` 页 `Check Update` 一键检查并升级 |
 | 日志 | 只能整页翻看 | 支持关键词 + `plugin` / `qtype` / `rcode` 字段过滤 |
 | 低闪存设备 | — | `Settings` 可关闭持久化，退回原版行为 |
+| 规则订阅（国内表 / 广告表） | 首启必须联网下载 6 份列表，缺一份服务起不来 | `oxidns-rules-baseline` 包内置基线，启动前本地补齐；`Rules` 页从仓库 release 检查并更新 |
 
 ## 从源码构建
 
@@ -110,6 +111,8 @@ apk add --allow-untrusted ./luci-i18n-oxidns-zh-cn_0.2.0-r1_all.apk
 - 配置：`/etc/oxidns/config.yaml`
 - 工作目录：`/var/lib/oxidns`（tmpfs，重启清空，仅运行时数据）
 - 服务脚本：`/etc/init.d/oxidns`
+- 规则基线（只读）：`/usr/share/oxidns/rules-baseline`（`oxidns-rules-baseline` 包）
+- 规则工作副本：`/etc/oxidns/rules`（缺失时由启动脚本从基线补齐）
 
 ## 已知限制
 
@@ -117,6 +120,7 @@ apk add --allow-untrusted ./luci-i18n-oxidns-zh-cn_0.2.0-r1_all.apk
 - 低闪存设备（overlay 剩余空间小于内核包体积）请在 `Settings` 关闭 `Persist core across upgrades`，否则安装可能因空间不足失败。
 - `Overview` 的 WebUI 入口根据配置文件中的 HTTP listen 地址生成；监听 `127.0.0.1` 时 LuCI 会提示需要本机访问或 SSH 隧道。
 - 私有内核仓库或受限网络环境可在 `Settings` 配置 GitHub token 或下载代理（需要 `curl`）。
+- 规则基线包解包后约 24MB（6 份列表 + 转换产物），低闪存设备不装该包即可，此时首启仍需联网下载规则；`Rules` 页的更新走本仓库 release 资产，不依赖 jsDelivr/上游仓库的可用性。
 
 ## 许可
 
