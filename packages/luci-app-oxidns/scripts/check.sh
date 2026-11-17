@@ -85,3 +85,15 @@ if grep -v '^[[:space:]]*#' root/usr/libexec/rpcd/luci.oxidns | grep -q '@\.\[';
 	echo "invalid jsonfilter expression in luci.oxidns: use @[*].field, not @.[*].field" >&2
 	exit 1
 fi
+
+# Package/xxx/install gets $(1) = $(PKG_BUILD_DIR)/ipkg-<arch>/<pkg>, i.e. a
+# directory *inside* the build directory. Copying "$(PKG_BUILD_DIR)/." into it
+# makes cp fail with "cannot copy a directory ... into itself", so install from
+# a subdirectory instead (this repo uses $(PKG_BUILD_DIR)/src).
+self_copy="$(grep -rnF --include=Makefile '$(PKG_BUILD_DIR)/.' . 2>/dev/null \
+	| grep -v ': *#' || true)"
+if [ -n "$self_copy" ]; then
+	echo 'Makefile copies $(PKG_BUILD_DIR)/. into the package dir: use a subdirectory such as $(PKG_BUILD_DIR)/src' >&2
+	echo "$self_copy" >&2
+	exit 1
+fi
