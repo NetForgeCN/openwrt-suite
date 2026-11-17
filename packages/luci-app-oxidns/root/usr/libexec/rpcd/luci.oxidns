@@ -2231,6 +2231,10 @@ rules_stage_check() {
 # at the staging directory.
 rules_validate_stage() {
 	RULES_STAGE="$1"
+	if [ ! -x "$OXIDNS_BIN" ]; then
+		core_progress_log "warn" "core binary not found ($OXIDNS_BIN), skipping pre-flight check"
+		return 0
+	fi
 	if [ ! -r "$CONFIG_PATH" ]; then
 		core_progress_log "warn" "config not readable ($CONFIG_PATH), skipping pre-flight check"
 		return 0
@@ -2530,7 +2534,7 @@ emit_rules_update_locked() {
 		json_detailed_error "rules_content_invalid" "rules archive content failed the sanity checks" "validate_rules" "asset=$RULES_ASSET"
 		return 1
 	fi
-	core_progress_log "success" "all 7 rule files present and above the minimum line count"
+	core_progress_log "success" "all rule files are present and above the minimum line count"
 
 	# Stage inside /etc so the final swap is a same-filesystem rename.
 	STAGE_DIR="$RULES_DIR.stage.$$"
@@ -2540,9 +2544,18 @@ emit_rules_update_locked() {
 		json_detailed_error "rules_stage_failed" "cannot create the staging directory" "stage_rules" "$STAGE_DIR"
 		return 1
 	}
-	if ! cp -R "$STAGED/." "$STAGE_DIR/" 2>/dev/null; then
+	# Copy the rule files only: the archive also carries MANIFEST/SHA256SUMS/
+	# LICENSES, which have no business in the working copy that OxiDNS reads.
+	COPY_FAILED=""
+	for FILE_NAME in $(rules_files); do
+		if ! cp "$STAGED/$FILE_NAME" "$STAGE_DIR/$FILE_NAME" 2>/dev/null; then
+			COPY_FAILED="$FILE_NAME"
+			break
+		fi
+	done
+	if [ -n "$COPY_FAILED" ]; then
 		rm -rf "$STAGE_DIR" "$WORK_DIR"
-		json_detailed_error "rules_stage_failed" "cannot copy the staged rules into place" "stage_rules" "$STAGE_DIR"
+		json_detailed_error "rules_stage_failed" "cannot copy the staged rules into place" "stage_rules" "$COPY_FAILED"
 		return 1
 	fi
 	rm -rf "$WORK_DIR"

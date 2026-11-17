@@ -2,14 +2,19 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-oxidns
 PKG_VERSION:=0.2.0
-PKG_RELEASE:=3
+PKG_RELEASE:=4
 
 PKG_LICENSE:=GPL-3.0-or-later
 PKG_MAINTAINER:=Sven Shi <isvenshi@gmail.com>
 
 LUCI_TITLE:=LuCI support for OxiDNS
-LUCI_DEPENDS:=+luci-base +rpcd +jsonfilter +uclient-fetch +ca-bundle +oxidns-core \
-	+PACKAGE_oxidns-rules-baseline:oxidns-rules-baseline
+# oxidns-rules-baseline is a hard dependency, not "+PACKAGE_...:" (conditional):
+# the rule files are a load-time requirement of the OxiDNS provider, so a build
+# that selects this app must also bake the baseline into the image. A
+# conditional dependency silently produced firmware whose first boot died with
+# "failed to open text source '/etc/oxidns/rules/cn-domains.txt'" unless the
+# baseline happened to be selected by hand.
+LUCI_DEPENDS:=+luci-base +rpcd +jsonfilter +uclient-fetch +ca-bundle +oxidns-core +oxidns-rules-baseline
 LUCI_PKGARCH:=all
 
 define Package/luci-app-oxidns/postinst

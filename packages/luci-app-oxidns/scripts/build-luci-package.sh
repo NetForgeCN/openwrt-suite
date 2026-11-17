@@ -5,11 +5,23 @@ set -eu
 VERSION="${1:-0.1.0}"
 OUT_DIR="${2:-dist}"
 CORE_ARCHIVE="${3:-}"
+RULES_ARCHIVE="${4:-}"
 PKG_VERSION="$(printf '%s' "$VERSION" | sed 's/^v//')"
 PKG_NAME="luci-app-oxidns"
 PKG_FILE_BASE="${PKG_NAME}_${PKG_VERSION}-r1_all"
 I18N_PKG_NAME="luci-i18n-oxidns-zh-cn"
 I18N_FILE_BASE="${I18N_PKG_NAME}_${PKG_VERSION}-r1_all"
+
+if [ -n "$RULES_ARCHIVE" ]; then
+	if [ ! -f "$RULES_ARCHIVE" ]; then
+		printf 'rules archive not found: %s\n' "$RULES_ARCHIVE" >&2
+		exit 1
+	fi
+	if ! tar -tzf "$RULES_ARCHIVE" 2>/dev/null | grep -q '/cn-domains.txt$'; then
+		printf 'rules archive does not contain cn-domains.txt, refusing to embed it\n' >&2
+		exit 1
+	fi
+fi
 
 if [ -n "$CORE_ARCHIVE" ]; then
 	if [ ! -f "$CORE_ARCHIVE" ]; then
@@ -220,6 +232,20 @@ fi
 if [ -n "$CORE_ARCHIVE" ]; then
 	mkdir -p "$DATA_DIR/usr/share/oxidns"
 	cp "$CORE_ARCHIVE" "$DATA_DIR/usr/share/oxidns/core-bundle.tar.gz"
+fi
+
+# Packaged without buildroot there is no oxidns-rules-baseline package, so the
+# rule files must travel inside this package: /etc/init.d/oxidns seeds
+# /etc/oxidns/rules from them on the first start, exactly like the buildroot
+# package does. Get the archive from the pinned release (see
+# oxidns-rules-baseline/Makefile) and pass it as the fourth argument.
+if [ -n "$RULES_ARCHIVE" ]; then
+	mkdir -p "$DATA_DIR/usr/share/oxidns/rules-baseline"
+	tar -xzf "$RULES_ARCHIVE" -C "$DATA_DIR/usr/share/oxidns/rules-baseline" --strip-components=1
+	if [ ! -s "$DATA_DIR/usr/share/oxidns/rules-baseline/cn-domains.txt" ]; then
+		printf 'rules archive unpacked without cn-domains.txt\n' >&2
+		exit 1
+	fi
 fi
 
 chmod 755 "$DATA_DIR/usr/libexec/rpcd/luci.oxidns"

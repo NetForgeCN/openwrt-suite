@@ -47,17 +47,32 @@ restore_core_links() {
 # repair this itself. Seed missing files from the bundled baseline package
 # instead: local copy, no network, no boot delay.
 seed_rule_files() {
-	[ -d "$RULES_BASELINE_DIR" ] || return 0
-	mkdir -p "$RULES_DIR" 2>/dev/null || return 0
-	for rule_file in $RULE_FILES; do
-		[ -s "$RULES_DIR/$rule_file" ] && continue
-		[ -s "$RULES_BASELINE_DIR/$rule_file" ] || continue
-		if cp "$RULES_BASELINE_DIR/$rule_file" "$RULES_DIR/$rule_file"; then
-			logger -t oxidns "seeded $rule_file from rules baseline"
+	mkdir -p "$RULES_DIR" 2>/dev/null || true
+	if [ -d "$RULES_BASELINE_DIR" ]; then
+		for rule_file in $RULE_FILES; do
+			[ -s "$RULES_DIR/$rule_file" ] && continue
+			[ -s "$RULES_BASELINE_DIR/$rule_file" ] || continue
+			if cp "$RULES_BASELINE_DIR/$rule_file" "$RULES_DIR/$rule_file"; then
+				logger -t oxidns "seeded $rule_file from rules baseline"
+			fi
+		done
+		if [ ! -s "$RULES_DIR/.installed-version" ] && [ -s "$RULES_BASELINE_DIR/VERSION" ]; then
+			cp "$RULES_BASELINE_DIR/VERSION" "$RULES_DIR/.installed-version" 2>/dev/null
 		fi
+	else
+		logger -t oxidns -p daemon.warn \
+			"rules baseline not installed ($RULES_BASELINE_DIR); cannot seed rule files"
+	fi
+
+	# Report the files that are still missing instead of letting OxiDNS die with
+	# a bare "failed to open text source" line that says nothing about the cause.
+	missing_rules=""
+	for rule_file in $RULE_FILES; do
+		[ -s "$RULES_DIR/$rule_file" ] || missing_rules="$missing_rules $rule_file"
 	done
-	if [ ! -s "$RULES_DIR/.installed-version" ] && [ -s "$RULES_BASELINE_DIR/VERSION" ]; then
-		cp "$RULES_BASELINE_DIR/VERSION" "$RULES_DIR/.installed-version" 2>/dev/null
+	if [ -n "$missing_rules" ]; then
+		logger -t oxidns -p daemon.err "missing rule files:$missing_rules"
+		echo "oxidns: missing rule files:$missing_rules (install oxidns-rules-baseline)" >&2
 	fi
 	return 0
 }

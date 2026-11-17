@@ -29,19 +29,23 @@ cd openwrt
 ./scripts/feeds update -a
 ./scripts/feeds install -a
 
-# 2. Clone this repository as a package (includes the oxidns-core subpackage)
+# 2. Clone this repository as a package (includes the oxidns-core and
+#    oxidns-rules-baseline subpackages)
 git clone https://github.com/NetForgeCN/luci-app-oxidns.git package/luci-app-oxidns
 
-# 3. Select it in menuconfig (LuCI -> Applications -> luci-app-oxidns, plus Network -> DNS -> oxidns-core)
+# 3. Select it in menuconfig (LuCI -> Applications -> luci-app-oxidns; oxidns-core
+#    and oxidns-rules-baseline are hard dependencies and get selected with it)
 make menuconfig
 
 # 4. Build
 make package/luci-app-oxidns/compile V=s
 ```
 
+**Bundled rules**: the repository also ships `oxidns-rules-baseline`, another build-time download (URL and SHA256 pinned) that lands in `/usr/share/oxidns/rules-baseline`. `luci-app-oxidns` depends on it unconditionally, so a firmware that includes the app always includes the rule baseline: the files are copied into `/etc/oxidns/rules` at package install and again before every service start, which means **the first boot needs no network at all**. Use `Services -> OxiDNS -> Rules` to check for and install newer lists.
+
 **Bundled core**: the repository ships an `oxidns-core` subpackage that `luci-app-oxidns` depends on in buildroot. At compile time it downloads the official OxiDNS release for the target architecture (URL and SHA256 pinned in `oxidns-core/Makefile`) and bakes the binary, webui and default config into the firmware/ipk. The installed system **has a working core out of the box** — no first-run download needed. Runtime updates via the LuCI `Check Update` button are not limited to the pinned version. Supported architectures: x86_64, aarch64, i386 (i686 binary), ARM hard-float (cortex → armv7, others → armv6). For unsupported architectures (e.g. MIPS), build `luci-app-oxidns` without `oxidns-core` and install the core from the LuCI page instead.
 
-Artifacts land in `bin/packages/<arch>/`: `oxidns-core_*.ipk`, `luci-app-oxidns_*.ipk` and `luci-i18n-oxidns-zh-cn_*.ipk`. Selecting `<*>` in menuconfig bakes the plugin and the core directly into the firmware image.
+Artifacts land in `bin/packages/<arch>/`: `oxidns-core_*.ipk`, `oxidns-rules-baseline_*.ipk`, `luci-app-oxidns_*.ipk` and `luci-i18n-oxidns-zh-cn_*.ipk`. Selecting `<*>` in menuconfig bakes the plugin, the core and the rule baseline directly into the firmware image.
 
 ### Option 2: Quick packaging without the SDK
 
@@ -57,9 +61,16 @@ cd luci-app-oxidns
 # Package with an embedded core (works out of the box on the matching arch)
 curl -LO https://github.com/svenshi/oxidns/releases/download/v1.6.1/oxidns-x86_64-unknown-linux-musl.tar.gz
 ./scripts/build-luci-package.sh 0.2.0 dist-embedded oxidns-x86_64-unknown-linux-musl.tar.gz
+
+# Core plus the rule baseline. The fourth argument is the baseline tarball from
+# the release pinned in oxidns-rules-baseline/Makefile; without it a
+# buildroot-free install has no rule files at all.
+curl -LO https://github.com/NetForgeCN/luci-app-oxidns/releases/download/rules-v2026.11.17.0223/oxidns-rules-baseline-2026.11.17.0223.tar.gz
+./scripts/build-luci-package.sh 0.2.0 dist-embedded oxidns-x86_64-unknown-linux-musl.tar.gz \
+	oxidns-rules-baseline-2026.11.17.0223.tar.gz
 ```
 
-When embedding a core, pick the release asset matching the router CPU (x86_64 / aarch64 / armv7 / i686). postinst unpacks it into `/etc/oxidns/core` on install and creates the symlinks.
+When embedding a core, pick the release asset matching the router CPU (x86_64 / aarch64 / armv7 / i686). postinst unpacks it into `/etc/oxidns/core` on install and creates the symlinks. An embedded rule baseline lands in `/usr/share/oxidns/rules-baseline` and is copied to `/etc/oxidns/rules` by `/etc/init.d/oxidns` on the first start.
 
 ### Install On The Router
 

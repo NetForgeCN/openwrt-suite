@@ -32,7 +32,8 @@ cd openwrt
 # 2. 把本仓库克隆为 package（自带 oxidns-core 子包）
 git clone https://github.com/NetForgeCN/luci-app-oxidns.git package/luci-app-oxidns
 
-# 3. menuconfig 中选中（LuCI -> Applications -> luci-app-oxidns，可一并勾选 Network -> DNS -> oxidns-core）
+# 3. menuconfig 中选中（LuCI -> Applications -> luci-app-oxidns；oxidns-core 与
+#    oxidns-rules-baseline 是硬依赖，会随它自动选中）
 make menuconfig
 
 # 4. 编译
@@ -41,11 +42,13 @@ make package/luci-app-oxidns/compile V=s
 
 **自带核心**：本仓库包含 `oxidns-core` 子包，`luci-app-oxidns` 在 buildroot 中默认依赖它。编译时会根据目标架构自动下载对应的官方 OxiDNS release（下载地址与 SHA256 固化在 `oxidns-core/Makefile`），把内核二进制、WebUI 和默认配置直接打进固件/ipk。装好的系统**开箱即有核心**，第一次使用不需要手动下载，直接到 `Overview` 启动服务即可；之后仍可在 `Core` 页用 `Check Update` 升级到任意新版本（运行时升级不受编译期固定版本的限制）。
 
+**自带规则**：本仓库同时包含 `oxidns-rules-baseline` 子包（规则基线，同样编译期从本仓库 release 下载并固化 `PKG_HASH`），`luci-app-oxidns` 对它也是硬依赖。刷完固件 `/usr/share/oxidns/rules-baseline` 就有 7 份完整列表，包安装时和每次启动前都会把缺失的文件补到 `/etc/oxidns/rules`，因此**首启完全不联网**；要更新再到 `Services -> OxiDNS -> Rules` 页检查/更新。
+
 - 支持架构：x86_64、aarch64、i386（i686 二进制）、ARM hard-float（cortex 系列映射 armv7，其余映射 armv6）。
 - 不支持架构（如 MIPS）：buildroot 中不勾选 `oxidns-core` 也可以单独编译 `luci-app-oxidns`，再用页面里的 `Install Core` 手动安装。
 - 升级核心版本：改 `oxidns-core/Makefile` 里的 `PKG_VERSION` 和对应 `PKG_HASH` 后重新编译。
 
-编译产物在 `bin/packages/<架构>/` 下：`oxidns-core_*.ipk`、`luci-app-oxidns_*.ipk` 和 `luci-i18n-oxidns-zh-cn_*.ipk`。在 menuconfig 里直接勾选 `<*>` 也可以把插件和核心**一起编进固件镜像**，这样升级固件后连插件重装这一步都省了。
+编译产物在 `bin/packages/<架构>/` 下：`oxidns-core_*.ipk`、`oxidns-rules-baseline_*.ipk`、`luci-app-oxidns_*.ipk` 和 `luci-i18n-oxidns-zh-cn_*.ipk`。在 menuconfig 里直接勾选 `<*>` 也可以把插件、核心和规则基线**一起编进固件镜像**，这样升级固件后连插件重装这一步都省了。
 
 ### 方式二：无 SDK 快速打包（只出安装包）
 
@@ -61,9 +64,16 @@ cd luci-app-oxidns
 # 内嵌核心包（把官方 release tar.gz 打进 ipk，安装时自动解包到持久区，开箱即用）
 curl -LO https://github.com/svenshi/oxidns/releases/download/v1.6.1/oxidns-x86_64-unknown-linux-musl.tar.gz
 ./scripts/build-luci-package.sh 0.2.0 dist-embedded oxidns-x86_64-unknown-linux-musl.tar.gz
+
+# 内嵌核心 + 内嵌规则基线（第四个参数是基线 tar.gz，取自 oxidns-rules-baseline/Makefile
+# 里 PKG_SOURCE_URL/PKG_HASH 指向的 release 资产；不打进去的话这台机器上没有基线包，
+# 首次启动就没有规则文件）
+curl -LO https://github.com/NetForgeCN/luci-app-oxidns/releases/download/rules-v2026.11.17.0223/oxidns-rules-baseline-2026.11.17.0223.tar.gz
+./scripts/build-luci-package.sh 0.2.0 dist-embedded oxidns-x86_64-unknown-linux-musl.tar.gz \
+	oxidns-rules-baseline-2026.11.17.0223.tar.gz
 ```
 
-内嵌核心时请按目标路由器的 CPU 架构选择 release 资产（x86_64 / aarch64 / armv7 / i686），此时包虽然仍是 `_all` 后缀，但**只能在对应架构上使用**。安装时 postinst 会自动把核心解包到 `/etc/oxidns/core` 并建好符号链接，`Core` 页会显示已安装。
+内嵌核心时请按目标路由器的 CPU 架构选择 release 资产（x86_64 / aarch64 / armv7 / i686），此时包虽然仍是 `_all` 后缀，但**只能在对应架构上使用**。安装时 postinst 会自动把核心解包到 `/etc/oxidns/core` 并建好符号链接，`Core` 页会显示已安装。规则基线内嵌后落在 `/usr/share/oxidns/rules-baseline`，首次启动时由 `/etc/init.d/oxidns` 复制到 `/etc/oxidns/rules`。
 
 ### 路由器上安装
 
@@ -120,7 +130,7 @@ apk add --allow-untrusted ./luci-i18n-oxidns-zh-cn_0.2.0-r1_all.apk
 - 低闪存设备（overlay 剩余空间小于内核包体积）请在 `Settings` 关闭 `Persist core across upgrades`，否则安装可能因空间不足失败。
 - `Overview` 的 WebUI 入口根据配置文件中的 HTTP listen 地址生成；监听 `127.0.0.1` 时 LuCI 会提示需要本机访问或 SSH 隧道。
 - 私有内核仓库或受限网络环境可在 `Settings` 配置 GitHub token 或下载代理（需要 `curl`）。
-- 规则基线包解包后约 24MB（6 份列表 + 转换产物），低闪存设备不装该包即可，此时首启仍需联网下载规则；`Rules` 页的更新走本仓库 release 资产，不依赖 jsDelivr/上游仓库的可用性。
+- 规则基线包解包后约 24MB（7 份列表），是**硬依赖**：`luci-app-oxidns` 的构建依赖里直接写了 `+oxidns-rules-baseline`，选中这个应用就会把基线一起编译进固件。v7 配置已删掉运行期下载/转换链路，没有基线时 OxiDNS 会在 provider 初始化阶段直接退出，因此不能省；闪存紧张时应改用 `geosite` 分流而不是省掉基线。`Rules` 页的更新走本仓库 release 资产，不依赖 jsDelivr/上游仓库的可用性。
 
 ## 许可
 

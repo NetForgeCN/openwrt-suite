@@ -63,9 +63,41 @@ endef
 define Build/Compile
 endef
 
+# The archive has exactly one top-level directory (oxidns-rules-baseline/), so
+# strip it explicitly instead of relying on the default unpack behaviour: the
+# install rule below copies $(PKG_BUILD_DIR)/. and must not end up with a
+# nested oxidns-rules-baseline/ directory inside /usr/share.
+define Build/Prepare
+	mkdir -p $(PKG_BUILD_DIR)
+	$(TAR) -xzf $(DL_DIR)/$(PKG_SOURCE) -C $(PKG_BUILD_DIR) --strip-components=1
+endef
+
 define Package/oxidns-rules-baseline/install
 	$(INSTALL_DIR) $(1)/usr/share/oxidns/rules-baseline
 	$(CP) $(PKG_BUILD_DIR)/. $(1)/usr/share/oxidns/rules-baseline/
+endef
+
+# Seed the working copy at install time as well, so the files exist before the
+# service is ever started (and on installs where the service is disabled).
+# Existing files are never overwritten: /etc/oxidns/rules may already hold a
+# newer set fetched from the Rules page.
+define Package/oxidns-rules-baseline/postinst
+#!/bin/sh
+[ -n "$${IPKG_INSTROOT:-}" ] && exit 0
+mkdir -p /etc/oxidns/rules 2>/dev/null || exit 0
+for rule_file in adguard-antiad.txt adguard-hostlist.txt anti-ad-domains.txt \
+	adrules-domains.txt neodevhost-domains.txt accelerated-domains.china.conf \
+	cn-domains.txt; do
+	if [ ! -s "/etc/oxidns/rules/$$rule_file" ] && \
+	   [ -s "/usr/share/oxidns/rules-baseline/$$rule_file" ]; then
+		cp "/usr/share/oxidns/rules-baseline/$$rule_file" "/etc/oxidns/rules/$$rule_file"
+	fi
+done
+if [ ! -s /etc/oxidns/rules/.installed-version ] && \
+   [ -s /usr/share/oxidns/rules-baseline/VERSION ]; then
+	cp /usr/share/oxidns/rules-baseline/VERSION /etc/oxidns/rules/.installed-version
+fi
+exit 0
 endef
 
 $(eval $(call BuildPackage,oxidns-rules-baseline))

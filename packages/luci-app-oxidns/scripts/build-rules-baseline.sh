@@ -108,7 +108,9 @@ validate_plain_list() {
 	return 0
 }
 
-rm -rf "$OUT_DIR"
+# Only wipe this script's own outputs: --out dir may hold other artifacts
+# (ipk/apk from scripts/build-luci-package.sh).
+rm -rf "$BASE_DIR" "$ASSET" "$ASSET.sha256"
 mkdir -p "$BASE_DIR/LICENSES"
 
 printf '== downloading upstream lists ==\n'
@@ -193,11 +195,33 @@ printf '%s\n' "$VERSION" > "$BASE_DIR/VERSION"
 
 # Reproducible timestamps: two builds of the same rule data must produce the
 # same archive bytes, otherwise PKG_HASH in the package Makefile would break
-# on every re-run. The stamp comes straight from VERSION (no date parsing, so
-# BSD date and GNU date behave the same), and gzip -n drops its own timestamp.
-STAMP="$(printf '%s' "$VERSION" | tr -d '.')0000.00"
+# on every re-run. The stamp is derived from VERSION (no date parsing, so BSD
+# and GNU tools behave the same) and gzip -n drops its own timestamp.
+#
+# VERSION is YYYY.MM.DD or YYYY.MM.DD.HHMM; touch -t wants YYYYMMDDhhmm.SS, so
+# the previous "strip the dots and append 0000.00" produced a 16-digit string
+# that both BSD and GNU touch reject (silently, thanks to "|| true"), which is
+# why archives were never actually reproducible.
+stamp_of() {
+	printf '%s\n' "$VERSION" | awk -F. '{
+		hh = "00"; mm = "00";
+		if (NF >= 4 && length($4) == 4) { hh = substr($4, 1, 2); mm = substr($4, 3, 2) }
+		printf "%s%s%s%s%s.00\n", $1, $2, $3, hh, mm
+	}'
+}
+iso_of() {
+	printf '%s\n' "$VERSION" | awk -F. '{
+		hh = "00"; mm = "00";
+		if (NF >= 4 && length($4) == 4) { hh = substr($4, 1, 2); mm = substr($4, 3, 2) }
+		printf "%s-%s-%s %s:%s:00 UTC\n", $1, $2, $3, hh, mm
+	}'
+}
+STAMP="$(stamp_of)"
 find "$BASE_DIR" -exec touch -t "$STAMP" {} + 2>/dev/null || true
-EPOCH="$(date -u -d "$(printf '%s' "$VERSION" | tr '.' '-')" +%s 2>/dev/null || true)"
+# GNU date only: used for tar --mtime, which normalises the archive even if the
+# filesystem mtimes above did not stick. Empty on BSD, where touch above is the
+# reproducibility guarantee.
+EPOCH="$(date -u -d "$(iso_of)" +%s 2>/dev/null || true)"
 
 printf '== packaging %s ==\n' "$ASSET"
 # gzip -n keeps the timestamp out of the gzip header; without it two runs
