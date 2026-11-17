@@ -16,7 +16,11 @@ env:
   PKG_DIR_NAME: luci-app-pulse
 
 jobs:
+  tests:
+    uses: ./.github/workflows/test.yml
+
   build:
+    needs: tests
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
