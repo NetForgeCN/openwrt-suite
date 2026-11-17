@@ -2269,27 +2269,42 @@ rules_space_check() {
 	return 0
 }
 
+# Sets RULES_TAG (empty when nothing matches) and RULES_TAG_LIST (what was
+# actually seen, for diagnostics). Deliberately prints nothing and is called
+# without a command substitution: a subshell would discard both variables and
+# leave the error detail reading "tags=none" no matter what the API returned.
 rules_latest_tag() {
 	LIST_FILE="$1"
-	command -v jsonfilter >/dev/null 2>&1 || return 2
+	RULES_TAG=""
+	RULES_TAGS=""
 
-	# Root-level array iteration is "@[*].field". The shape "@.[*].field" (a dot
-	# before the bracket) is rejected by jsonfilter's parser: it exits non-zero
-	# and prints nothing, which is indistinguishable from "no matching release"
-	# and produced a bogus no_rules_release error while the release existed.
-	RULES_TAGS="$(jsonfilter -i "$LIST_FILE" -e '@[*].tag_name' 2>/dev/null || true)"
-	if [ -z "$RULES_TAGS" ]; then
-		# Fallback for jsonfilter builds without array-root support. The
-		# listing is machine-generated and tag names never contain escapes,
-		# so scanning the text is safe here.
-		RULES_TAGS="$(grep -o '"tag_name":"[^"]*"' "$LIST_FILE" 2>/dev/null \
-			| sed 's/^"tag_name":"//; s/"$//' || true)"
+	if command -v jsonfilter >/dev/null 2>&1; then
+		# Root-level array iteration. "@.[*]" (dot before the bracket) is a
+		# parse error in jsonfilter: non-zero exit, no output, indistinguishable
+		# from an empty result.
+		RULES_TAGS="$(jsonfilter -i "$LIST_FILE" -e '@[*].tag_name' 2>/dev/null || true)"
 	fi
 	if [ -z "$RULES_TAGS" ]; then
-		core_progress_log "error" "release listing contains no tag_name field"
+		# Text fallback needing only tr/sed: the listing is a single line, so
+		# split it on commas (one object per line) and read each tag_name. A
+		# tag_name inside a release body is JSON-escaped (\"tag_name\"), so it
+		# never matches this pattern.
+		RULES_TAGS="$(tr ',' '\n' < "$LIST_FILE" 2>/dev/null \
+			| sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' || true)"
+	fi
+	if [ -z "$RULES_TAGS" ]; then
+		RULES_RESOLVE_ERROR="release listing has no tag_name field"
+		core_progress_log "error" "$RULES_RESOLVE_ERROR"
 		return 1
 	fi
-	printf '%s\n' "$RULES_TAGS" | grep "^$RULES_TAG_PREFIX" | LC_ALL=C sort | tail -n 1 || true
+	RULES_TAG_LIST="$(printf '%s' "$RULES_TAGS" | tr '\n' ' ' | cut -c1-200)"
+	core_progress_log "info" "release tags seen: $RULES_TAG_LIST"
+
+	# Accept only <prefix><digits/dots> and take the highest one.
+	RULES_TAG="$(printf '%s\n' "$RULES_TAGS" \
+		| sed -n "s/^\($RULES_TAG_PREFIX[0-9][0-9.]*\)$/\1/p" \
+		| LC_ALL=C sort | tail -n 1)"
+	return 0
 }
 
 # Resolve the newest rules release (tag rules-vYYYY.MM.DD) in RULES_REPOSITORY
@@ -2305,17 +2320,17 @@ rules_resolve_release() {
 
 	RELEASES_FILE="$WORK_DIR/releases.json"
 	if ! download_file "$GITHUB_API_BASE/repos/$RULES_REPOSITORY/releases?per_page=100" "$RELEASES_FILE"; then
-		core_progress_log "error" "failed to list releases: ${DOWNLOAD_ERROR:-unknown}"
+		RULES_RESOLVE_ERROR="cannot list releases: ${DOWNLOAD_ERROR:-unknown}"
+		core_progress_log "error" "$RULES_RESOLVE_ERROR"
 		return 1
 	fi
 	TAG_RC=0
-	RULES_TAG="$(rules_latest_tag "$RELEASES_FILE")" || TAG_RC=$?
-	if [ "$TAG_RC" -eq 2 ]; then
-		core_progress_log "error" "jsonfilter is required to read release metadata"
+	rules_latest_tag "$RELEASES_FILE" || TAG_RC=$?
+	if [ "$TAG_RC" -ne 0 ]; then
 		return 1
 	fi
 	if [ -z "$RULES_TAG" ]; then
-		core_progress_log "warn" "no $RULES_TAG_PREFIX* release in $RULES_REPOSITORY"
+		core_progress_log "warn" "no $RULES_TAG_PREFIX* release in $RULES_REPOSITORY (tags: ${RULES_TAG_LIST:-none})"
 		return 2
 	fi
 	RULES_VERSION="${RULES_TAG#"$RULES_TAG_PREFIX"}"
@@ -2323,14 +2338,16 @@ rules_resolve_release() {
 
 	RELEASE_FILE="$WORK_DIR/release.json"
 	if ! download_file "$GITHUB_API_BASE/repos/$RULES_REPOSITORY/releases/tags/$RULES_TAG" "$RELEASE_FILE"; then
-		core_progress_log "error" "failed to fetch release metadata: ${DOWNLOAD_ERROR:-unknown}"
+		RULES_RESOLVE_ERROR="cannot fetch metadata for $RULES_TAG: ${DOWNLOAD_ERROR:-unknown}"
+		core_progress_log "error" "$RULES_RESOLVE_ERROR"
 		return 1
 	fi
 	RULES_ASSET="${RULES_ASSET_PREFIX}${RULES_VERSION}.tar.gz"
 	SELECT_RC=0
 	select_release_asset "$RELEASE_FILE" "$RULES_ASSET" || SELECT_RC=$?
 	if [ "$SELECT_RC" -ne 0 ]; then
-		core_progress_log "error" "release $RULES_TAG has no asset $RULES_ASSET"
+		RULES_RESOLVE_ERROR="release $RULES_TAG has no asset $RULES_ASSET"
+		core_progress_log "error" "$RULES_RESOLVE_ERROR"
 		return 1
 	fi
 	RULES_URL="$SELECT_URL"
@@ -2394,12 +2411,12 @@ emit_rules_check() {
 	rules_resolve_release "$CHECK_DIR" || RESOLVE_RC=$?
 	if [ "$RESOLVE_RC" -eq 2 ]; then
 		rm -rf "$CHECK_DIR"
-		json_detailed_error "no_rules_release" "no rules release has been published for this repository yet" "resolve_release" "repository=$RULES_REPOSITORY"
+		json_detailed_error "no_rules_release" "no rules release has been published for this repository yet" "resolve_release" "repository=$RULES_REPOSITORY; tags=${RULES_TAG_LIST:-none}"
 		return 1
 	fi
 	if [ "$RESOLVE_RC" -ne 0 ]; then
 		rm -rf "$CHECK_DIR"
-		json_detailed_error "rules_release_unavailable" "failed to resolve the rules release" "resolve_release" "${RULES_VALIDATE_ERROR:-${DOWNLOAD_ERROR:-unknown error}}"
+		json_detailed_error "rules_release_unavailable" "failed to resolve the rules release" "resolve_release" "${RULES_RESOLVE_ERROR:-${DOWNLOAD_ERROR:-unknown error}}"
 		return 1
 	fi
 	if ! valid_sha256 "$RULES_SHA256"; then
@@ -2454,12 +2471,12 @@ emit_rules_update_locked() {
 	rules_resolve_release "$WORK_DIR" || RESOLVE_RC=$?
 	if [ "$RESOLVE_RC" -eq 2 ]; then
 		rm -rf "$WORK_DIR"
-		json_detailed_error "no_rules_release" "no rules release has been published for this repository yet" "resolve_release" "repository=$RULES_REPOSITORY"
+		json_detailed_error "no_rules_release" "no rules release has been published for this repository yet" "resolve_release" "repository=$RULES_REPOSITORY; tags=${RULES_TAG_LIST:-none}"
 		return 1
 	fi
 	if [ "$RESOLVE_RC" -ne 0 ]; then
 		rm -rf "$WORK_DIR"
-		json_detailed_error "rules_release_unavailable" "failed to resolve the rules release" "resolve_release" "${DOWNLOAD_ERROR:-unknown error}"
+		json_detailed_error "rules_release_unavailable" "failed to resolve the rules release" "resolve_release" "${RULES_RESOLVE_ERROR:-${DOWNLOAD_ERROR:-unknown error}}"
 		return 1
 	fi
 	if ! valid_sha256 "$RULES_SHA256"; then
