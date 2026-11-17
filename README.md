@@ -1,8 +1,8 @@
 # openwrt-suite
 
-OpenWrt 第三方组件**单一聚合 feed 仓库**：把 34 个第三方包（37 个包源目录，含
-argon 自带的 `compat/luci-app-argon-config`、oxidns 自带的 `oxidns-core`、
-lucky 自带的 `lucky/` 三个嵌套子包）+ 一份固件 `.config` 统一收进本仓库，
+OpenWrt 第三方组件**单一聚合 feed 仓库**：把 34 个第三方包（38 个包源目录，含
+argon 自带的 `compat/luci-app-argon-config`、oxidns 自带的 `oxidns-core` 与
+`oxidns-rules-baseline`、lucky 自带的 `lucky/` 四个嵌套子包）+ 一份固件 `.config` 统一收进本仓库，
 每日由 GitHub Actions 从各上游同步（纯快照方式）。使用时**只需克隆本仓库**，
 第三方包就会出现在 `make menuconfig` 里。
 
@@ -17,7 +17,6 @@ openwrt-suite/
 ├── sources.lock       最近一次同步对应的上游 commit（版本可追溯 / 构建可复现）
 ├── meta/              多包上游的许可证文件副本（许可证随快照保留）
 ├── patches/
-│   ├── geodata.sh     v2ray-geodata 同步后补丁（GEOIP_URL 改用全量 geoip.dat）
 │   └── photondns.sh   把上游仓库根的 Cargo 工程原样 stage 进 photondns 包目录
 ├── .github/workflows/ sync.yml（每日同步上游）、build.yml（每日固件构建 + Release）
 ├── renovate.json      忽略 packages/ 快照，只升级本仓库自身的 workflow 依赖
@@ -64,7 +63,7 @@ kmod-oaf），需要时在 menuconfig 里自行勾选；实际以 `config/dot.co
 | LuCI → 4. Themes | luci-theme-argon |
 | Network → IP Addresses and Names | ddns-go、kixdns、mosdns（Go DNS 转发器）、photondns（Rust DNS 转发器）、v2ray-geodata（虚包，实际产出 v2ray-geoip / v2ray-geosite） |
 | Network → Web Servers/Proxies | dae、honk（eBPF 核心，仅 x86_64 / aarch64_generic） |
-| Network → DNS | oxidns-core |
+| Network → DNS | oxidns-core、oxidns-rules-baseline（OxiDNS 内置规则订阅基线） |
 | Network（无子菜单） | kixdns-stats、lucky（静态核心，编译期内置）、mihomo-alpha、mihomo-meta、nikki、nqptp、open-nexttrace-core |
 | Sound | airplay2 |
 | Utilities | geo2txt（解包 geosite.dat / geoip.dat 的 C 工具） |
@@ -229,10 +228,28 @@ OpenWrt 的 `feeds install -a` 对同名包按 feeds.conf 中的**出现顺序**
 
 ### v2ray-geodata 的处理
 
-同步源用 [NetForgeCN/Loyalsoldier](https://github.com/NetForgeCN/Loyalsoldier) 这个
-fork 的源头 [sbwml/v2ray-geodata](https://github.com/sbwml/v2ray-geodata)，同步后由
-`patches/geodata.sh` 重打 fork 中的定制（`GEOIP_URL` 改用全量 `geoip.dat`）。
-上游 Makefile 结构变化导致补丁失配时同步会报红，提示人工更新补丁。
+同步源直接就是自建仓库
+[NetForgeCN/Loyalsoldier](https://github.com/NetForgeCN/Loyalsoldier)（fork 自
+`sbwml/v2ray-geodata`，仓库内只有一份 Makefile）。它的 `GEOIP_URL` 与 `GEOSITE_URL`
+都指向自建规则仓库
+[NetForgeCN/v2ray-rules-dat](https://github.com/NetForgeCN/v2ray-rules-dat) 的
+latest release：全量 `geoip.dat` + `geosite.dat`（Loyalsoldier 全量集，另加
+反广告 / Cats-Team AdRules / neodevhost 列表），release 里同时提供两个
+`.sha256sum` 供 Makefile 的 `Build/Compile` 校验。
+
+因此**不需要任何同步后补丁**：快照与源仓库逐字节一致，要换数据源只改那个仓库，
+suite 次日 02:30 自动同步到位。三库取的是同一个仓库——`openwrt-suite` 走
+`sources.conf` 的 `geodata` 源，`OpenWRT` / `OpenWrt-ScriptBuild` 走
+`replace_v2ray_geodata()` 的 `git clone`，产出的 `v2ray-geoip` / `v2ray-geosite`
+内容一致。
+
+> 上游 `sbwml/v2ray-geodata` 最后一次提交是 2025-01-25，长期停更。原先
+> 「同步上游 + `patches/geodata.sh` 重打定制」的方案已移除：URL 在补丁与自建
+> 仓库各存一份，一旦只改其中一处，suite 与两个构建库就会编译出内容不同的
+> 同名包。现在单一来源，不会再分叉。
+
+该包目录只有 Makefile（头部为 GPL-3.0 声明），源仓库本身没有提供独立的
+LICENSE 文件；`Makefile` 里的 `PKG_LICENSE_FILES:=LICENSE` 是上游沿用的写法。
 
 ### honk 的处理
 
@@ -445,9 +462,9 @@ mihomo 源码克隆进 `dl/`，之后编译只是 `go build`。
    不需要替换 feed（替换反而会引入 branch drift）。
 2. 「删官方 `v2ray-geodata` 再 clone `sbwml/v2ray-geodata`」——
    `luci-app-mosdns` 的 `LUCI_DEPENDS` 是 `+v2ray-geoip +v2ray-geosite +geo2txt +ucode +mosdns`，
-   前两个由本仓库的 `geodata` 源（`packages/v2ray-geodata` + `patches/geodata.sh`
-   的全量 `geoip.dat` 定制）提供；再放一份会撞包名。两个构建库同理已有
-   `replace_v2ray_geodata`。
+   前两个由本仓库的 `geodata` 源（`packages/v2ray-geodata`，直接同步自
+   `NetForgeCN/Loyalsoldier`，数据取自自建 `NetForgeCN/v2ray-rules-dat`）提供；
+   再放一份会撞包名。两个构建库同理已有 `replace_v2ray_geodata`。
 
 补充一点：上游的 `.github/workflows/release-build.yml` 在打包前会 `sed` 往
 `mosdns/Makefile` 注入 `GO_PKG_DEFAULT_LDFLAGS:=-w -s -extldflags "-static"`（让它出
@@ -529,9 +546,8 @@ mihomo 源码克隆进 `dl/`，之后编译只是 `go build`。
 
 **聚合进来的第三方包**许可证**原样保留**：`mode=all` 的包 LICENSE 在包目录内；
 `mode=pkg` 的多包上游其 LICENSE / THIRD-PARTY-NOTICES 副本收于 `meta/<slug>/`。
-本仓库不对任何上游代码做修改：唯一会改动上游 Makefile 内容的是
-`patches/geodata.sh` 声明的 GEOIP_URL 一行定制；`patches/photondns.sh` 只是把
-上游仓库根的 Cargo 工程**原样补齐**到包目录（新增文件、不改动任何已有内容）。
+本仓库不对任何上游代码做修改；`patches/photondns.sh` 只是把上游仓库根的
+Cargo 工程**原样补齐**到包目录（新增文件、不改动任何已有内容）。
 
 > 换句话说：MIT 只覆盖本仓库自己的脚本与文档；每个 `packages/<name>/` 下的代码
 > 仍按它自己的许可证（GPL-2.0、GPL-3.0、Apache-2.0 等）分发，装机时以包内
