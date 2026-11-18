@@ -7,11 +7,9 @@
 | 约定 | 实现 |
 |---|---|
 | 核心必须存在于编译后的固件 | `lucky/Makefile` 用标准 `PKG_SOURCE` 在 `make download` 阶段下载官方静态二进制，`Package/lucky/install` 把它 `INSTALL_BIN` 到 `/usr/bin/lucky`，随 rootfs 一起打包 |
-| 非极端情况不接受首次联网 | `lucky/files/lucky.init` 检测不到二进制只写日志并 `return 1`；`init.d` / `uci-defaults` / `postinst` / JS 页面里**没有任何**下载核心的语句 |
+| 开机零联网 | `lucky/files/lucky.init` 检测不到二进制只写日志并 `return 1`；`init.d` / `uci-defaults` / `postinst` / JS 页面里没有任何下载核心的语句 |
 | 可复现 | 版本、发布目录、13 个 Linux 架构的 sha256 全部写在 `lucky/Makefile` 里。`make download` 会用 `PKG_HASH` 校验，校验不过直接失败 |
-| 自动跟进最新版 | 由 CI 每天检查官网并改写这个 pin（见下），**不是**编译期现场探测 |
-
-与其它第三方实现的差别：`whzhni1` 的 LuCI 首次启动才联网下载核心；`sirpdboy` 及其复刻在 `Build/Prepare` 里 `wget` 且 `PKG_HASH:=skip`；`gdy666` 官方界面会拉入一整套 Lua 兼容层。这里三条都不做。
+| 自动跟进最新版 | 由 CI 每天检查官网并改写这个 pin，**不是**编译期现场探测 |
 
 ## 自动更新机制
 
@@ -31,11 +29,11 @@ scripts/bump-version.py
 固件使用「仓库里锁定的最新版」
 ```
 
-关键点：**编译期永远不联网问"最新版"**。每天只有版本真的变了才会提交一次；新版 tar 结构若改变（不再是平铺的 `lucky` ELF），脚本报错、workflow 变红、旧 pin 保持不动，不会出现半成品固件。若想固定在某个版本，暂停 `bump.yml` 即可。
+编译期永远不联网问"最新版"，每天只有版本真的变了才会提交一次。新版 tar 结构若改变（不再是平铺的 `lucky` ELF），脚本报错、workflow 变红、旧 pin 保持不动。若想固定在某个版本，暂停 `bump.yml` 即可。
 
-在 Actions 里手动 `Run workflow` 时勾选 **force**，可强制重新下载并校验全部 13 个资产、刷新 pin（用于验证整条链路，或上游悄悄替换了同名资产后重算 hash）；不勾选时若已是最新版则不会产生提交。
+在 Actions 里手动 `Run workflow` 时勾选 **force**，可强制重新下载并校验全部 13 个资产、刷新 pin；不勾选时若已是最新版则不会产生提交。
 
-当前钉死：**3.8.1**（`v3.8.1/3.8.1_lucky/`），x86_64 核心 17.08 MiB，静态链接（ELF 无 `PT_INTERP` / `PT_DYNAMIC`），压缩几乎不减小体积，固件约增加 17 MiB。
+当前版本：**3.8.1**（`v3.8.1/3.8.1_lucky/`），x86_64 核心 17.08 MiB，静态链接（ELF 无 `PT_INTERP` / `PT_DYNAMIC`），固件约增加 17 MiB。
 
 ## 产生的包
 
@@ -43,15 +41,15 @@ scripts/bump-version.py
 |---|---|---|
 | `lucky` | Network | 核心二进制 + `/etc/init.d/lucky` + `/etc/config/lucky` |
 | `luci-app-lucky` | LuCI → Applications | 纯客户端 JS 界面（状态、启停、端口/安全入口、后台链接） |
-| `luci-i18n-lucky-zh-cn` | LuCI → Translations | 由 `luci.mk` 依据 `po/zh_Hans/lucky.po` 自动生成，不用单独登记 |
+| `luci-i18n-lucky-zh-cn` | LuCI → Translations | 由 `luci.mk` 依据 `po/zh_Hans/lucky.po` 自动生成 |
 
-默认后台 `http://<路由器>:16601`，账号 `admin` / `666`（3.x 实际默认 `666` / `666`），配置目录 `/etc/config/lucky.daji`，UCI 在 `/etc/config/lucky`。LuCI 页面只做服务管理，端口转发 / DDNS / 反代 / ACME / WOL 都在 Lucky 自带后台里。
+默认后台 `http://<路由器>:16601`，配置目录 `/etc/config/lucky.daji`，UCI 在 `/etc/config/lucky`。LuCI 页面只做服务管理，端口转发 / DDNS / 反代 / ACME / WOL 都在 Lucky 自带后台里。
 
 `LUCI_DEPENDS:=+lucky +luci-base +rpcd +rpcd-mod-file`：`+lucky` 是硬约束，保证选界面必然带上核心；后两项是 `fs.exec` / 服务状态查询所需。
 
 ## 在 OpenWrt 源码树里用
 
-本仓库是一个完整的 feed 包目录（根 `Makefile` = LuCI 包，`lucky/` = 核心子包），照 oxidns 的方式 `src-git` 或 `src-link` 挂上即可：
+本仓库是一个完整的 feed 包目录（根 `Makefile` = LuCI 包，`lucky/` = 核心子包），挂成 feed 即可：
 
 ```bash
 echo "src-git lucky https://github.com/NetForgeCN/luci-app-lucky.git" >> feeds.conf
@@ -87,4 +85,4 @@ file build_dir/target-*/root-*/usr/bin/lucky     # statically linked
 
 ## 许可
 
-见 `LICENSE`（GPL-3.0 全文）与 `NOTICE`（三部分的版权/许可归属）。核心二进制来自 `gdy666/lucky`（MIT），LuCI 界面衍生自 `FloatingDream528/luci-app-lucky`（GPL-3.0-only），打包脚本由 NetForgeCN 维护。
+见 [LICENSE](LICENSE)（GPL-3.0 全文）与 `NOTICE`（三部分的版权/许可归属）。核心二进制来自 `gdy666/lucky`（MIT），LuCI 界面衍生自 `FloatingDream528/luci-app-lucky`（GPL-3.0-only），打包脚本由 NetForgeCN 维护。
