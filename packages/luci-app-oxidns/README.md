@@ -109,6 +109,29 @@ apk add --allow-untrusted ./luci-i18n-oxidns-zh-cn_0.2.0-r1_all.apk
 
 不勾选"保留配置"则所有数据都会被清除，这是 OpenWrt 机制本身的行为。
 
+## API 密码（环境变量）
+
+配置文件里 `api.http.auth.password` 用 `${OXIDNS_API_PASS}` 引用密码，不在 YAML 里写明文。
+这个值由两个脚本分别注入——**缺任何一处都会报错**（典型症状：网页点"检查/保存配置"
+提示 `env expansion failed ... undefined environment variable 'OXIDNS_API_PASS'`）：
+
+- `/etc/init.d/oxidns`：服务启动时用 `procd_set_param env` 注入；
+- `/usr/libexec/rpcd/luci.oxidns`：网页 check / save / 核心安装时由 rpcd 子进程继承。
+
+密码统一存在 UCI 的 `oxidns.main.api_pass`，两处脚本自动读取：
+
+```sh
+uci set oxidns.main.api_pass='你的强密码'   # 例如 openssl rand -base64 24
+uci commit oxidns
+/etc/init.d/oxidns restart                  # 服务进程重新注入
+/etc/init.d/rpcd restart                    # rpcd 子进程重新继承
+```
+
+留空或删除该选项时变量不会被注入，oxidns 会**启动失败**（fail closed），不会退回到弱口令。
+注意 UCI 配置是明文存储，请确认 `/etc/config/oxidns` 只有 root 可读。
+如果手动在 init 脚本里加了硬编码的 `procd_set_param env OXIDNS_API_PASS='...'`，
+请删掉改用 UCI——否则网页那条路径仍会报错。
+
 ## 默认路径
 
 - 二进制（运行时）：`/usr/bin/oxidns`（符号链接）

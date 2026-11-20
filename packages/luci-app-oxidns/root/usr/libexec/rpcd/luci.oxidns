@@ -305,6 +305,22 @@ load_settings() {
 	esac
 	DOWNLOAD_PROXY="$(uci_get download_proxy '')"
 	GITHUB_TOKEN="$(uci_get github_token '')"
+	# [API password] init script only injects this variable into the procd
+	# service process. rpcd is a separate daemon, so its children (notably
+	# `oxidns check` spawned by validate_config_file / core install) do NOT
+	# inherit that env and would fail on `${OXIDNS_API_PASS}` expansion.
+	# Export here so every child spawned by this script sees the same value.
+	# Precedence: already-exported env (e.g. from rpcd's own procd instance)
+	# wins; otherwise fall back to UCI. Empty/absent stays empty on purpose:
+	# oxidns must fail closed instead of silently running with a weak password.
+	if [ -z "${OXIDNS_API_PASS:-}" ]; then
+		OXIDNS_API_PASS="$(uci_get api_pass '')"
+	fi
+	# Only export when non-empty: an exported-but-empty variable would be seen
+	# as "defined" by oxidns and yield an empty password. Absent is safer.
+	if [ -n "${OXIDNS_API_PASS:-}" ]; then
+		export OXIDNS_API_PASS
+	fi
 }
 
 init_script() {

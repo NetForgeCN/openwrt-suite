@@ -71,6 +71,14 @@ if command -v msgfmt >/dev/null 2>&1; then
 fi
 sh -n root/usr/libexec/rpcd/luci.oxidns
 sh -n root/etc/init.d/oxidns
+# [API password] Both callers of `oxidns check/start` must inject OXIDNS_API_PASS:
+# init.d covers the procd service, rpcd covers config validate/save and core
+# install. A gap here makes any ${OXIDNS_API_PASS} config fail only in the UI.
+grep -q "option api_pass" root/etc/config/oxidns
+grep -q 'config_get API_PASS main api_pass' root/etc/init.d/oxidns
+grep -q 'procd_set_param env OXIDNS_API_PASS=' root/etc/init.d/oxidns
+grep -q 'uci_get api_pass' root/usr/libexec/rpcd/luci.oxidns
+grep -q 'export OXIDNS_API_PASS' root/usr/libexec/rpcd/luci.oxidns
 sh -n scripts/build-luci-package.sh
 sh -n scripts/integration-check.sh
 sh -n scripts/service-check.sh

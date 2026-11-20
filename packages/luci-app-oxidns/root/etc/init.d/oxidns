@@ -20,6 +20,7 @@ load_oxidns_settings() {
 	config_get CONFIG_PATH main config_path "$DEFAULT_CONFIG_PATH"
 	config_get WORKING_DIR main working_dir "$DEFAULT_WORKING_DIR"
 	config_get_bool LOG_SYSLOG main log_syslog 1
+	config_get API_PASS main api_pass ""
 }
 
 # Boot self-heal: the persistent copy of the core survives firmware upgrades
@@ -95,6 +96,12 @@ start_service() {
 
 	procd_open_instance
 	procd_set_param command "$PROG" start -c "$CONFIG_PATH" -d "$WORKING_DIR"
+	# [API password] The config uses ${OXIDNS_API_PASS}. procd only passes env
+	# vars explicitly declared here; inject the UCI value so the service
+	# process can expand it. Empty value is left unset on purpose (fail closed).
+	if [ -n "$API_PASS" ]; then
+		procd_set_param env OXIDNS_API_PASS="$API_PASS"
+	fi
 	procd_set_param respawn 3600 5 5
 	procd_set_param stdout "$LOG_SYSLOG"
 	procd_set_param stderr "$LOG_SYSLOG"

@@ -107,6 +107,32 @@ Then open LuCI → `Services -> OxiDNS`:
 
 Without "keep settings", everything is wiped — that is the OpenWrt mechanism itself.
 
+## API Password (Environment Variable)
+
+The config references the API password as `${OXIDNS_API_PASS}` instead of storing
+it in plaintext YAML. **Two** scripts must inject this variable — missing either
+one causes failure (symptom: clicking check/save in the UI reports
+`env expansion failed ... undefined environment variable 'OXIDNS_API_PASS'`):
+
+- `/etc/init.d/oxidns`: injects via `procd_set_param env` at service start;
+- `/usr/libexec/rpcd/luci.oxidns`: exported so rpcd's children (config check/save,
+  core install) inherit it.
+
+The password lives in UCI at `oxidns.main.api_pass`; both scripts read it:
+
+```sh
+uci set oxidns.main.api_pass='your-strong-password'   # e.g. openssl rand -base64 24
+uci commit oxidns
+/etc/init.d/oxidns restart
+/etc/init.d/rpcd restart
+```
+
+Leaving it empty means the variable is not exported and oxidns **fails closed**
+rather than falling back to a weak password. UCI files are plaintext — keep
+`/etc/config/oxidns` root-readable only. If you manually added a hardcoded
+`procd_set_param env OXIDNS_API_PASS='...'` line to the init script, remove it
+and use UCI instead, otherwise the rpcd path still fails.
+
 ## Default Paths
 
 - Binary (runtime): `/usr/bin/oxidns` (symlink)
