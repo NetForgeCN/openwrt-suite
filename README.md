@@ -1,6 +1,6 @@
 # openwrt-suite
 
-OpenWrt 第三方组件**单一聚合 feed 仓库**：把 34 个第三方包（38 个包源目录）与一份固件 `.config` 统一收进本仓库，每日由 GitHub Actions 从各上游同步（纯快照方式）。使用时**只需克隆本仓库**，第三方包就会出现在 `make menuconfig` 里。
+OpenWrt 第三方组件**单一聚合 feed 仓库**：把 35 个第三方包（39 个包源目录）与一份固件 `.config` 统一收进本仓库，每日由 GitHub Actions 从各上游同步（纯快照方式）。使用时**只需克隆本仓库**，第三方包就会出现在 `make menuconfig` 里。
 
 ## 使用方法
 
@@ -56,7 +56,7 @@ bash "$SUITE/diy/02-kernel-config.sh" "$OW"
 
 | 菜单路径 | 包 |
 |---|---|
-| LuCI → 3. Applications | luci-app-airplay2、luci-app-argon-config、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-honk、luci-app-kixdns、luci-app-lucky、luci-app-mosdns、luci-app-nikki、luci-app-oaf、luci-app-open_nexttrace、luci-app-oxidns、luci-app-photondns、luci-app-photondns-compat、luci-app-pulse、luci-app-temp-status |
+| LuCI → 3. Applications | luci-app-airplay2、luci-app-argon-config、luci-app-atomdns、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-honk、luci-app-kixdns、luci-app-lucky、luci-app-mosdns、luci-app-nikki、luci-app-oaf、luci-app-open_nexttrace、luci-app-oxidns、luci-app-photondns、luci-app-photondns-compat、luci-app-pulse、luci-app-temp-status |
 | LuCI → 4. Themes | luci-theme-argon |
 | Network → IP Addresses and Names | ddns-go、kixdns、mosdns（Go DNS 转发器）、photondns（Rust DNS 转发器）、v2ray-geodata（虚包，实际产出 v2ray-geoip / v2ray-geosite） |
 | Network → Web Servers/Proxies | dae、honk（eBPF 核心，仅 x86_64 / aarch64_generic） |
@@ -140,11 +140,11 @@ OpenWrt 的 `feeds install -a` 对同名包按 feeds.conf 中的**出现顺序**
 
 | 模式 | 适用 | 例子 |
 |---|---|---|
-| `pkg`  | 一个上游仓库含多个包目录 | sirpdboy/luci-app-ddns-go → `luci-app-ddns-go/` + `ddns-go/` |
+| `pkg`  | 包目录在仓库的一层或多层子目录下（根目录无 Makefile） | sirpdboy/luci-app-ddns-go → `luci-app-ddns-go/` + `ddns-go/`；NetForgeCN/luci-app-atomdns → `luci-app-atomdns/` |
 | `all`  | Makefile 在仓库根目录 | jerrykuku/luci-theme-argon → `luci-theme-argon/` |
 | `file` | 大仓库里的单个文件 | NetForgeCN/OpenWRT 的 `.config` → `config/dot.config` |
 
-`pkg` 的 payload 可以写上游内的**子路径**，目标目录取它的 basename，用来对付「包目录藏在子目录里」的上游（如 c2h2/luci-app-photondns 的 `openwrt/photondns`）。每个源同步后强制校验 `Makefile` 存在，任何失配（上游重构、删库、改默认分支）都会让同步失败报红。每次同步把上游 commit 记入 `sources.lock`。
+`pkg` 的 payload 可以写上游内的**子路径**，目标目录取它的 basename，用来对付「包目录藏在子目录里」的上游（如 c2h2/luci-app-photondns 的 `openwrt/photondns`）。只含一个包目录的上游（如 atomdns）同样走 `pkg`，payload 只写一个目录，仓库根的 README / LICENSE 不会被当成包，许可证另由 `copy_meta` 收进 `meta/<slug>/`。每个源同步后强制校验 `Makefile` 存在，任何失配（上游重构、删库、改默认分支）都会让同步失败报红。每次同步把上游 commit 记入 `sources.lock`。
 
 `packages/` 下的内容由上游决定，快照定制用 `patches/<slug>.sh`。`renovate.json` 里 `ignorePaths: ["packages/**"]`，Renovate 只升级本仓库自身的 workflow 依赖。
 
@@ -325,6 +325,19 @@ file -L "$(command -v zig)" 2>/dev/null; file -L "$(command -v bpf-linker)" 2>/d
 2. **内核模块要和内核同批编译**：`kmod-oaf` 用 `$(LINUX_DIR)` + `M=$(PKG_BUILD_DIR)` 编译，不能只装 ipk 了事。上游源码里有 `LINUX_VERSION_CODE` 分支覆盖到 6.16 / 6.15 / 6.12，内核 API 变动仍可能让新内核编译失败，以实际编译结果为准。
 3. **许可证附加声明**：上游 README 写「个人免费、衍生开发须遵守 GPL 2.0、公司使用需联系作者授权」，与仓库里 GPL-2.0 全文的条款并不完全一致（GPLv2 不允许按使用者身份附加限制）。本仓库只做快照、保留原文，商用场景请自行评估。
 
+### atomdns
+
+`atomdns` 源指向自有仓库 [NetForgeCN/luci-app-atomdns](https://github.com/NetForgeCN/luci-app-atomdns)。仓库根只有 README / LICENSE，包目录是 `luci-app-atomdns/`（根目录没有 Makefile），因此 `mode=pkg` 只拷这一个目录。一个包即全功能：主程序二进制、官方配置包、内置 WebUI 与 LuCI 控制面板都在同一个 ipk 里。
+
+| 项目 | 说明 |
+|---|---|
+| 核心进固件 | `Makefile` 用两条 `Download/` 规则在编译期从 `jasonxtt/atomdns` v0.6.6 release 取 musl 静态二进制与 `config_rust.zip`，逐架构 SHA256 校验；`Build/Prepare` 钩子把二进制装到 `/usr/bin/atomdns`、配置包装到 `/usr/share/atomdns`，随 rootfs 打包 |
+| 运行期不联网 | 首次启动由 init.d 从 `/usr/share/atomdns` 初始化 `/etc/atomdns`，没有开机下载逻辑；内置 WebUI 的在线更新由用户主动触发 |
+| 架构范围 | 官方只提供 x86_64 / aarch64 / armv7 的 musl 静态二进制，其他架构在编译阶段报错终止，不会静默打入不兼容的二进制。官方 `amd64-v3` 是 glibc 动态链接，与 OpenWrt 的 musl 环境不兼容，故不采用 |
+| 菜单 | LuCI → 3. Applications → `luci-app-atomdns`，页面在 服务 → AtomDNS |
+
+`LUCI_DEPENDS` 只有 `+ca-certificates`（DoH / 订阅需要证书），`LUCI_PKGARCH` 留空走目标架构。编译宿主机需要 `unzip` 解压 `config_rust.zip`，三套构建库的 CI 依赖清单都已包含。包内 `root/lib/upgrade/keep.d/luci-app-atomdns` 把运行时数据目录 `/etc/atomdns` 列入 sysupgrade 保留清单，与 conffiles 的 `/etc/config/atomdns` 互补。上游根 `LICENSE`（GPL-3.0 全文）由 `sync.sh` 收进 `meta/atomdns/`。
+
 ## 手动触发同步
 
 - GitHub 仓库页 → Actions → daily-sync → Run workflow；或
@@ -336,4 +349,4 @@ file -L "$(command -v zig)" 2>/dev/null; file -L "$(command -v bpf-linker)" 2>/d
 
 **本仓库自身**（`scripts/`、`diy/`、`build/`、文档）以 **MIT** 授权，见 [LICENSE](LICENSE)。
 
-**聚合进来的第三方包**许可证**原样保留**：`mode=all` 的包 LICENSE 在包目录内；`mode=pkg` 的多包上游其 LICENSE / THIRD-PARTY-NOTICES 副本收于 `meta/<slug>/`。快照内容按上游原样分发，`patches/photondns.sh` 把上游仓库根的 Cargo 工程**原样补齐**到包目录（新增文件、不改动任何已有内容）。MIT 只覆盖本仓库自己的脚本与文档；每个 `packages/<name>/` 下的代码按它自己的许可证分发，装机时以包内 LICENSE 或 `meta/<slug>/LICENSE` 为准。
+**聚合进来的第三方包**许可证**原样保留**：`mode=all` 的包 LICENSE 在包目录内；`mode=pkg` 的上游其 LICENSE / THIRD-PARTY-NOTICES 副本收于 `meta/<slug>/`（`atomdns` 即为此类）。快照内容按上游原样分发，`patches/photondns.sh` 把上游仓库根的 Cargo 工程**原样补齐**到包目录（新增文件、不改动任何已有内容）。MIT 只覆盖本仓库自己的脚本与文档；每个 `packages/<name>/` 下的代码按它自己的许可证分发，装机时以包内 LICENSE 或 `meta/<slug>/LICENSE` 为准。
