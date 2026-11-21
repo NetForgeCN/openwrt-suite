@@ -85,6 +85,26 @@ for m in cache_suggest cache_detail upstreams probe_upstreams zone_info; do
 	grep -q "\"$m\":" root/usr/libexec/rpcd/luci.oxidns
 	grep -q "^			$m)" root/usr/libexec/rpcd/luci.oxidns
 done
+# [cache lookup] The two handlers that call the authenticated management API
+# (api_http_get -> Basic Auth with OXIDNS_API_PASS) MUST call load_settings in
+# their own body. rpcd does not inherit the procd service env; without this the
+# API returns 401, the body is empty, and the page silently shows 0 entries.
+# Check the function body, not the whole file, so a load_settings elsewhere
+# cannot satisfy the assertion.
+for fn in emit_cache_suggest emit_cache_detail; do
+	if ! awk -v fn="$fn" '
+		$0 == fn "() {" { in_fn = 1 }
+		in_fn && /load_settings/ { found = 1 }
+		in_fn && $0 == "}" { exit }
+		END { exit(found ? 0 : 1) }
+	' root/usr/libexec/rpcd/luci.oxidns; then
+		echo "$fn() must call load_settings() before api_http_get (API auth)" >&2
+		exit 1
+	fi
+done
+# [cache lookup] The frontend must surface cache_ok=0 instead of silently
+# rendering an empty cache when the management API call failed.
+grep -q 'res.cache_ok === 0' htdocs/luci-static/resources/view/oxidns/cache.js
 sh -n scripts/build-luci-package.sh
 sh -n scripts/integration-check.sh
 sh -n scripts/service-check.sh

@@ -446,6 +446,11 @@ url_encode_query() {
 
 # cache_suggest {qname, limit} -> raw entries JSON (client extracts fields).
 emit_cache_suggest() {
+	# rpcd is a separate daemon and does NOT inherit the procd service env.
+	# Load UCI settings so OXIDNS_API_PASS (and a custom config_path) reach
+	# api_http_get(); otherwise Basic Auth uses an empty password and every
+	# cache query silently returns 401 / empty body.
+	load_settings
 	INPUT="$(cat)"
 	Q="$(input_value qname "$INPUT")"
 	LIMIT="$(input_value limit "$INPUT")"
@@ -465,6 +470,9 @@ emit_cache_suggest() {
 
 # cache_detail {qname} -> cache entries + recorder records (both raw JSON strings).
 emit_cache_detail() {
+	# See emit_cache_suggest: inject OXIDNS_API_PASS from UCI before calling
+	# the management API, otherwise the cache lookup always returns empty.
+	load_settings
 	INPUT="$(cat)"
 	Q="$(input_value qname "$INPUT")"
 	if [ -z "$Q" ]; then

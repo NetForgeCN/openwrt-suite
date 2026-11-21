@@ -384,6 +384,16 @@ function resolveName(qname) {
 	currentDetail = null;
 
 	return callCacheDetail(qname).then(function(res) {
+		// rpcd reports per-API failures via cache_ok/records_ok. When the
+		// management API rejects auth (empty api_pass) the body is empty and
+		// would otherwise be parsed as "0 entries" with no error shown.
+		if (!res || res.ok === false || res.cache_ok === 0) {
+			var why = (res && res.message) ? ': ' + String(res.message) : '';
+			byId('oxidns-detail-body').innerHTML = '<p style="color:#c00;">'
+				+ _('Failed to query OxiDNS API. Check that the service is running and api_pass is set.')
+				+ escapeHtml(why) + '</p>';
+			return;
+		}
 		var cache = parseJsonField(res && res.cache) || {};
 		var records = parseJsonField(res && res.records) || {};
 		var entries = cache.entries || [];
