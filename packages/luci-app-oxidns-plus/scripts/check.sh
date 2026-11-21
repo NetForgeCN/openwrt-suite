@@ -165,8 +165,15 @@ if re.search(r'^define Package/luci-app-oxidns-plus/install', mk, re.M):
     bad('Makefile has a plain define of Package/install; luci.mk would replace it -> make install fails')
 if re.search(r'^Build/Install:=', mk, re.M):
     bad('Makefile still has ineffective "Build/Install:=" assignment (remove it; use override define instead)')
+# Build/Compile and Build/Prepare must also be override: luci.mk defines plain
+# Build/Compile (empty when no src/Makefile) and a generic Build/Prepare. Without
+# override they replace the cargo rule -> no binary -> "cannot stat .../bin/oxidns-prewarmer".
+if 'override Build/Compile = $(call Build/Compile/Cargo)' not in mk:
+    bad('Makefile missing "override Build/Compile = $(call Build/Compile/Cargo)" (luci.mk would blank the cargo rule)')
+if 'override define Build/Prepare' not in mk:
+    bad('Makefile Build/Prepare must be "override define" (luci.mk would replace it)')
 if not fail:
-    print('  OK   source-build Makefile (rust-package.mk, arch gate, cargo output, single registration, override install)')
+    print('  OK   source-build Makefile (rust-package.mk, arch gate, cargo output, single registration, override install/compile/prepare)')
 
 # HARD RULE: must not modify OxiDNS main config anywhere.
 for rel in ['root/etc/init.d/oxidnsplus','root/usr/libexec/rpcd/luci.oxidnsplus',

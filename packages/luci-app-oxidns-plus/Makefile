@@ -23,7 +23,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-oxidns-plus
 PKG_VERSION:=0.3.0
-PKG_RELEASE:=5
+PKG_RELEASE:=6
 
 PKG_LICENSE:=GPL-3.0-or-later
 PKG_LICENSE_FILES:=LICENSE
@@ -117,7 +117,7 @@ endef
 # Create the full destination path: $(CP) is cp -fpR, which does not create
 # missing parent directories, and rust-package.mk has no Build/Prepare of its
 # own. MAKE_PATH points at $(PKG_BUILD_DIR)/src/prewarmer-rs for cargo install.
-define Build/Prepare
+override define Build/Prepare
 	mkdir -p $(PKG_BUILD_DIR)/src/prewarmer-rs
 	$(CP) ./src/prewarmer-rs/. $(PKG_BUILD_DIR)/src/prewarmer-rs/
 endef
@@ -161,10 +161,21 @@ override define Package/luci-app-oxidns-plus/install
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/view/oxidnsplus/plus.js $(1)/www/luci-static/resources/view/oxidnsplus/plus.js
 endef
 
-# rust-package.mk overrides Build/Compile with Build/Compile/Cargo and defines
-# the target triples / cross linker. It must be included BEFORE luci.mk so that
-# the package registered by luci.mk picks up the Cargo compile rule.
+# rust-package.mk supplies Build/Compile = $(call Build/Compile/Cargo) (which
+# runs cargo install into PKG_INSTALL_DIR) and defines the musl target/cross
+# linker.
 include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk
+
+# CRITICAL: luci.mk defines a plain `define Build/Compile` that is EMPTY when
+# the package has no src/Makefile (ours has only src/prewarmer-rs/Cargo.toml).
+# That empty plain define REPLACES rust-package.mk's cargo rule, so `cargo
+# install` never runs and PKG_INSTALL_DIR/bin/oxidns-prewarmer is never created
+# -> the install step fails with "cannot stat .../bin/oxidns-prewarmer".
+# Re-assert the cargo compile rule with `override` AFTER including rust-package.mk
+# so luci.mk's later empty define cannot clobber it. This is the same class of
+# bug as the install block above: any plain define from luci.mk wins over a
+# non-override variable/define of the same name.
+override Build/Compile = $(call Build/Compile/Cargo)
 
 # luci.mk sets LUCI_BUILD_PACKAGES := $(PKG_NAME) and, at its end, evaluates
 # BuildPackage for every entry. That is the ONE and ONLY registration point.
