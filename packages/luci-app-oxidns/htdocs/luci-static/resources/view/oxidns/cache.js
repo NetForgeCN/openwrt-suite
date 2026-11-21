@@ -208,10 +208,13 @@ var state = {
 	qname: '',
 	loading: false,
 	group: 'cn',
-	tracedGroup: '',   // group resolved by the bypass-cache probe
-	traceInfo: null,   // last trace_route result
-	geoCache: {},
-	geoPending: {}
+	answerIPs: [],      // A/AAAA answers of the current lookup
+	geoInfo: {},        // ip -> { country, countryCode, org, isp, text, private }
+	geoDone: false,     // all answer IPs finished geo lookup (or timed out)
+	traceDone: false,   // trace_route rpc finished
+	tracedGroup: '',    // final group decided from answer-IP geography (+ trace)
+	traceInfo: null,    // last trace_route result (route-detail enrichment only)
+	geoCache: {}        // ip -> geo info (alias kept for compatibility)
 };
 
 var suggestTimer = null;
@@ -424,36 +427,79 @@ function resolveName(qname) {
 /* Bypass-cache probe: delete this name from cache, issue one real query and
  * read the recorder execution path. Updates the split-reason row and drives
  * the upstream group automatically. */
+/* The backend bypass-cache probe is now an ENRICHMENT, not the primary group
+ * signal. It may fail on minimal firmware (no dig) or when recorder is off;
+ * the final group is decided from answer-IP geography in maybeFinaliseRoute. */
 function runTrace(qname) {
-	state.tracedGroup = '';
+	state.traceInfo = null;
 	return callTraceRoute(qname).then(function(tr) {
-		state.traceInfo = tr || null;
-		var reason = byId('oxidns-split-reason');
-		if (tr && tr.ok !== false) {
-			var grp = tr.group || '';
-			state.tracedGroup = (grp === 'cn' || grp === 'abroad') ? grp : '';
-			var path = tr.path || tr.outlet || _('Default routing (no explicit split outlet recorded)');
-			var grpLabel = grp === 'cn' ? _('Domestic') : grp === 'abroad' ? _('International')
-				: grp === 'privacy' ? _('Privacy') : grp === 'internal' ? _('Internal') : grp;
-			var badge = grp ? (' <span class="oxidns-route-badge">' + escapeHtml(grpLabel) + '</span>') : '';
-			if (reason) reason.innerHTML = escapeHtml(path) + badge;
-			var grpEl = byId('oxidns-trace-group');
-			if (grpEl && grp) grpEl.textContent = grpLabel;
-			// Upstream timing follows the probed route automatically.
-			if (state.tracedGroup) {
-				state.group = state.tracedGroup;
-				renderUpstreamsStatic();
-				return runProbe();
-			}
-			return renderUpstreamsStatic();
-		}
-		if (reason) reason.innerHTML = escapeHtml(_('Route probe failed.'));
-		return renderUpstreamsStatic();
+		state.traceInfo = (tr && tr.ok !== false) ? tr : null;
 	}).catch(function() {
-		var reason = byId('oxidns-split-reason');
-		if (reason) reason.innerHTML = escapeHtml(_('Route probe failed.'));
-		return renderUpstreamsStatic();
+		state.traceInfo = null;
+	}).then(function() {
+		state.traceDone = true;
+		return maybeFinaliseRoute();
 	});
+}
+
+/* Wait until BOTH geo answers and the trace probe settle, then decide the
+ * group and drive the upstream timing. The answer IPs are the authoritative
+ * signal: they are what OxiDNS actually resolved for this name. */
+function maybeFinaliseRoute() {
+	if (!state.geoDone || !state.traceDone) return;
+	var reason = byId('oxidns-split-reason');
+	var grpEl = byId('oxidns-trace-group');
+	var grp = decideGroupFromGeo(state.answerIPs);
+
+	// Trace can still refine the path text (e.g. "geosite hit"), and provides
+	// a fallback group if geo lookup was entirely inconclusive.
+	var pathText = '';
+	var traceGrp = '';
+	if (state.traceInfo) {
+		traceGrp = state.traceInfo.group || '';
+		pathText = state.traceInfo.path || state.traceInfo.outlet || '';
+	}
+	if (!grp && (traceGrp === 'cn' || traceGrp === 'abroad')) grp = traceGrp;
+
+	var grpLabel = grp === 'cn' ? _('Domestic') : grp === 'abroad' ? _('International')
+		: grp === 'privacy' ? _('Privacy') : grp === 'internal' ? _('Internal') : '';
+
+	var detail = [];
+	if (pathText) detail.push(escapeHtml(pathText));
+	var geoNote = describeGeo(state.answerIPs);
+	if (geoNote) detail.push(escapeHtml(geoNote));
+	var body = detail.length ? detail.join(' · ')
+		: escapeHtml(_('Default routing (no explicit split outlet recorded)'));
+	if (reason) reason.innerHTML = body + (grpLabel
+		? ' <span class="oxidns-route-badge">' + escapeHtml(grpLabel) + '</span>' : '');
+	if (grpEl) grpEl.textContent = grpLabel || _('Auto (from probe)');
+
+	// Geo results may have arrived after loadHosting rendered; refresh the
+	// CDN/hosting cell from the ASN/ISP data now.
+	applyHostingFromGeo(state.answerIPs);
+
+	state.tracedGroup = (grp === 'cn' || grp === 'abroad') ? grp : '';
+	if (state.tracedGroup) {
+		state.group = state.tracedGroup;
+		renderUpstreamsStatic();
+		return runProbe();
+	}
+	return renderUpstreamsStatic();
+}
+
+/* Human-readable summary of answer-IP origins, e.g. "4 国内 IP / 0 境外 IP". */
+function describeGeo(ips) {
+	var cn = 0, abroad = 0;
+	for (var i = 0; i < ips.length; i++) {
+		var info = state.geoInfo[ips[i]];
+		if (!info || info.private || (!info.countryCode && !(info.country || '').toLowerCase())) continue;
+		var cc = info.countryCode || '';
+		var name = (info.country || '').toLowerCase();
+		if (cc === 'CN' || name === 'china' || name.indexOf('中国') >= 0) cn++;
+		else abroad++;
+	}
+	if (cn === 0 && abroad === 0) return '';
+	return _('Answer IP origin: %s domestic / %s overseas').format(cn, abroad);
 }
 
 function pickEntry(entries, qname) {
@@ -548,38 +594,91 @@ function renderDetail(qname, entries, recs) {
 	html += '</tbody></table>';
 	byId('oxidns-detail-body').innerHTML = html;
 
-	// async geolocation for each answer IP (browser-side, private IPs excluded)
-	for (var k = 0; k < ips.length; k++) fillGeo(ips[k]);
+	// Async geolocation for every answer IP. Results drive the split-group
+	// decision (domestic vs abroad answer) and CDN/hosting detection.
+	startGeoBatch(ips);
 
 	// hosting info placeholder; filled by loadHosting
 	byId('oxidns-hosting-body').innerHTML = '<p style="color:#888;">' + _('Loading hosting info...') + '</p>';
 	return cnames;
 }
 
-function fillGeo(ip) {
+/* ipwho.is returns flag/country as strings, but some builds/proxies return
+ * nested objects. Coerce defensively so we never render "[object Object]". */
+function geoText(v) {
+	if (v === null || v === undefined) return '';
+	if (typeof v === 'string') return v.trim();
+	if (typeof v === 'object') {
+		if (v.emoji) return String(v.emoji).trim();
+		if (v.name) return String(v.name).trim();
+		if (v.code) return String(v.code).trim();
+	}
+	return '';
+}
+
+/* Normalise a geo provider response into a stable info object:
+ * { country, countryCode, org, isp, text }. */
+function normaliseGeo(d, source) {
+	var info = { country: '', countryCode: '', org: '', isp: '', text: '' };
+	if (!d) return info;
+	if (source === 'ipwho') {
+		info.country = geoText(d.country);
+		info.countryCode = geoText(d.country_code).toUpperCase();
+		info.flag = geoText(d.flag);
+		info.text = [info.flag, info.country].filter(Boolean).join(' ');
+		var conn = d.connection;
+		if (conn && typeof conn === 'object') {
+			info.org = geoText(conn.org);
+			info.isp = geoText(conn.isp);
+		}
+	} else {
+		// ipinfo.io: country is a 2-letter code, org = "AS15169 Google LLC"
+		info.countryCode = geoText(d.country).toUpperCase();
+		info.country = info.countryCode;
+		var org = geoText(d.org);
+		info.org = org.replace(/^AS\d+\s*/, '');
+		info.isp = info.org;
+		info.text = [info.countryCode, geoText(d.city)].filter(Boolean).join(' / ');
+	}
+	return info;
+}
+
+function storeGeo(ip, info) {
+	state.geoInfo[ip] = info;
+	state.geoCache[ip] = info.text;
+	markGeo(ip, info.text);
+}
+
+/* Fill geo for one IP and invoke done(info) exactly once when settled. */
+function fillGeo(ip, done) {
+	var finish = function(info) { if (typeof done === 'function') done(info); };
 	if (isPrivateIP(ip)) {
-		markGeo(ip, _('Private / internal address'));
+		var priv = { country: '', countryCode: '', org: '', isp: '', text: _('Private / internal address'), private: true };
+		storeGeo(ip, priv);
+		finish(priv);
 		return;
 	}
-	if (state.geoCache[ip]) { markGeo(ip, state.geoCache[ip]); return; }
-	if (state.geoPending[ip]) return;
-	state.geoPending[ip] = true;
+	if (state.geoInfo[ip]) { markGeo(ip, state.geoInfo[ip].text); finish(state.geoInfo[ip]); return; }
 	fetch('https://ipwho.is/' + encodeURIComponent(ip))
 		.then(function(r) { return r.json(); })
 		.then(function(d) {
-			var txt = d && d.success ? ((d.flag || '') + ' ' + (d.country || ''))
-				: (d && d.message ? d.message : '?');
-			state.geoCache[ip] = txt;
-			markGeo(ip, txt);
+			var info = normaliseGeo(d, 'ipwho');
+			if (!d || d.success === false || !info.countryCode) throw new Error('geo unavailable');
+			storeGeo(ip, info);
+			finish(info);
 		})
 		.catch(function() {
 			return fetch('https://ipinfo.io/' + encodeURIComponent(ip) + '/json')
 				.then(function(r) { return r.json(); })
 				.then(function(d) {
-					var txt = d && d.country ? (d.country + (d.city ? ' / ' + d.city : '')) : '?';
-					state.geoCache[ip] = txt;
-					markGeo(ip, txt);
-				}).catch(function() { markGeo(ip, ''); });
+					var info = normaliseGeo(d, 'ipinfo');
+					storeGeo(ip, info);
+					finish(info);
+				}).catch(function() {
+					var info = { country: '', countryCode: '', org: '', isp: '', text: '?' };
+					storeGeo(ip, info);
+					finish(info);
+				});
 		});
 }
 
@@ -591,6 +690,84 @@ function markGeo(ip, txt) {
 			if (g) g.textContent = txt ? '[' + txt + ']' : '';
 		}
 	}
+}
+
+/* Decide the upstream group from the geographic origin of the answer IPs.
+ * This is the reliable primary signal: it reflects the actual resolution
+ * result (a domestic answer came from the domestic group, an overseas answer
+ * from the abroad group), and needs no dig/recorder on the router. */
+function decideGroupFromGeo(ips) {
+	var cn = 0, abroad = 0, unknown = 0;
+	for (var i = 0; i < ips.length; i++) {
+		var info = state.geoInfo[ips[i]];
+		if (!info || info.private) { unknown++; continue; }
+		var cc = info.countryCode || '';
+		var name = (info.country || '').toLowerCase();
+		if (cc === 'CN' || name === 'china' || name.indexOf('中国') >= 0) cn++;
+		else if (cc || name) abroad++;
+		else unknown++;
+	}
+	if (cn === 0 && abroad === 0) return '';
+	return cn >= abroad ? 'cn' : 'abroad';
+}
+
+/* Batch-geolocate all answers, then finalise the route decision once. */
+function startGeoBatch(ips) {
+	state.answerIPs = ips.slice();
+	state.geoDone = false;
+	state.traceDone = false;
+	state.traceInfo = null;
+	if (!ips.length) { state.geoDone = true; maybeFinaliseRoute(); return; }
+	var left = ips.length;
+	var tick = function() { left--; if (left <= 0) { state.geoDone = true; maybeFinaliseRoute(); } };
+	for (var i = 0; i < ips.length; i++) fillGeo(ips[i], tick);
+	// hard timeout: never block the route decision on a slow geo provider
+	setTimeout(function() {
+		if (!state.geoDone) { state.geoDone = true; maybeFinaliseRoute(); }
+	}, 6000);
+}
+
+/* Map an ASN/ISP/org string to a hosting/CDN provider name. Many domains
+ * (e.g. youtube.com, taobao.com) answer with A records only and have no
+ * CNAME to match, so the geo provider's org field is the practical signal. */
+var HOSTING_ORG_RULES = [
+	['cloudflare', 'Cloudflare'],
+	['google', 'Google / Google Cloud'],
+	['amazon aws', 'Amazon AWS'], ['amazon.com', 'Amazon AWS'], ['aws ', 'Amazon AWS'],
+	['akamai', 'Akamai'], ['fastly', 'Fastly'], ['verizon', 'Verizon'],
+	['microsoft', 'Microsoft Azure'], ['azure', 'Microsoft Azure'],
+	['alibaba', 'Alibaba Cloud'], ['aliyun', 'Alibaba Cloud'], ['taobao', 'Alibaba Cloud'],
+	['tencent', 'Tencent Cloud'], ['qcloud', 'Tencent Cloud'],
+	['baidu', 'Baidu Cloud'], ['huawei', 'Huawei Cloud'], ['jd cloud', 'JD Cloud'],
+	['digitalocean', 'DigitalOcean'], ['linode', 'Linode'], ['ovh', 'OVH'],
+	['netlify', 'Netlify'], ['vercel', 'Vercel'], ['cloudfront', 'Amazon CloudFront'],
+	['chinanet', 'China Telecom'], ['chinamobile', 'China Mobile'], ['unicom', 'China Unicom'],
+	['cogent', 'Cogent'], ['level3', 'Level 3'], ['centurylink', 'CenturyLink']
+];
+
+function hostingFromGeo(ips) {
+	var seen = [];
+	for (var i = 0; i < ips.length; i++) {
+		var info = state.geoInfo[ips[i]];
+		if (!info) continue;
+		var org = ((info.org || '') + ' ' + (info.isp || '')).toLowerCase();
+		if (!org.trim()) continue;
+		for (var j = 0; j < HOSTING_ORG_RULES.length; j++) {
+			if (org.indexOf(HOSTING_ORG_RULES[j][0]) >= 0) {
+				if (seen.indexOf(HOSTING_ORG_RULES[j][1]) < 0) seen.push(HOSTING_ORG_RULES[j][1]);
+				break;
+			}
+		}
+	}
+	return seen.join(' + ');
+}
+
+/* Re-render the CDN/hosting cell once geo results are available. */
+function applyHostingFromGeo(ips) {
+	var el = byId('oxidns-cdn-value');
+	if (!el) return;
+	var h = hostingFromGeo(ips || state.answerIPs);
+	if (h) el.innerHTML = escapeHtml(h);
 }
 
 function loadHosting(qname, entries) {
@@ -614,6 +791,8 @@ function loadHosting(qname, entries) {
 		var zone = res && res.zone ? res.zone : '';
 		var ns = (res && res.nameservers) ? res.nameservers : [];
 		var provider = dnsProvider(zone, ns);
+		var geoHost = hostingFromGeo(answerIPs);
+		var cdnText = cdn || geoHost || (cfByIP ? 'Cloudflare (proxied, detected by IP range)' : '');
 		var html = '<table class="table cbi-section-table" style="border:0;"><tbody>';
 		html += kvRow(_('DNS provider'), provider ? escapeHtml(provider) : '<span style="color:#888;">' + _('Not detected') + '</span>');
 		html += kvRow(_('Authoritative NS'), ns.length
@@ -621,8 +800,8 @@ function loadHosting(qname, entries) {
 			: '<span style="color:#888;">' + _('Not available') + '</span>');
 		if (cnames.length)
 			html += kvRow(_('CNAME chain'), cnames.map(function(c) { return '<span style="color:#c00;">' + escapeHtml(c) + '</span>'; }).join(' &rarr; '));
-		var cdnText = cdn || (cfByIP ? 'Cloudflare (proxied, detected by IP range)' : '');
-		html += kvRow(_('CDN / hosting'), cdnText ? escapeHtml(cdnText) : '<span style="color:#888;">' + _('Not detected') + '</span>');
+		html += kvRow(_('CDN / hosting'), '<span id="oxidns-cdn-value">'
+			+ (cdnText ? escapeHtml(cdnText) : '<span style="color:#888;">' + _('Not detected') + '</span>') + '</span>');
 		html += '</tbody></table>';
 		byId('oxidns-hosting-body').innerHTML = html;
 	}).catch(function() {

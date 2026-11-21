@@ -810,17 +810,20 @@ classify_steps() {
 classify_log() {
 	TR_GROUP=""; TR_PATH=""; TR_OUTLET=""
 	LINE="$1"
+	# Order matters: specific tags before generic ones. query_summary lines
+	# look like: plugin=log_abroad_req title=国外请求 qname=... qtype=A ...
 	case "$LINE" in
-		*log_cache_cn*) TR_OUTLET="国内缓存命中"; TR_GROUP="cn" ;;
-		*log_cache_abroad*) TR_OUTLET="国外缓存命中"; TR_GROUP="abroad" ;;
-		*log_abroad_force_req*) TR_OUTLET="国外请求 · 强制名单命中"; TR_GROUP="abroad" ;;
-		*log_cn_force_req*) TR_OUTLET="国内请求 · 强制名单命中"; TR_GROUP="cn" ;;
-		*log_cn_geo_req*) TR_OUTLET="国内请求 · geosite 命中"; TR_GROUP="cn" ;;
-		*log_cn_list_req*) TR_OUTLET="国内请求 · 域名列表命中"; TR_GROUP="cn" ;;
-		*log_outbound2cn*) TR_OUTLET="出口转内销"; TR_GROUP="cn" ;;
-		*log_abroad_req*) TR_OUTLET="国外请求"; TR_GROUP="abroad" ;;
-		*log_internal*|*title=内网组*) TR_OUTLET="内网组"; TR_GROUP="internal" ;;
-		*title=国内组*) TR_OUTLET="国内组"; TR_GROUP="cn" ;;
+		*log_outbound2cn*|*出口转内销*) TR_OUTLET="出口转内销"; TR_GROUP="cn" ;;
+		*log_abroad_force_req*|*强制国外*) TR_OUTLET="国外请求 · 强制名单命中"; TR_GROUP="abroad" ;;
+		*log_cn_force_req*|*强制国内*) TR_OUTLET="国内请求 · 强制名单命中"; TR_GROUP="cn" ;;
+		*log_cn_geo_req*|*geosite*) TR_OUTLET="国内请求 · geosite 命中"; TR_GROUP="cn" ;;
+		*log_cn_list_req*|*域名列表命中*) TR_OUTLET="国内请求 · 域名列表命中"; TR_GROUP="cn" ;;
+		*log_abroad_req*|*国外请求*) TR_OUTLET="国外请求"; TR_GROUP="abroad" ;;
+		*log_cache_cn*|*国内缓存*) TR_OUTLET="国内缓存命中"; TR_GROUP="cn" ;;
+		*log_cache_abroad*|*国外缓存*) TR_OUTLET="国外缓存命中"; TR_GROUP="abroad" ;;
+		*log_internal*|*内网组*) TR_OUTLET="内网组"; TR_GROUP="internal" ;;
+		*国内组*) TR_OUTLET="国内组"; TR_GROUP="cn" ;;
+		*国外组*) TR_OUTLET="国外组"; TR_GROUP="abroad" ;;
 		*) TR_OUTLET="未知（日志中未找到该域名的分流记录）" ;;
 	esac
 	TR_PATH="$TR_OUTLET"
@@ -871,10 +874,18 @@ emit_trace_route() {
 		classify_steps "$TDIR/detail.json"
 		SOURCE="recorder"
 	else
+		# Log fallback. query_summary writes qname=... followed by either a
+		# space or end-of-line, and the name may carry a trailing dot. Match
+		# on the bare "qname=<name>" token and try both forms; also grep the
+		# newest line so a bypass-cache (non-cache-hit) query wins over an
+		# older "log_cache_*" hit for the same name.
 		LOG_LINE=""
 		for LF in /tmp/oxidns.log /var/log/oxidns.log /var/lib/oxidns/oxidns.log; do
 			[ -r "$LF" ] || continue
-			LOG_LINE="$(grep -F "qname=$Q " "$LF" 2>/dev/null | tail -n 1 || true)"
+			for QN in "$Q" "$Q."; do
+				LOG_LINE="$(grep -F "qname=$QN" "$LF" 2>/dev/null | grep -v 'log_cache_' | tail -n 1 || true)"
+				[ -n "$LOG_LINE" ] && break
+			done
 			[ -n "$LOG_LINE" ] && break
 		done
 		classify_log "$LOG_LINE"

@@ -120,6 +120,21 @@ grep -q 'callTraceRoute' htdocs/luci-static/resources/view/oxidns/cache.js
 grep -q 'payload_text' htdocs/luci-static/resources/view/oxidns/cache.js
 grep -q 'answerValue' htdocs/luci-static/resources/view/oxidns/cache.js
 grep -q 'state.tracedGroup' htdocs/luci-static/resources/view/oxidns/cache.js
+# [cache lookup r7] The split group must be decided from answer-IP geography
+# (the reliable primary signal), with trace_route as enrichment only. Assert
+# the geo-driven decision chain exists so the page never falls back to a
+# single hard-coded group when recorder/dig are unavailable on minimal builds.
+for sym in geoText normaliseGeo decideGroupFromGeo startGeoBatch maybeFinaliseRoute describeGeo; do
+	grep -q "function $sym" htdocs/luci-static/resources/view/oxidns/cache.js || {
+		echo "cache.js missing geo-decision function $sym" >&2; exit 1; }
+done
+# geoText must coerce object fields, otherwise flag/country objects render as
+# "[object Object]" (the exact bug seen in the wild).
+grep -q "typeof v === 'object'" htdocs/luci-static/resources/view/oxidns/cache.js
+# CDN/hosting must be detectable from the geo provider's org/isp field, since
+# youtube.com / taobao.com answer with A records and have no CNAME to match.
+grep -q 'function hostingFromGeo' htdocs/luci-static/resources/view/oxidns/cache.js
+grep -q 'HOSTING_ORG_RULES' htdocs/luci-static/resources/view/oxidns/cache.js
 sh -n scripts/build-luci-package.sh
 sh -n scripts/integration-check.sh
 sh -n scripts/service-check.sh

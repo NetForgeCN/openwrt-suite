@@ -31,6 +31,9 @@ msgstr "全部"
 msgid "Answer & routing"
 msgstr "应答与路由"
 
+msgid "Answer IP origin: %s domestic / %s overseas"
+msgstr "应答 IP 归属：%s 国内 / %s 境外"
+
 msgid "Answers"
 msgstr "应答"
 
@@ -465,9 +468,6 @@ msgstr "重新测试上游"
 
 msgid "Route group"
 msgstr "路由组"
-
-msgid "Route probe failed."
-msgstr "路由探测失败。"
 
 msgid "Rule Subscriptions"
 msgstr "规则订阅"

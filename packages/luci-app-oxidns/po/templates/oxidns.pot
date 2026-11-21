@@ -29,6 +29,9 @@ msgstr ""
 msgid "Answer & routing"
 msgstr ""
 
+msgid "Answer IP origin: %s domestic / %s overseas"
+msgstr ""
+
 msgid "Answers"
 msgstr ""
 
@@ -459,9 +462,6 @@ msgid "Retest upstreams"
 msgstr ""
 
 msgid "Route group"
-msgstr ""
-
-msgid "Route probe failed."
 msgstr ""
 
 msgid "Rule Subscriptions"
