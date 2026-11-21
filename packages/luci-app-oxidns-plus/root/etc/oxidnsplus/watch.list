@@ -1,0 +1,14 @@
+# OxiDNS Plus prewarm watch list
+# One entry per line:  domain [A|AAAA]
+# - No qtype  -> both A and AAAA are scheduled
+# - "domain A" -> only A; "domain AAAA" -> only AAAA
+# Blank lines and lines starting with # are ignored.
+#
+# Put the hostnames you care about most here. Only these are prewarmed in
+# mode=list (the default). To prewarm every cached domain instead, set
+# option mode 'all' in /etc/config/oxidnsplus and this file is ignored.
+
+# Examples (uncomment and edit):
+# gateway.lan
+# router.local A
+# api.example.com AAAA

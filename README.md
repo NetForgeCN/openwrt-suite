@@ -1,6 +1,6 @@
 # openwrt-suite
 
-OpenWrt 第三方组件**单一聚合 feed 仓库**：把 35 个第三方包（39 个包源目录）与一份固件 `.config` 统一收进本仓库，每日由 GitHub Actions 从各上游同步（纯快照方式）。使用时**只需克隆本仓库**，第三方包就会出现在 `make menuconfig` 里。
+OpenWrt 第三方组件**单一聚合 feed 仓库**：把 36 个第三方包（40 个包源目录）与一份固件 `.config` 统一收进本仓库，每日由 GitHub Actions 从各上游同步（纯快照方式）。使用时**只需克隆本仓库**，第三方包就会出现在 `make menuconfig` 里。
 
 ## 使用方法
 
@@ -56,7 +56,7 @@ bash "$SUITE/diy/02-kernel-config.sh" "$OW"
 
 | 菜单路径 | 包 |
 |---|---|
-| LuCI → 3. Applications | luci-app-airplay2、luci-app-argon-config、luci-app-atomdns、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-honk、luci-app-kixdns、luci-app-lucky、luci-app-mosdns、luci-app-nikki、luci-app-oaf、luci-app-open_nexttrace、luci-app-oxidns、luci-app-photondns、luci-app-photondns-compat、luci-app-pulse、luci-app-temp-status |
+| LuCI → 3. Applications | luci-app-airplay2、luci-app-argon-config、luci-app-atomdns、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-honk、luci-app-kixdns、luci-app-lucky、luci-app-mosdns、luci-app-nikki、luci-app-oaf、luci-app-open_nexttrace、luci-app-oxidns、luci-app-oxidns-plus、luci-app-photondns、luci-app-photondns-compat、luci-app-pulse、luci-app-temp-status |
 | LuCI → 4. Themes | luci-theme-argon |
 | Network → IP Addresses and Names | ddns-go、kixdns、mosdns（Go DNS 转发器）、photondns（Rust DNS 转发器）、v2ray-geodata（虚包，实际产出 v2ray-geoip / v2ray-geosite） |
 | Network → Web Servers/Proxies | dae、honk（eBPF 核心，仅 x86_64 / aarch64_generic） |
@@ -144,7 +144,7 @@ OpenWrt 的 `feeds install -a` 对同名包按 feeds.conf 中的**出现顺序**
 | `all`  | Makefile 在仓库根目录 | jerrykuku/luci-theme-argon → `luci-theme-argon/` |
 | `file` | 大仓库里的单个文件 | NetForgeCN/OpenWRT 的 `.config` → `config/dot.config` |
 
-`pkg` 的 payload 可以写上游内的**子路径**，目标目录取它的 basename，用来对付「包目录藏在子目录里」的上游（如 c2h2/luci-app-photondns 的 `openwrt/photondns`）。只含一个包目录的上游（如 atomdns）同样走 `pkg`，payload 只写一个目录，仓库根的 README / LICENSE 不会被当成包，许可证另由 `copy_meta` 收进 `meta/<slug>/`。每个源同步后强制校验 `Makefile` 存在，任何失配（上游重构、删库、改默认分支）都会让同步失败报红。每次同步把上游 commit 记入 `sources.lock`。
+`pkg` 的 payload 可以写上游内的**子路径**，目标目录取它的 basename，用来对付「包目录藏在子目录里」的上游（如 c2h2/luci-app-photondns 的 `openwrt/photondns`）。只含一个包目录的上游（如 atomdns、oxidnsplus）同样走 `pkg`，payload 只写一个目录，仓库根的 README / LICENSE 不会被当成包；许可证放在包目录内的随快照拷入，放在仓库根的另由 `copy_meta` 收进 `meta/<slug>/`。每个源同步后强制校验 `Makefile` 存在，任何失配（上游重构、删库、改默认分支）都会让同步失败报红。每次同步把上游 commit 记入 `sources.lock`。
 
 `packages/` 下的内容由上游决定，快照定制用 `patches/<slug>.sh`。`renovate.json` 里 `ignorePaths: ["packages/**"]`，Renovate 只升级本仓库自身的 workflow 依赖。
 
@@ -338,6 +338,20 @@ file -L "$(command -v zig)" 2>/dev/null; file -L "$(command -v bpf-linker)" 2>/d
 
 `LUCI_DEPENDS` 只有 `+ca-certificates`（DoH / 订阅需要证书），`LUCI_PKGARCH` 留空走目标架构。编译宿主机需要 `unzip` 解压 `config_rust.zip`，三套构建库的 CI 依赖清单都已包含。包内 `root/lib/upgrade/keep.d/luci-app-atomdns` 把运行时数据目录 `/etc/atomdns` 列入 sysupgrade 保留清单，与 conffiles 的 `/etc/config/atomdns` 互补。上游根 `LICENSE`（GPL-3.0 全文）由 `sync.sh` 收进 `meta/atomdns/`。
 
+### oxidnsplus
+
+`oxidnsplus` 源指向自有仓库 [NetForgeCN/luci-app-oxidns-plus](https://github.com/NetForgeCN/luci-app-oxidns-plus)：仓库根只有 README，包目录是 `luci-app-oxidns-plus/`，因此 `mode=pkg` 只拷这一个目录。它是与 `luci-app-oxidns` **并存的 add-on**（TTL 自适应缓存预热），不改动 OxiDNS 主程序，也不读写 `/etc/oxidns/config.yaml`。
+
+| 项目 | 说明 |
+|---|---|
+| 命名空间 | 包名 `luci-app-oxidns-plus`、UCI `oxidnsplus.main`、init.d `oxidnsplus`、rpcd `luci.oxidnsplus`、菜单 `admin/services/oxidnsplus`、视图 `oxidnsplus/plus`，每一条都与基础包不同，menuconfig 与运行时都不会撞同名包 |
+| 从源码编译 | `Makefile` 引入 `feeds/packages/lang/rust/rust-package.mk`，`PKG_BUILD_DEPENDS:=rust/host`，用目标架构的 musl 交叉工具链编译包内 `src/prewarmer-rs/`（纯标准库、无外部 crate）产出 `oxidns-prewarmer`；`Cargo.lock` 随包提供，`cargo install` 带 `--locked`。不下载预编译二进制，也不访问任何 release |
+| 架构范围 | `LUCI_DEPENDS` 含 `@(x86_64||aarch64||i386||arm)`，与 `oxidns-core` 的架构门控一致；`LUCI_PKGARCH` 留空走目标架构 |
+| 运行期依赖 | 通过 OxiDNS 的管理 API 与 DNS 监听口读取 TTL 并做后台预热，需要设备上已有 OxiDNS 1.7.x 核心。`LUCI_DEPENDS` 只有 `+luci-base +rpcd +jsonfilter`，不会自动把 `oxidns-core` 拉上，需要时在 `.config` 里自行选择 |
+| 菜单 | LuCI → 3. Applications → `luci-app-oxidns-plus`，页面在 服务 → OxiDNS Plus |
+
+`Build/Prepare` 把包内 Rust 源码拷到 `$(PKG_BUILD_DIR)/src/prewarmer-rs/`，正好对应 `MAKE_PATH`，由 buildroot 准备的 `rust/host` 完成交叉编译；这条链路只依赖官方 packages feed 的 `lang/rust` 与 `package/libs/libstd-rust`。包内 `LICENSE`（GPL-3.0-or-later 全文）随快照落在 `packages/luci-app-oxidns-plus/LICENSE`；仓库根没有 LICENSE，所以 `meta/oxidnsplus/` 不产生副本。
+
 ## 手动触发同步
 
 - GitHub 仓库页 → Actions → daily-sync → Run workflow；或
@@ -349,4 +363,4 @@ file -L "$(command -v zig)" 2>/dev/null; file -L "$(command -v bpf-linker)" 2>/d
 
 **本仓库自身**（`scripts/`、`diy/`、`build/`、文档）以 **MIT** 授权，见 [LICENSE](LICENSE)。
 
-**聚合进来的第三方包**许可证**原样保留**：`mode=all` 的包 LICENSE 在包目录内；`mode=pkg` 的上游其 LICENSE / THIRD-PARTY-NOTICES 副本收于 `meta/<slug>/`（`atomdns` 即为此类）。快照内容按上游原样分发，`patches/photondns.sh` 把上游仓库根的 Cargo 工程**原样补齐**到包目录（新增文件、不改动任何已有内容）。MIT 只覆盖本仓库自己的脚本与文档；每个 `packages/<name>/` 下的代码按它自己的许可证分发，装机时以包内 LICENSE 或 `meta/<slug>/LICENSE` 为准。
+**聚合进来的第三方包**许可证**原样保留**：LICENSE 随快照走——`mode=all` 的包、以及把 LICENSE 放在包目录里的 `mode=pkg` 上游（如 `oxidnsplus`），文件就在 `packages/<name>/LICENSE`；仓库根另外提供 LICENSE / THIRD-PARTY-NOTICES / NOTICE 的 `mode=pkg` 上游（如 `atomdns`）再由 `sync.sh` 额外收进 `meta/<slug>/`。快照内容按上游原样分发，`patches/photondns.sh` 把上游仓库根的 Cargo 工程**原样补齐**到包目录（新增文件、不改动任何已有内容）。MIT 只覆盖本仓库自己的脚本与文档；每个 `packages/<name>/` 下的代码按它自己的许可证分发，装机时以包内 LICENSE 或 `meta/<slug>/LICENSE` 为准。

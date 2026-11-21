@@ -1,0 +1,104 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2026 NetForgeCN - GPL-3.0-or-later
+#
+# Manages the oxidns-prewarmer daemon with procd. It reads ONLY this add-on's
+# own UCI package (oxidnsplus) plus the API listen/username from the OxiDNS
+# main config (read-only, to derive the API base). It never writes config.yaml.
+
+START=99
+STOP=10
+
+USE_PROCD=1
+PROG=/usr/libexec/oxidns-prewarmer
+STATUS_FILE=/tmp/oxidnsplus.status.json
+
+uci_get() { uci -q get "oxidnsplus.main.$1" 2>/dev/null; }
+
+# Every flag must get a concrete value: an empty numeric value would be a
+# parse error. Defaults here mirror src/prewarmer-rs/src/main.rs.
+g() { local v; v="$(uci_get "$1")"; [ -n "$v" ] && printf '%s' "$v" || printf '%s' "$2"; }
+
+# Read api.http.listen from config.yaml (read-only) to derive the API base.
+api_base_from_config() {
+	cfg="$(g config_path /etc/oxidns/config.yaml)"
+	[ -r "$cfg" ] || return 1
+	listen="$(awk '
+		/^[^[:space:]#][^:]*:/ { top=$0; sub(/:.*/,"",top); s1=""; next }
+		top=="api" && /^[[:space:]]+http:[[:space:]]*$/ { s1="http"; next }
+		top=="api" && s1=="http" && /^[[:space:]]+listen:/ {
+			sub(/^[[:space:]]+listen:[[:space:]]*/,"",$0);
+			gsub(/["'"'"']/,"",$0); print $0; exit;
+		}
+	' "$cfg")"
+	[ -n "$listen" ] || return 1
+	listen="${listen#http://}"; listen="${listen#https://}"
+	host="${listen%:*}"; port="${listen##*:}"
+	case "$host" in ''|'0.0.0.0'|'::'|'[::]') host="127.0.0.1";; esac
+	[ -n "$port" ] || return 1
+	printf 'http://%s:%s/' "$host" "$port"
+}
+
+api_user_from_config() {
+	cfg="$(g config_path /etc/oxidns/config.yaml)"
+	[ -r "$cfg" ] || return 1
+	awk '
+		/^[^[:space:]#][^:]*:/ { top=$0; sub(/:.*/,"",top); s1=""; s2=""; next }
+		top=="api" && /^[[:space:]]+http:[[:space:]]*$/ { s1="http"; next }
+		top=="api" && s1=="http" && /^[[:space:]]+auth:[[:space:]]*$/ { s2="auth"; next }
+		top=="api" && s1=="http" && s2=="auth" && /^[[:space:]]+username:/ {
+			sub(/^[[:space:]]+username:[[:space:]]*/,"",$0);
+			gsub(/["'"'"']/,"",$0); print $0; exit;
+		}
+	' "$cfg"
+}
+
+start_service() {
+	[ "$(g enabled 1)" = "1" ] || return 0
+	[ -x "$PROG" ] || { echo "oxidns-plus: missing $PROG" >&2; return 1; }
+
+	local api_base api_user api_pass
+	api_base="$(api_base_from_config)"
+	[ -n "$api_base" ] || api_base="$(g api_base http://127.0.0.1:9199/)"
+	api_user="$(api_user_from_config)"
+	[ -n "$api_user" ] || api_user="$(g api_user "")"
+	api_pass="$(g api_pass "")"
+	[ -n "$api_pass" ] || api_pass="${OXIDNS_API_PASS:-}"
+
+	procd_open_instance oxidns-prewarmer
+	procd_set_param command "$PROG" \
+		-api "$api_base" \
+		-api-user "$api_user" \
+		-api-pass "$api_pass" \
+		-cache-tag "$(g cache_tag cache_main)" \
+		-dns "$(g dns_target 127.0.0.1:5333)" \
+		-watch-list "$(g watch_list /etc/oxidnsplus/watch.list)" \
+		-mode "$(g mode list)" \
+		-tick "$(g tick 5)" \
+		-grace "$(g grace 3)" \
+		-refresh-delay "$(g refresh_delay 1200)" \
+		-min-ttl "$(g min_ttl 30)" \
+		-min-interval "$(g min_interval 10)" \
+		-max-interval "$(g max_interval 3600)" \
+		-jitter "$(g jitter 5)" \
+		-retry-base "$(g retry_base 15)" \
+		-retry-max "$(g retry_max 300)" \
+		-retry-max-count "$(g retry_max_count 8)" \
+		-status-file "$STATUS_FILE" \
+		-log-level "$(g log_level info)"
+	procd_set_param respawn ${respawn_threshold:-3600} ${respawn_timeout:-5} ${respawn_retry:-5}
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+}
+
+service_stopped() {
+	rm -f "$STATUS_FILE" "$STATUS_FILE.tmp" 2>/dev/null || true
+}
+
+cleanup() {
+	rm -f "$STATUS_FILE" "$STATUS_FILE.tmp" 2>/dev/null || true
+	logger -t oxidns-plus "runtime state cleared" 2>/dev/null || true
+}
+
+EXTRA_COMMANDS="cleanup"
+EXTRA_HELP="	cleanup	Remove runtime status state"

@@ -1,0 +1,10 @@
+*.ipk
+*.apk
+*.tar.gz
+*.o
+*.pyc
+.DS_Store
+build/
+dist/
+tmp/
+*.swp

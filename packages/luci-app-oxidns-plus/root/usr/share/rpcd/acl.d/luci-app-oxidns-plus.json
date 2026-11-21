@@ -1,0 +1,23 @@
+{
+	"luci-app-oxidns-plus": {
+		"description": "Grant access to the OxiDNS Plus LuCI add-on",
+		"read": {
+			"ubus": {
+				"luci.oxidnsplus": [
+					"status",
+					"settings_read",
+					"warm_list_read",
+					"log"
+				]
+			}
+		},
+		"write": {
+			"ubus": {
+				"luci.oxidnsplus": [
+					"settings_save",
+					"warm_list_save"
+				]
+			}
+		}
+	}
+}

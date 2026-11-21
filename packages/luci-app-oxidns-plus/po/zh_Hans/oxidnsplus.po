@@ -1,0 +1,166 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: luci-app-oxidns-plus 0.3.0\n"
+"Language: zh_Hans\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "OxiDNS Plus - TTL-adaptive Prewarming"
+msgstr "OxiDNS Plus - TTL 自适应预热"
+
+msgid "Keeps your important domains warm by watching each cached TTL. Just after a fresh entry expires, a single query is sent to OxiDNS so its native lazy cache refreshes in the background. No cache is deleted, no upstream is queried by this add-on, and TTL changes are followed automatically."
+msgstr "通过监视每个缓存 TTL 让重要域名保持温热。当一条缓存刚过期时，本插件会向 OxiDNS 发送一次查询，由其原生惰性缓存在后台完成刷新。不删除任何缓存、不自行查询上游，并能自动跟随 TTL 变化。"
+
+msgid "Live status"
+msgstr "实时状态"
+
+msgid "Refresh"
+msgstr "刷新"
+
+msgid "Prewarmer status unavailable. Is the service running and enabled?"
+msgstr "无法获取预热器状态。服务是否已启用并正在运行？"
+
+msgid "Probes"
+msgstr "探测次数"
+
+msgid "Refreshed"
+msgstr "刷新成功"
+
+msgid "Seeds"
+msgstr "冷启动填充"
+
+msgid "Failed"
+msgstr "失败"
+
+msgid "Domains"
+msgstr "域名数"
+
+msgid "Updated"
+msgstr "更新时间"
+
+msgid "Domain"
+msgstr "域名"
+
+msgid "Type"
+msgstr "类型"
+
+msgid "TTL"
+msgstr "TTL"
+
+msgid "Remaining"
+msgstr "剩余"
+
+msgid "Next probe"
+msgstr "下次探测"
+
+msgid "Source"
+msgstr "来源"
+
+msgid "Result"
+msgstr "结果"
+
+msgid "Watch list"
+msgstr "关注列表"
+
+msgid "Auto"
+msgstr "自动发现"
+
+msgid "Seeded"
+msgstr "已填充"
+
+msgid "TTL followed"
+msgstr "已跟随 TTL"
+
+msgid "Retrying"
+msgstr "重试中"
+
+msgid "Short TTL fixed"
+msgstr "短 TTL 固定间隔"
+
+msgid "One \"domain [A|AAAA]\" per line. Only these are prewarmed in list mode. Use \"all\" mode to prewarm every cached domain instead."
+msgstr "每行一条“域名 [A|AAAA]”。列表模式下仅预热这些域名。改用“全部”模式可预热所有缓存域名。"
+
+msgid "Save watch list"
+msgstr "保存关注列表"
+
+msgid "Watch list saved; prewarmer restarted."
+msgstr "关注列表已保存，预热器已重启。"
+
+msgid "Settings"
+msgstr "设置"
+
+msgid "Enabled"
+msgstr "启用"
+
+msgid "Mode"
+msgstr "模式"
+
+msgid "Cache tag"
+msgstr "缓存标签"
+
+msgid "DNS target"
+msgstr "DNS 目标"
+
+msgid "Watch list path"
+msgstr "关注列表路径"
+
+msgid "Reconcile tick (s)"
+msgstr "对账周期（秒）"
+
+msgid "Grace after expiry (s)"
+msgstr "过期后宽限（秒）"
+
+msgid "Refresh wait (ms)"
+msgstr "刷新等待（毫秒）"
+
+msgid "Min TTL (s)"
+msgstr "最小 TTL（秒）"
+
+msgid "Min interval (s)"
+msgstr "最小间隔（秒）"
+
+msgid "Max interval (s)"
+msgstr "最大间隔（秒）"
+
+msgid "Jitter (s)"
+msgstr "抖动（秒）"
+
+msgid "Retry base (s)"
+msgstr "重试基数（秒）"
+
+msgid "Retry max (s)"
+msgstr "重试上限（秒）"
+
+msgid "Retry max count"
+msgstr "重试次数上限"
+
+msgid "API base (override)"
+msgstr "API 地址（覆盖）"
+
+msgid "API user (override)"
+msgstr "API 用户（覆盖）"
+
+msgid "API password"
+msgstr "API 密码"
+
+msgid "OxiDNS config path"
+msgstr "OxiDNS 配置路径"
+
+msgid "Log level"
+msgstr "日志级别"
+
+msgid "Save settings"
+msgstr "保存设置"
+
+msgid "Settings saved; prewarmer restarted."
+msgstr "设置已保存，预热器已重启。"
+
+msgid "Recent log"
+msgstr "最近日志"
+
+msgid "Loading log..."
+msgstr "正在加载日志..."
+
+msgid "(no log entries)"
+msgstr "（无日志）"

@@ -1,0 +1,23 @@
+{
+	"admin/services/oxidnsplus": {
+		"title": "OxiDNS Plus",
+		"order": 61,
+		"action": {
+			"type": "firstchild"
+		},
+		"depends": {
+			"acl": [ "luci-app-oxidns-plus" ]
+		}
+	},
+	"admin/services/oxidnsplus/plus": {
+		"title": "TTL-adaptive Prewarming",
+		"order": 10,
+		"action": {
+			"type": "view",
+			"path": "oxidnsplus/plus"
+		},
+		"depends": {
+			"acl": [ "luci-app-oxidns-plus" ]
+		}
+	}
+}

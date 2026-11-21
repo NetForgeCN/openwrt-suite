@@ -1,0 +1,18 @@
+[package]
+name = "oxidns-prewarmer"
+version = "0.3.0"
+edition = "2021"
+publish = false
+
+# Zero external dependencies on purpose: the binary is compiled from source at
+# OpenWrt package-build time by the target's own musl cross-toolchain. Pulling
+# in serde/reqwest/tokio would enlarge the binary and add a supply-chain surface
+# for a ~200-line scheduler. Everything here uses only the Rust standard library.
+# Cargo.lock is committed because rust-package.mk builds with --locked.
+
+[profile.release]
+opt-level = "z"        # optimize for size
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
