@@ -152,13 +152,21 @@ if '# call BuildPackage - OpenWrt buildroot signature' not in mk:
 # captures the Cargo Build/Compile rule.
 if mk.find('rust-package.mk') > mk.find('feeds/luci/luci.mk'):
     bad('rust-package.mk must be included before luci.mk')
-# Build/Install must be disabled: package.mk's default runs
-# `make -C $(MAKE_PATH) install`, which fails because the Cargo source has no
-# Makefile. cargo install already fills PKG_INSTALL_DIR during Build/Compile.
-if 'Build/Install:=' not in mk:
-    bad('Makefile missing "Build/Install:=" (default would run make in Cargo dir)')
+# The install block MUST be `override define`. luci.mk, included later, defines
+# a plain `Package/$(PKG_NAME)/install` that would replace ours; its generic
+# version sees our src/ dir and runs `make -C src/prewarmer-rs install` (no
+# Makefile there) -> "No rule to make target 'install'". Only `override define`
+# survives luci.mk's later plain define. `Build/Install:=` does NOT help: the
+# failing make install comes from luci.mk's install calling Build/Install/Default
+# directly, not from the top-level Build/Install target.
+if 'override define Package/luci-app-oxidns-plus/install' not in mk:
+    bad('Makefile install block must be "override define Package/luci-app-oxidns-plus/install"')
+if re.search(r'^define Package/luci-app-oxidns-plus/install', mk, re.M):
+    bad('Makefile has a plain define of Package/install; luci.mk would replace it -> make install fails')
+if re.search(r'^Build/Install:=', mk, re.M):
+    bad('Makefile still has ineffective "Build/Install:=" assignment (remove it; use override define instead)')
 if not fail:
-    print('  OK   source-build Makefile (rust-package.mk, arch gate, cargo output, single registration, no default install)')
+    print('  OK   source-build Makefile (rust-package.mk, arch gate, cargo output, single registration, override install)')
 
 # HARD RULE: must not modify OxiDNS main config anywhere.
 for rel in ['root/etc/init.d/oxidnsplus','root/usr/libexec/rpcd/luci.oxidnsplus',

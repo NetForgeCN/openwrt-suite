@@ -23,7 +23,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-oxidns-plus
 PKG_VERSION:=0.3.0
-PKG_RELEASE:=4
+PKG_RELEASE:=5
 
 PKG_LICENSE:=GPL-3.0-or-later
 PKG_LICENSE_FILES:=LICENSE
@@ -126,17 +126,20 @@ endef
 # runs: cargo install --path $(PKG_BUILD_DIR)/$(MAKE_PATH) --root $(PKG_INSTALL_DIR)
 # The resulting binary is at $(PKG_INSTALL_DIR)/bin/oxidns-prewarmer.
 #
-# Disable the generic Build/Install step. package.mk defines it as
-#   Build/Install=$(if $(PKG_INSTALL),$(call Build/Install/Default,))
-# and Build/Install/Default runs `make -C $(PKG_BUILD_DIR)/$(MAKE_PATH) install`.
-# Our MAKE_PATH (src/prewarmer-rs) is a pure Cargo project with no Makefile, so
-# that step would fail with "No rule to make target 'install'". cargo install
-# already places the binary into PKG_INSTALL_DIR during Build/Compile, and our
-# Package/.../install copies it into the package: no Build/Install is needed.
-# Define this BEFORE luci.mk, whose trailing BuildPackage eval captures it.
-Build/Install:=
-
-define Package/luci-app-oxidns-plus/install
+# The install block below MUST be an "override define": luci.mk defines its own
+# Package/$(PKG_NAME)/install (a plain define) when included later, which would
+# otherwise REPLACE ours. luci.mk's generic install sees our src/ directory and
+# runs $(call Build/Install/Default) -> `make -C src/prewarmer-rs install`, but
+# that Cargo source has no Makefile, causing "No rule to make target 'install'"
+# at build time. "override" makes GNU make ignore luci.mk's later plain define,
+# so our custom install (which copies the cargo-built binary from PKG_INSTALL_DIR
+# and the htdocs/root files) is the one that actually runs.
+#
+# NOTE: an empty top-level Build/Install assignment alone does NOT help: the
+# failing `make install` comes from luci.mk's Package/install calling
+# Build/Install/Default directly, not from the top-level Build/Install target.
+# Only the override below fixes it.
+override define Package/luci-app-oxidns-plus/install
 	$(INSTALL_DIR) $(1)/usr/libexec
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/bin/oxidns-prewarmer $(1)/usr/libexec/oxidns-prewarmer
 	$(INSTALL_DIR) $(1)/etc/init.d
