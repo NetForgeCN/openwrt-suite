@@ -16,7 +16,8 @@
 					"cache_detail",
 					"upstreams",
 					"probe_upstreams",
-					"zone_info"
+					"zone_info",
+					"trace_route"
 				]
 			}
 		},

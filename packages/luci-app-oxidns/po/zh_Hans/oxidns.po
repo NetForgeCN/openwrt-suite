@@ -10,14 +10,29 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
-msgid "A token is currently configured. Enter a new value to replace it."
-msgstr "当前已配置 Token。输入新值可替换现有 Token。"
+msgid "%d lines"
+msgstr "%d 行"
+
+msgid "%d of %d lines"
+msgstr "%d / %d 行"
 
 msgid "A new OxiDNS core release is available."
 msgstr "有新的 OxiDNS 内核版本可用。"
 
+msgid "A token is currently configured. Enter a new value to replace it."
+msgstr "当前已配置 Token。输入新值可替换现有 Token。"
+
 msgid "Actions"
 msgstr "操作"
+
+msgid "All"
+msgstr "全部"
+
+msgid "Answer & routing"
+msgstr "应答与路由"
+
+msgid "Answers"
+msgstr "应答"
 
 msgid "Applying service action..."
 msgstr "正在执行服务操作..."
@@ -25,8 +40,17 @@ msgstr "正在执行服务操作..."
 msgid "Archive"
 msgstr "压缩包"
 
+msgid "Authoritative NS"
+msgstr "权威域名服务器"
+
+msgid "Auto (from probe)"
+msgstr "自动（来自探测）"
+
 msgid "Available"
 msgstr "可用"
+
+msgid "Baseline version"
+msgstr "内置基线版本"
 
 msgid "Binary path"
 msgstr "二进制路径"
@@ -34,13 +58,31 @@ msgstr "二进制路径"
 msgid "Build"
 msgstr "构建信息"
 
-msgid "Cancel"
-msgstr "取消"
-
 msgid "Bundle"
 msgstr "Bundle"
 
+msgid "Bundled"
+msgstr "内置"
+
+msgid "CDN / hosting"
+msgstr "CDN / 托管"
+
+msgid "CNAME chain"
+msgstr "CNAME 链"
+
+msgid "Cache Lookup"
+msgstr "缓存查找"
+
+msgid "Cached domains (up to 15)"
+msgstr "已缓存域名（最多 15 条）"
+
+msgid "Cancel"
+msgstr "取消"
+
 msgid "Check Update"
+msgstr "检查更新"
+
+msgid "Check for updates"
 msgstr "检查更新"
 
 msgid "Clear"
@@ -82,45 +124,6 @@ msgstr "内核"
 msgid "Core Status"
 msgstr "内核状态"
 
-msgid "Current version"
-msgstr "当前版本"
-
-msgid "Latest version"
-msgstr "最新版本"
-
-msgid "Repository"
-msgstr "仓库"
-
-msgid "The OxiDNS core is already up to date."
-msgstr "OxiDNS 内核已是最新版本。"
-
-msgid "OxiDNS Core Update"
-msgstr "OxiDNS 内核更新"
-
-msgid "Update to %s"
-msgstr "更新到 %s"
-
-msgid "Updating OxiDNS core..."
-msgstr "正在更新 OxiDNS 内核..."
-
-msgid "Persistent storage"
-msgstr "持久化存储"
-
-msgid "Enabled"
-msgstr "已启用"
-
-msgid "Enabled (core not saved yet)"
-msgstr "已启用（内核尚未保存）"
-
-msgid "Disabled"
-msgstr "已禁用"
-
-msgid "Install, repair or update the OxiDNS core binary. With persistent storage enabled the core is kept across firmware upgrades."
-msgstr "安装、修复或更新 OxiDNS 内核二进制。启用持久化存储后，内核在固件升级后仍然保留。"
-
-msgid "LuCI can download the official OxiDNS release archive, install an uploaded .tar.gz archive or single oxidns binary, check for new releases and update the core in place."
-msgstr "LuCI 可以下载官方 OxiDNS release archive、安装上传的 .tar.gz archive 或单个 oxidns 二进制，还可以检查新版本并就地更新内核。"
-
 msgid "Core bundle"
 msgstr "内核 bundle"
 
@@ -133,20 +136,44 @@ msgstr "内核操作失败"
 msgid "Core repository"
 msgstr "内核仓库"
 
+msgid "Current version"
+msgstr "当前版本"
+
+msgid "DNS provider"
+msgstr "DNS 服务商"
+
+msgid "Default routing (no explicit split outlet recorded)"
+msgstr "默认路由（未记录明确的分流出口）"
+
 msgid "Delete configuration file"
 msgstr "删除配置文件"
 
 msgid "Delete working directory"
 msgstr "删除工作目录"
 
+msgid "Details"
+msgstr "详情"
+
 msgid "Disable"
 msgstr "禁用"
 
-msgid "Download proxy"
-msgstr "下载代理"
+msgid "Disabled"
+msgstr "已禁用"
+
+msgid "Domain"
+msgstr "域名"
+
+msgid "Domain lists used for China/ad split and ad blocking. The working copy is seeded from the bundled baseline at boot and can be updated from a published release."
+msgstr "用于国内外分流与广告拦截的域名列表。工作副本在启动时由内置基线补齐，也可以通过已发布的版本更新。"
+
+msgid "Domestic"
+msgstr "国内"
 
 msgid "Download core archive"
 msgstr "下载内核压缩包"
+
+msgid "Download proxy"
+msgstr "下载代理"
 
 msgid "Download release metadata"
 msgstr "下载 release 元数据"
@@ -157,6 +184,18 @@ msgstr "编辑、校验并保存完整的 OxiDNS YAML 配置文件。"
 msgid "Enable"
 msgstr "启用"
 
+msgid "Enabled"
+msgstr "已启用"
+
+msgid "Enabled (core not saved yet)"
+msgstr "已启用（内核尚未保存）"
+
+msgid "Enter a domain first."
+msgstr "请先输入域名。"
+
+msgid "Enter a domain to see cached answers and routing."
+msgstr "输入域名以查看缓存应答与路由。"
+
 msgid "Error"
 msgstr "错误"
 
@@ -166,14 +205,26 @@ msgstr "错误码"
 msgid "Example: http://127.0.0.1:7890"
 msgstr "示例：http://127.0.0.1:7890"
 
+msgid "Failed to query NS info."
+msgstr "查询 NS 信息失败。"
+
+msgid "Failed to query OxiDNS API. Check that the service is running and api_pass is set."
+msgstr "查询 OxiDNS API 失败。请确认服务在运行且已设置 api_pass。"
+
 msgid "Failed to save settings"
 msgstr "保存设置失败"
+
+msgid "File"
+msgstr "文件"
 
 msgid "Format: http://host:port, https://host:port, socks5://host:port, or socks5h://host:port. Use http://user:pass@host:port when authentication is required."
 msgstr "格式：http://主机:端口、https://主机:端口、socks5://主机:端口 或 socks5h://主机:端口。需要认证时使用 http://用户:密码@主机:端口。"
 
 msgid "GitHub token"
 msgstr "GitHub Token"
+
+msgid "Hosting info"
+msgstr "托管信息"
 
 msgid "Install Core"
 msgstr "安装内核"
@@ -187,8 +238,14 @@ msgstr "请先安装 OxiDNS 内核，再编辑配置。"
 msgid "Install the OxiDNS core before using service controls."
 msgstr "请先安装 OxiDNS 内核，再使用服务控制。"
 
+msgid "Install, repair or update the OxiDNS core binary. With persistent storage enabled the core is kept across firmware upgrades."
+msgstr "安装、修复或更新 OxiDNS 内核二进制。启用持久化存储后，内核在固件升级后仍然保留。"
+
 msgid "Installed"
 msgstr "已安装"
+
+msgid "Installed version"
+msgstr "已安装版本"
 
 msgid "Installing OxiDNS core..."
 msgstr "正在安装 OxiDNS 内核..."
@@ -196,20 +253,68 @@ msgstr "正在安装 OxiDNS 内核..."
 msgid "Installing uploaded OxiDNS core..."
 msgstr "正在安装上传的 OxiDNS 内核..."
 
+msgid "Internal"
+msgstr "内网"
+
+msgid "International"
+msgstr "国外"
+
+msgid "Keyword (qname, domain, text...)"
+msgstr "关键词（qname、域名、文本...）"
+
+msgid "Latest version"
+msgstr "最新版本"
+
+msgid "Lines"
+msgstr "行数"
+
+msgid "Loading hosting info..."
+msgstr "正在加载托管信息..."
+
+msgid "Local copy"
+msgstr "本地副本"
+
 msgid "Logs"
 msgstr "日志"
 
 msgid "LuCI backend"
 msgstr "LuCI 后端"
 
+msgid "LuCI can download the official OxiDNS release archive, install an uploaded .tar.gz archive or single oxidns binary, check for new releases and update the core in place."
+msgstr "LuCI 可以下载官方 OxiDNS release archive、安装上传的 .tar.gz archive 或单个 oxidns 二进制，还可以检查新版本并就地更新内核。"
+
 msgid "Manage the OxiDNS runtime, service, configuration, and logs from LuCI."
 msgstr "在 LuCI 中管理 OxiDNS 运行时、服务、配置和日志。"
+
+msgid "Missing"
+msgstr "缺失"
+
+msgid "Name"
+msgstr "名称"
 
 msgid "No"
 msgstr "否"
 
+msgid "No cached A/AAAA answer"
+msgstr "无缓存的 A/AAAA 应答"
+
+msgid "No results."
+msgstr "无结果。"
+
+msgid "No rule update available."
+msgstr "没有可用的规则更新。"
+
+msgid "Not available"
+msgstr "不可用"
+
+msgid "Not detected"
+msgstr "未检测到"
+
 msgid "Not installed"
 msgstr "未安装"
+
+msgid "Open WebUI"
+msgstr "打开 WebUI"
 
 msgid "Operation completed."
 msgstr "操作已完成。"
@@ -219,9 +324,6 @@ msgstr "操作失败"
 
 msgid "Optional. The token is never shown after saving."
 msgstr "可选。保存后不会再显示 Token。"
-
-msgid "Open WebUI"
-msgstr "打开 WebUI"
 
 msgid "Overview"
 msgstr "概览"
@@ -235,41 +337,11 @@ msgstr "OxiDNS 配置"
 msgid "OxiDNS Core"
 msgstr "OxiDNS 内核"
 
+msgid "OxiDNS Core Update"
+msgstr "OxiDNS 内核更新"
+
 msgid "OxiDNS Logs"
 msgstr "OxiDNS 日志"
-
-msgid "View recent OxiDNS entries from OpenWrt logread. Use the filters to narrow down entries by keyword, plugin, query type or response code."
-msgstr "查看 OpenWrt logread 中最近的 OxiDNS 条目。可使用过滤器按关键词、插件、查询类型或响应码筛选。"
-
-msgid "Keyword (qname, domain, text...)"
-msgstr "关键词（qname、域名、文本...）"
-
-msgid "Plugin"
-msgstr "插件"
-
-msgid "QType"
-msgstr "查询类型"
-
-msgid "RCode"
-msgstr "响应码"
-
-msgid "All"
-msgstr "全部"
-
-msgid "Reset"
-msgstr "重置"
-
-msgid "%d lines"
-msgstr "%d 行"
-
-msgid "%d of %d lines"
-msgstr "%d / %d 行"
-
-msgid "Persist core across upgrades"
-msgstr "固件升级时保留内核"
-
-msgid "Store the core binary and webui under /etc/oxidns/core, which is kept during firmware upgrades. Requires enough free space on the overlay partition."
-msgstr "把内核二进制和 WebUI 存放到 /etc/oxidns/core，固件升级时会保留。需要 overlay 分区有足够剩余空间。"
 
 msgid "OxiDNS Settings"
 msgstr "OxiDNS 设置"
@@ -292,14 +364,47 @@ msgstr "路径"
 msgid "Pause"
 msgstr "暂停"
 
+msgid "Persist core across upgrades"
+msgstr "固件升级时保留内核"
+
+msgid "Persistent storage"
+msgstr "持久化存储"
+
+msgid "Plugin"
+msgstr "插件"
+
 msgid "Prepare download"
 msgstr "准备下载"
+
+msgid "Privacy"
+msgstr "隐私"
+
+msgid "Private / internal address"
+msgstr "私有/内网地址"
+
+msgid "Probe failed."
+msgstr "探测失败。"
+
+msgid "Probing live route (bypassing cache)..."
+msgstr "正在探测实时路由（绕过缓存）..."
+
+msgid "QType"
+msgstr "查询类型"
+
+msgid "RCODE"
+msgstr "响应码"
+
+msgid "RCode"
+msgstr "响应码"
 
 msgid "Reason"
 msgstr "原因"
 
 msgid "Refresh"
 msgstr "刷新"
+
+msgid "Release asset"
+msgstr "发布资源"
 
 msgid "Remove Core"
 msgstr "删除内核"
@@ -322,14 +427,65 @@ msgstr "修复重装"
 msgid "Repair reinstalling OxiDNS core..."
 msgstr "正在修复重装 OxiDNS 内核..."
 
+msgid "Repository"
+msgstr "仓库"
+
+msgid "Reset"
+msgstr "重置"
+
+msgid "Resolve"
+msgstr "解析"
+
+msgid "Resolve a domain to load upstream timing."
+msgstr "解析域名后加载上游测速。"
+
+msgid "Resolving also runs a bypass-cache route probe."
+msgstr "解析时会同时执行一次绕过缓存的路由探测。"
+
+msgid "Resolving..."
+msgstr "正在解析..."
+
 msgid "Restart"
 msgstr "重启"
 
 msgid "Restart service"
 msgstr "重启服务"
 
+msgid "Restore baseline"
+msgstr "恢复内置基线"
+
+msgid "Restoring rules from the bundled baseline..."
+msgstr "正在从内置基线恢复规则..."
+
 msgid "Resume"
 msgstr "继续"
+
+msgid "Retest upstreams"
+msgstr "重新测试上游"
+
+msgid "Route group"
+msgstr "路由组"
+
+msgid "Route probe failed."
+msgstr "路由探测失败。"
+
+msgid "Rule Subscriptions"
+msgstr "规则订阅"
+
+msgid "Rule files"
+msgstr "规则文件"
+
+msgid "Rule operation completed."
+msgstr "规则操作完成。"
+
+msgid "Rule operation failed"
+msgstr "规则操作失败"
+
+msgid "Rule update available."
+msgstr "有可用的规则更新。"
+
+msgid "Rules"
+msgstr "规则"
 
 msgid "Running"
 msgstr "运行中"
@@ -352,6 +508,12 @@ msgstr "正在保存配置..."
 msgid "Saving settings..."
 msgstr "正在保存设置..."
 
+msgid "Search the live OxiDNS cache and inspect answers, split routing, hosting info and upstream timing. Paste a URL to extract its hostname."
+msgstr "搜索 OxiDNS 实时缓存，查看应答、分流路由、托管信息与上游测速。粘贴网址可自动提取主机名。"
+
+msgid "Select release archive"
+msgstr "选择 release 压缩包"
+
 msgid "Service"
 msgstr "服务"
 
@@ -370,8 +532,11 @@ msgstr "设置"
 msgid "Settings saved."
 msgstr "设置已保存。"
 
-msgid "Select release archive"
-msgstr "选择 release 压缩包"
+msgid "Size"
+msgstr "大小"
+
+msgid "Split reason"
+msgstr "分流原因"
 
 msgid "Stage"
 msgstr "阶段"
@@ -385,32 +550,83 @@ msgstr "开机自启"
 msgid "Start the OxiDNS service before opening WebUI."
 msgstr "请先启动 OxiDNS 服务再打开 WebUI。"
 
+msgid "State"
+msgstr "状态"
+
 msgid "Stop"
 msgstr "停止"
 
 msgid "Stopped"
 msgstr "已停止"
 
+msgid "Store the core binary and webui under /etc/oxidns/core, which is kept during firmware upgrades. Requires enough free space on the overlay partition."
+msgstr "把内核二进制和 WebUI 存放到 /etc/oxidns/core，固件升级时会保留。需要 overlay 分区有足够剩余空间。"
+
+msgid "TTL / Route"
+msgstr "TTL / 路由"
+
 msgid "Target"
 msgstr "目标架构"
 
-msgid "Details"
-msgstr "详情"
+msgid "Tested %s upstream(s)."
+msgstr "已测试 %s 个上游。"
 
-msgid "Unable to query OxiDNS status"
-msgstr "无法查询 OxiDNS 状态"
+msgid "Testing %s upstreams (1-3s)..."
+msgstr "正在测试%s上游（1-3 秒）..."
+
+msgid "The OxiDNS core is already up to date."
+msgstr "OxiDNS 内核已是最新版本。"
+
+msgid "This overwrites every rule file in the working copy with the bundled baseline."
+msgstr "此操作会用内置基线覆盖工作副本中的全部规则文件。"
+
+msgid "Time"
+msgstr "耗时"
+
+msgid "Type a domain or paste a URL..."
+msgstr "输入域名或粘贴网址..."
 
 msgid "Unable to load configuration."
 msgstr "无法加载配置。"
 
+msgid "Unable to query OxiDNS status"
+msgstr "无法查询 OxiDNS 状态"
+
 msgid "Unavailable"
 msgstr "不可用"
+
+msgid "Unpack core archive"
+msgstr "解压内核压缩包"
+
+msgid "Update now"
+msgstr "立即更新"
+
+msgid "Update to %s"
+msgstr "更新到 %s"
+
+msgid "Updates are downloaded from the repository release, verified with SHA256 and validated with oxidns check before they replace the working copy. Restoring the baseline works offline."
+msgstr "更新从仓库的发布版本下载，经 SHA256 校验并用 oxidns check 预校验通过后才会替换工作副本。恢复内置基线不需要联网。"
+
+msgid "Updating OxiDNS core..."
+msgstr "正在更新 OxiDNS 内核..."
+
+msgid "Updating rule subscriptions..."
+msgstr "正在更新规则订阅..."
+
+msgid "Upload Core"
+msgstr "上传内核"
 
 msgid "Upload has been cancelled"
 msgstr "上传已取消"
 
-msgid "Upload Core"
-msgstr "上传内核"
+msgid "Upstream"
+msgstr "上游"
+
+msgid "Upstream timing"
+msgstr "上游测速"
+
+msgid "Upstreams follow the route detected by the bypass-cache probe; timing bypasses cache without affecting health stats."
+msgstr "上游测速自动跟随绕过缓存探测到的路由；测速绕过缓存且不影响健康统计。"
 
 msgid "Validate"
 msgstr "校验"
@@ -424,8 +640,8 @@ msgstr "校验上传的内核"
 msgid "Validating configuration..."
 msgstr "正在校验配置..."
 
-msgid "Unpack core archive"
-msgstr "解压内核压缩包"
+msgid "Verdict"
+msgstr "结论"
 
 msgid "Verify checksum"
 msgstr "校验 checksum"
@@ -436,6 +652,15 @@ msgstr "校验 release 摘要"
 msgid "Version"
 msgstr "版本"
 
+msgid "Versions"
+msgstr "版本"
+
+msgid "View recent OxiDNS entries from OpenWrt logread. Use the filters to narrow down entries by keyword, plugin, query type or response code."
+msgstr "查看 OpenWrt logread 中最近的 OxiDNS 条目。可使用过滤器按关键词、插件、查询类型或响应码筛选。"
+
+msgid "Waiting for command output..."
+msgstr "正在等待命令输出..."
+
 msgid "WebUI"
 msgstr "WebUI"
 
@@ -445,8 +670,11 @@ msgstr "WebUI 文件尚未安装。"
 msgid "WebUI listens on loopback only. Configure the HTTP listen address to a LAN-reachable address, or use an SSH tunnel."
 msgstr "WebUI 仅监听 loopback。请把 HTTP 监听地址配置为局域网可访问地址，或使用 SSH 隧道。"
 
-msgid "Waiting for command output..."
-msgstr "正在等待命令输出..."
+msgid "When disabled, the LuCI log page no longer shows new runtime logs. Restart OxiDNS after changing this setting."
+msgstr "关闭后，LuCI 日志页不再显示新的运行日志；修改后需重启 OxiDNS 服务。"
+
+msgid "Working copy"
+msgstr "工作副本"
 
 msgid "Working directory"
 msgstr "工作目录"
@@ -454,251 +682,11 @@ msgstr "工作目录"
 msgid "Write to system log"
 msgstr "写入系统日志"
 
-msgid "When disabled, the LuCI log page no longer shows new runtime logs. Restart OxiDNS after changing this setting."
-msgstr "关闭后，LuCI 日志页不再显示新的运行日志；修改后需重启 OxiDNS 服务。"
-
 msgid "YAML"
 msgstr "YAML"
 
 msgid "Yes"
 msgstr "是"
-
-msgid "Baseline version"
-msgstr "内置基线版本"
-
-msgid "Bundled"
-msgstr "内置"
-
-msgid "Check for updates"
-msgstr "检查更新"
-
-msgid "Domain lists used for China/ad split and ad blocking. The working copy is seeded from the bundled baseline at boot and can be updated from a published release."
-msgstr "用于国内外分流与广告拦截的域名列表。工作副本在启动时由内置基线补齐，也可以通过已发布的版本更新。"
-
-msgid "File"
-msgstr "文件"
-
-msgid "Installed version"
-msgstr "已安装版本"
-
-msgid "Lines"
-msgstr "行数"
-
-msgid "Local copy"
-msgstr "本地副本"
-
-msgid "Missing"
-msgstr "缺失"
-
-msgid "No rule update available."
-msgstr "没有可用的规则更新。"
-
-msgid "Release asset"
-msgstr "发布资源"
-
-msgid "Restore baseline"
-msgstr "恢复内置基线"
-
-msgid "Restoring rules from the bundled baseline..."
-msgstr "正在从内置基线恢复规则..."
-
-msgid "Rule Subscriptions"
-msgstr "规则订阅"
-
-msgid "Rule files"
-msgstr "规则文件"
-
-msgid "Rule operation completed."
-msgstr "规则操作完成。"
-
-msgid "Rule operation failed"
-msgstr "规则操作失败"
-
-msgid "Rule update available."
-msgstr "有可用的规则更新。"
-
-msgid "Size"
-msgstr "大小"
-
-msgid "State"
-msgstr "状态"
-
-msgid "This overwrites every rule file in the working copy with the bundled baseline."
-msgstr "此操作会用内置基线覆盖工作副本中的全部规则文件。"
-
-msgid "Update now"
-msgstr "立即更新"
-
-msgid "Updates are downloaded from the repository release, verified with SHA256 and validated with oxidns check before they replace the working copy. Restoring the baseline works offline."
-msgstr "更新从仓库的发布版本下载，经 SHA256 校验并用 oxidns check 预校验通过后才会替换工作副本。恢复内置基线不需要联网。"
-
-msgid "Updating rule subscriptions..."
-msgstr "正在更新规则订阅..."
-
-msgid "Versions"
-msgstr "版本"
-
-msgid "Working copy"
-msgstr "工作副本"
-
-msgid "Rules"
-msgstr "规则"
-
-msgid "Address"
-msgstr "地址"
-
-msgid "Answer & routing"
-msgstr "应答与路由"
-
-msgid "Answers"
-msgstr "应答"
-
-msgid "Authoritative NS"
-msgstr "权威域名服务器"
-
-msgid "Bootstrap"
-msgstr "引导服务器"
-
-msgid "CDN / hosting"
-msgstr "CDN / 托管"
-
-msgid "CNAME chain"
-msgstr "CNAME 链"
-
-msgid "Cache Lookup"
-msgstr "缓存查找"
-
-msgid "Cached domains (up to 15)"
-msgstr "已缓存域名（最多 15 条）"
-
-msgid "Cached entries"
-msgstr "缓存条目数"
-
-msgid "DNS provider"
-msgstr "DNS 服务商"
-
-msgid "DNS zone"
-msgstr "DNS 区域"
-
-msgid "Default routing (no explicit split outlet recorded)"
-msgstr "默认路由（未记录明确的分流出口）"
-
-msgid "Domain"
-msgstr "域名"
-
-msgid "Domestic"
-msgstr "国内"
-
-msgid "Enter a domain first."
-msgstr "请先输入域名。"
-
-msgid "Enter a domain to see cached answers and routing."
-msgstr "输入域名以查看缓存应答与路由。"
-
-msgid "Failed to query NS info."
-msgstr "查询 NS 信息失败。"
-
-msgid "Failed to query OxiDNS API. Check that the service is running and api_pass is set."
-msgstr "查询 OxiDNS API 失败。请确认服务在运行且已设置 api_pass。"
-
-msgid "Failed to read upstream list."
-msgstr "读取上游列表失败。"
-
-msgid "Group"
-msgstr "分组"
-
-msgid "Hosting info"
-msgstr "托管信息"
-
-msgid "International"
-msgstr "国外"
-
-msgid "Last access"
-msgstr "最后访问时间"
-
-msgid "Loading hosting info..."
-msgstr "正在加载托管信息..."
-
-msgid "Name"
-msgstr "名称"
-
-msgid "No cache entry for this name yet. Run a query first or use probe below."
-msgstr "该域名暂无缓存记录，请先发起一次查询或使用下方探测。"
-
-msgid "No cached A/AAAA answer"
-msgstr "无缓存的 A/AAAA 应答"
-
-msgid "No results."
-msgstr "无结果。"
-
-msgid "No upstreams found for this group."
-msgstr "该分组未找到上游。"
-
-msgid "Not available"
-msgstr "不可用"
-
-msgid "Not detected"
-msgstr "未检测到"
-
-msgid "Private / internal address"
-msgstr "私有/内网地址"
-
-msgid "Probe failed."
-msgstr "探测失败。"
-
-msgid "RCODE"
-msgstr "响应码"
-
-msgid "Resolve"
-msgstr "解析"
-
-msgid "Resolve a domain to load upstreams."
-msgstr "解析域名以加载上游。"
-
-msgid "Resolving..."
-msgstr "正在解析..."
-
-msgid "Route"
-msgstr "路由"
-
-msgid "Search the live OxiDNS cache and inspect answers, split routing, hosting info and upstream timing. Paste a URL to extract its hostname."
-msgstr "搜索 OxiDNS 实时缓存，查看应答、分流路由、托管信息与上游测速。粘贴网址可自动提取主机名。"
-
-msgid "Split reason"
-msgstr "分流原因"
-
-msgid "Static upstream list is shown first; timing is fetched asynchronously (1-3s) and bypasses cache without affecting health stats."
-msgstr "先显示上游静态列表；测速结果异步获取（1-3 秒），绕过缓存且不影响健康统计。"
-
-msgid "TTL"
-msgstr "TTL"
-
-msgid "Test all upstreams"
-msgstr "测试所有上游"
-
-msgid "Tested %s upstream(s)."
-msgstr "已测试 %s 个上游。"
-
-msgid "Testing all upstreams (1-3s)..."
-msgstr "正在测试所有上游（1-3 秒）..."
-
-msgid "Time"
-msgstr "耗时"
-
-msgid "Type"
-msgstr "类型"
-
-msgid "Type a domain or paste a URL..."
-msgstr "输入域名或粘贴网址..."
-
-msgid "Upstream"
-msgstr "上游"
-
-msgid "Upstream timing"
-msgstr "上游测速"
-
-msgid "Verdict"
-msgstr "结论"
 
 msgid "fastest"
 msgstr "最快"

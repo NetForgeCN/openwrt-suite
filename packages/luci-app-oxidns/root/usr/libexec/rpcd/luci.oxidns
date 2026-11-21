@@ -703,6 +703,195 @@ webui_url_from_config() {
 	printf 'http://%s:%s/' "$HOST" "$PORT"
 }
 
+# --------------------------------------------------------------------------
+# trace_route: bypass-cache diagnostic.
+#
+# Deletes the cached entry for a qname, issues ONE real DNS query to the local
+# OxiDNS UDP listener, then reads the recorder's execution-path steps for that
+# query to report which split branch / upstream group actually handled it.
+# This is the ONLY way to answer "if this name were resolved right now, which
+# route would it take" with 100% accuracy: the query uses the real qname (so
+# all matcher rules apply unchanged) and is forced to miss cache (so the full
+# chain actually runs). recorder steps are core's objective runtime trace.
+# Fallback: when recorder is disabled, parse query_summary from the log file.
+# --------------------------------------------------------------------------
+
+# Read the loopback UDP listener port from config (tag: udp_lo, listen: host:port).
+# Falls back to 5333 (the OxiDNS default) when not parseable.
+config_udp_port() {
+	[ -r "$CONFIG_PATH" ] || { printf '5333'; return 0; }
+	P="$(awk '
+		/^[[:space:]]*- tag:[[:space:]]*udp_lo([[:space:]]|$)/ { in_udp = 1; next }
+		in_udp && /^[[:space:]]*- tag:/ { in_udp = 0 }
+		in_udp && /^[[:space:]]+listen:[[:space:]]*/ {
+			sub(/^[[:space:]]+listen:[[:space:]]*/, "", $0);
+			gsub(/["'"'"']/, "", $0);
+			n = split($0, a, ":");
+			if (n >= 2) { print a[n]; exit }
+		}
+	' "$CONFIG_PATH")"
+	case "$P" in ''|*[!0-9]*) P=5333 ;; esac
+	printf '%s' "$P"
+}
+
+# POST a JSON body to the OxiDNS management API; raw response body -> $3.
+api_http_post() {
+	URL="$1"; BODY="$2"; OUT="$3"
+	CREDS="$(api_auth_creds)"
+	if command -v curl >/dev/null 2>&1; then
+		if [ -n "$CREDS" ]; then
+			curl -fsS --max-time 8 -u "$CREDS" -H 'Content-Type: application/json' \
+				-d "$BODY" -o "$OUT" "$URL" >/dev/null 2>&1
+		else
+			curl -fsS --max-time 8 -H 'Content-Type: application/json' \
+				-d "$BODY" -o "$OUT" "$URL" >/dev/null 2>&1
+		fi
+		return $?
+	fi
+	# busybox wget cannot POST a JSON body portably; treat as unsupported.
+	return 1
+}
+
+# Extract a top-level string field from a JSON text file without jq.
+json_top_string() {
+	# $1=file $2=key. Uses jsonfilter when available, else a quoted grep.
+	[ -s "$1" ] || return 1
+	if command -v jsonfilter >/dev/null 2>&1; then
+		jsonfilter -i "$1" -e "@.$2" 2>/dev/null || true
+	else
+		sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" | head -1
+	fi
+}
+
+# Classify the actual split path from recorder execution-path steps.
+# Steps carry sequence_tag / tag / kind / outcome. Look for the forward_*
+# sequence and the log_* outlet to derive (group, path, outlet) into globals
+# TR_GROUP / TR_PATH / TR_OUTLET.
+classify_steps() {
+	TR_GROUP=""; TR_PATH=""; TR_OUTLET=""
+	[ -s "$1" ] || return 0
+	BLOB="$(cat "$1")"
+	if printf '%s' "$BLOB" | grep -q 'seq_forward_abroad_force'; then
+		TR_GROUP="abroad"; TR_PATH="国外组 · 强制名单命中"
+	elif printf '%s' "$BLOB" | grep -q 'seq_forward_cn_force'; then
+		TR_GROUP="cn"; TR_PATH="国内组 · 强制名单命中"
+	elif printf '%s' "$BLOB" | grep -q 'seq_abroad_to_cn'; then
+		TR_GROUP="cn"; TR_PATH="出口转内销（国外解析得中国 IP，已转国内重查）"
+	elif printf '%s' "$BLOB" | grep -q 'seq_forward_cn_geo'; then
+		TR_GROUP="cn"; TR_PATH="国内组 · geosite 命中"
+	elif printf '%s' "$BLOB" | grep -q 'seq_forward_cn_list'; then
+		TR_GROUP="cn"; TR_PATH="国内组 · 域名列表命中"
+	elif printf '%s' "$BLOB" | grep -q 'forward_privacy'; then
+		TR_GROUP="privacy"; TR_PATH="隐私组（无痕转发）"
+	elif printf '%s' "$BLOB" | grep -q 'forward_internal'; then
+		TR_GROUP="internal"; TR_PATH="内网组"
+	elif printf '%s' "$BLOB" | grep -q 'forward_cn'; then
+		TR_GROUP="cn"; TR_PATH="国内组"
+	elif printf '%s' "$BLOB" | grep -q 'forward_abroad'; then
+		TR_GROUP="abroad"; TR_PATH="国外组"
+	fi
+	case "$BLOB" in
+		*log_outbound2cn*) TR_OUTLET="出口转内销" ;;
+		*log_abroad_force_req*) TR_OUTLET="国外请求 · 强制名单命中" ;;
+		*log_cn_force_req*) TR_OUTLET="国内请求 · 强制名单命中" ;;
+		*log_cn_geo_req*) TR_OUTLET="国内请求 · geosite 命中" ;;
+		*log_cn_list_req*) TR_OUTLET="国内请求 · 域名列表命中" ;;
+		*log_abroad_req*) TR_OUTLET="国外请求" ;;
+		*log_internal*) TR_OUTLET="内网组" ;;
+		*log_cache_cn*) TR_OUTLET="国内缓存命中" ;;
+		*log_cache_abroad*) TR_OUTLET="国外缓存命中" ;;
+		*log_cache_internal*) TR_OUTLET="内网缓存命中" ;;
+		*log_blocked*) TR_OUTLET="安全拦截" ;;
+	esac
+	[ -n "$TR_PATH" ] || TR_PATH="默认路由（未匹配到明确分流序列）"
+}
+
+# Fallback outlet extraction from a plain query_summary log line.
+classify_log() {
+	TR_GROUP=""; TR_PATH=""; TR_OUTLET=""
+	LINE="$1"
+	case "$LINE" in
+		*log_cache_cn*) TR_OUTLET="国内缓存命中"; TR_GROUP="cn" ;;
+		*log_cache_abroad*) TR_OUTLET="国外缓存命中"; TR_GROUP="abroad" ;;
+		*log_abroad_force_req*) TR_OUTLET="国外请求 · 强制名单命中"; TR_GROUP="abroad" ;;
+		*log_cn_force_req*) TR_OUTLET="国内请求 · 强制名单命中"; TR_GROUP="cn" ;;
+		*log_cn_geo_req*) TR_OUTLET="国内请求 · geosite 命中"; TR_GROUP="cn" ;;
+		*log_cn_list_req*) TR_OUTLET="国内请求 · 域名列表命中"; TR_GROUP="cn" ;;
+		*log_outbound2cn*) TR_OUTLET="出口转内销"; TR_GROUP="cn" ;;
+		*log_abroad_req*) TR_OUTLET="国外请求"; TR_GROUP="abroad" ;;
+		*log_internal*|*title=内网组*) TR_OUTLET="内网组"; TR_GROUP="internal" ;;
+		*title=国内组*) TR_OUTLET="国内组"; TR_GROUP="cn" ;;
+		*) TR_OUTLET="未知（日志中未找到该域名的分流记录）" ;;
+	esac
+	TR_PATH="$TR_OUTLET"
+}
+
+# trace_route {qname} -> bypass-cache path diagnostic.
+emit_trace_route() {
+	load_settings
+	INPUT="$(cat)"
+	Q="$(input_value qname "$INPUT")"
+	if [ -z "$Q" ]; then
+		json_error "missing_qname" "qname is required"
+		return 0
+	fi
+	ENC="$(url_encode_query "$Q")"
+	BASE="$(webui_url_from_config || true)"
+	[ -n "$BASE" ] || { json_detailed_error "api_unavailable" "cannot read API listen address" "trace_route"; return 0; }
+
+	TDIR="$(mktemp -d "$TMP_ROOT/oxidns-trace.XXXXXX")"
+	DEL_OK=0; QUERY_OK=0; REC_OK=0; STEP_OK=0
+
+	# 1) Delete just this qname from cache to force the next query to miss.
+	DEL_BODY='{"filter":{"qname":"'"$Q"'"}}'
+	api_http_post "${BASE}api/plugins/cache_main/entries/delete" "$DEL_BODY" "$TDIR/del.out" && DEL_OK=1
+
+	# 2) Issue one real query to the local loopback UDP listener.
+	UDP_PORT="$(config_udp_port)"
+	if command -v dig >/dev/null 2>&1; then
+		dig +time=2 +tries=1 "@127.0.0.1" -p "$UDP_PORT" "$Q" A >/dev/null 2>&1 && QUERY_OK=1
+	else
+		nslookup "$Q" 127.0.0.1 >/dev/null 2>&1 && QUERY_OK=1
+	fi
+
+	# 3) Recorder flushes asynchronously; wait briefly, then read the newest
+	#    record for this exact qname and its execution-path steps.
+	sleep 1
+	api_http_get "${BASE}api/plugins/recorder_main/records?qname_exact=${ENC}&limit=1" "$TDIR/list.json" && REC_OK=1
+	REC_ID=""
+	if [ "$REC_OK" = 1 ] && command -v jsonfilter >/dev/null 2>&1; then
+		REC_ID="$(jsonfilter -i "$TDIR/list.json" -e '@.records[0].id' 2>/dev/null || true)"
+		case "$REC_ID" in ''|*[!0-9]*) REC_ID="" ;; esac
+	fi
+	if [ -n "$REC_ID" ]; then
+		api_http_get "${BASE}api/plugins/recorder_main/records/${REC_ID}" "$TDIR/detail.json" && STEP_OK=1
+	fi
+
+	if [ "$STEP_OK" = 1 ]; then
+		classify_steps "$TDIR/detail.json"
+		SOURCE="recorder"
+	else
+		LOG_LINE=""
+		for LF in /tmp/oxidns.log /var/log/oxidns.log /var/lib/oxidns/oxidns.log; do
+			[ -r "$LF" ] || continue
+			LOG_LINE="$(grep -F "qname=$Q " "$LF" 2>/dev/null | tail -n 1 || true)"
+			[ -n "$LOG_LINE" ] && break
+		done
+		classify_log "$LOG_LINE"
+		SOURCE="log"
+	fi
+
+	printf '{"ok":true'
+	printf ',"qname":'; json_string "$Q"
+	printf ',"group":'; json_string "$TR_GROUP"
+	printf ',"path":'; json_string "$TR_PATH"
+	printf ',"outlet":'; json_string "$TR_OUTLET"
+	printf ',"source":'; json_string "$SOURCE"
+	printf ',"delete_ok":%s,"query_ok":%s,"recorder_ok":%s,"steps_ok":%s' "$DEL_OK" "$QUERY_OK" "$REC_OK" "$STEP_OK"
+	printf '}\n'
+	rm -rf "$TDIR"
+}
+
 listen_host_from_config() {
 	LISTEN="$(config_api_listen || true)"
 	[ -n "$LISTEN" ] || return 1
@@ -3032,7 +3221,8 @@ case "${1:-}" in
 		printf '"cache_detail":{"qname":"string"},'
 		printf '"upstreams":{"group":"string"},'
 		printf '"probe_upstreams":{"qname":"string","group":"string"},'
-		printf '"zone_info":{"qname":"string"}'
+		printf '"zone_info":{"qname":"string"},'
+		printf '"trace_route":{"qname":"string"}'
 		printf '}\n'
 		;;
 	call)
@@ -3120,6 +3310,9 @@ case "${1:-}" in
 				;;
 			zone_info)
 				emit_zone_info
+				;;
+			trace_route)
+				emit_trace_route
 				;;
 			*)
 				printf '{"ok":false,"error":"unknown method"}\n'

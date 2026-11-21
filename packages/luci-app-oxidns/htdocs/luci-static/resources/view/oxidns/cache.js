@@ -55,6 +55,13 @@ var callZoneInfo = rpc.declare({
 	expect: {}
 });
 
+var callTraceRoute = rpc.declare({
+	object: 'luci.oxidns',
+	method: 'trace_route',
+	params: ['qname'],
+	expect: {}
+});
+
 /* ------------------------------------------------------------------------- */
 /* Static provider tables (translated from photondns src/hosting.rs).        */
 /* rule starting with '.' = suffix match, otherwise substring match.         */
@@ -201,6 +208,8 @@ var state = {
 	qname: '',
 	loading: false,
 	group: 'cn',
+	tracedGroup: '',   // group resolved by the bypass-cache probe
+	traceInfo: null,   // last trace_route result
 	geoCache: {},
 	geoPending: {}
 };
@@ -400,12 +409,50 @@ function resolveName(qname) {
 		var recs = records.records || records.result || [];
 		currentDetail = { entries: entries, records: recs };
 		renderDetail(qname, entries, recs);
-		renderUpstreamsStatic();
 		return loadHosting(qname, entries);
 	}).catch(function(e) {
 		byId('oxidns-detail-body').innerHTML = '<p style="color:#c00;">'
 			+ _('Failed to query OxiDNS API. Check that the service is running and api_pass is set.')
 			+ '</p>';
+	}).then(function() {
+		// Every resolve also performs a bypass-cache route probe so the
+		// "split reason" and upstream group reflect the real route right now.
+		return runTrace(qname);
+	});
+}
+
+/* Bypass-cache probe: delete this name from cache, issue one real query and
+ * read the recorder execution path. Updates the split-reason row and drives
+ * the upstream group automatically. */
+function runTrace(qname) {
+	state.tracedGroup = '';
+	return callTraceRoute(qname).then(function(tr) {
+		state.traceInfo = tr || null;
+		var reason = byId('oxidns-split-reason');
+		if (tr && tr.ok !== false) {
+			var grp = tr.group || '';
+			state.tracedGroup = (grp === 'cn' || grp === 'abroad') ? grp : '';
+			var path = tr.path || tr.outlet || _('Default routing (no explicit split outlet recorded)');
+			var grpLabel = grp === 'cn' ? _('Domestic') : grp === 'abroad' ? _('International')
+				: grp === 'privacy' ? _('Privacy') : grp === 'internal' ? _('Internal') : grp;
+			var badge = grp ? (' <span class="oxidns-route-badge">' + escapeHtml(grpLabel) + '</span>') : '';
+			if (reason) reason.innerHTML = escapeHtml(path) + badge;
+			var grpEl = byId('oxidns-trace-group');
+			if (grpEl && grp) grpEl.textContent = grpLabel;
+			// Upstream timing follows the probed route automatically.
+			if (state.tracedGroup) {
+				state.group = state.tracedGroup;
+				renderUpstreamsStatic();
+				return runProbe();
+			}
+			return renderUpstreamsStatic();
+		}
+		if (reason) reason.innerHTML = escapeHtml(_('Route probe failed.'));
+		return renderUpstreamsStatic();
+	}).catch(function() {
+		var reason = byId('oxidns-split-reason');
+		if (reason) reason.innerHTML = escapeHtml(_('Route probe failed.'));
+		return renderUpstreamsStatic();
 	});
 }
 
@@ -425,6 +472,24 @@ function answersOf(entry) {
 	var a = entry.answers_json;
 	if (typeof a === 'string') { try { a = JSON.parse(a); } catch (e) { return []; } }
 	return Array.isArray(a) ? a : [];
+}
+
+/* OxiDNS core serialises each answer as {rr_type, payload_text, payload:{...}}.
+ * Older builds used address/data/ip/target at the top level. Read both so the
+ * page works across core versions; this is why the IP list was empty before. */
+function answerValue(a) {
+	if (!a) return '';
+	if (a.payload && typeof a.payload === 'object') {
+		if (a.payload.ip) return String(a.payload.ip);
+		if (a.payload.target) return String(a.payload.target);
+		if (a.payload.exchange) return String(a.payload.exchange);
+	}
+	if (a.address || a.data || a.ip || a.target) return String(a.address || a.data || a.ip || a.target);
+	if (a.payload_text) return String(a.payload_text);
+	return '';
+}
+function answerType(a) {
+	return String((a && (a.rr_type || a.type)) || '').toUpperCase();
 }
 
 function splitReason(recs) {
@@ -459,32 +524,28 @@ function renderDetail(qname, entries, recs) {
 	var cnames = [];
 	for (var i = 0; i < answers.length; i++) {
 		var a = answers[i];
-		if (a.rr_type === 'A' || a.rr_type === 'AAAA') ips.push(a.address || a.data || a.ip || '');
-		if (a.rr_type === 'CNAME') cnames.push(a.target || a.name || a.data || '');
+		var t = answerType(a);
+		var v = answerValue(a);
+		if (!v) continue;
+		if (t === 'A' || t === 'AAAA') ips.push(v);
+		if (t === 'CNAME' || t === 'ANAME') cnames.push(v);
 	}
-	ips = ips.filter(function(x) { return !!x; });
 
-	var html = '<div class="table cbi-section-table"><tbody>';
+	var html = '<table class="table cbi-section-table" style="border:0;"><tbody>';
 	html += kvRow(_('Name'), '<strong>' + escapeHtml(qname) + '</strong>');
-	html += kvRow(_('Cached entries'), String(entries.length));
+	html += kvRow(_('Answers'), ips.length
+		? ips.map(function(ip) { return '<span data-ip="' + escapeHtml(ip) + '" class="oxidns-ip">'
+			+ escapeHtml(ip) + ' <span class="oxidns-geo" style="color:#888;font-size:12px;">…</span></span>'; }).join('<br>')
+		: '<span style="color:#888;">' + _('No cached A/AAAA answer') + '</span>');
 	if (entry) {
-		html += kvRow(_('Type'), escapeHtml(entry.record_type || 'A'));
-		html += kvRow(_('Route'), 'cache');
-		html += kvRow(_('RCODE'), escapeHtml(entry.rcode || 'NOERROR'));
-		html += kvRow(_('TTL'), escapeHtml(String(entry.remaining_ttl !== undefined
-			? entry.remaining_ttl : entry.ttl)) + ' s');
-		html += kvRow(_('Answers'), ips.length
-			? ips.map(function(ip) { return '<span data-ip="' + escapeHtml(ip) + '" class="oxidns-ip">'
-				+ escapeHtml(ip) + ' <span class="oxidns-geo" style="color:#888;font-size:12px;">…</span></span>'; }).join('<br>')
-			: '<span style="color:#888;">' + _('No cached A/AAAA answer') + '</span>');
-		if (entry.last_access_unix_ms)
-			html += kvRow(_('Last access'), new Date(entry.last_access_unix_ms).toLocaleString());
+		var ttl = entry.remaining_ttl !== undefined ? entry.remaining_ttl : entry.ttl;
+		html += kvRow(_('TTL / Route'), escapeHtml(String(ttl)) + ' s · cache');
 	} else {
-		html += '<tr><td colspan="2" style="color:#888;">'
-			+ _('No cache entry for this name yet. Run a query first or use probe below.') + '</td></tr>';
+		html += kvRow(_('TTL / Route'), '-');
 	}
-	html += kvRow(_('Split reason'), splitReason(recs));
-	html += '</tbody></div>';
+	html += kvRow(_('Split reason'), '<span id="oxidns-split-reason">'
+		+ '<span style="color:#888;">' + _('Probing live route (bypassing cache)...') + '</span></span>');
+	html += '</tbody></table>';
 	byId('oxidns-detail-body').innerHTML = html;
 
 	// async geolocation for each answer IP (browser-side, private IPs excluded)
@@ -492,6 +553,7 @@ function renderDetail(qname, entries, recs) {
 
 	// hosting info placeholder; filled by loadHosting
 	byId('oxidns-hosting-body').innerHTML = '<p style="color:#888;">' + _('Loading hosting info...') + '</p>';
+	return cnames;
 }
 
 function fillGeo(ip) {
@@ -538,8 +600,11 @@ function loadHosting(qname, entries) {
 	var answerIPs = [];
 	for (var i = 0; i < answers.length; i++) {
 		var a = answers[i];
-		if (a.rr_type === 'CNAME') cnames.push(a.target || a.name || a.data || '');
-		if (a.rr_type === 'A') answerIPs.push(a.address || a.data || a.ip || '');
+		var t = answerType(a);
+		var v = answerValue(a);
+		if (!v) continue;
+		if (t === 'CNAME' || t === 'ANAME') cnames.push(v);
+		if (t === 'A' || t === 'AAAA') answerIPs.push(v);
 	}
 	var cdn = cdnProvider(cnames);
 	var cfByIP = false;
@@ -549,14 +614,16 @@ function loadHosting(qname, entries) {
 		var zone = res && res.zone ? res.zone : '';
 		var ns = (res && res.nameservers) ? res.nameservers : [];
 		var provider = dnsProvider(zone, ns);
-		var html = '<div class="table cbi-section-table"><tbody>';
-		html += kvRow(_('DNS zone'), escapeHtml(zone || '-'));
+		var html = '<table class="table cbi-section-table" style="border:0;"><tbody>';
 		html += kvRow(_('DNS provider'), provider ? escapeHtml(provider) : '<span style="color:#888;">' + _('Not detected') + '</span>');
-		html += kvRow(_('Authoritative NS'), ns.length ? ns.map(escapeHtml).join('<br>') : '<span style="color:#888;">' + _('Not available') + '</span>');
-		html += kvRow(_('CNAME chain'), cnames.length ? cnames.map(function(c) { return '<span style="color:#c00;">' + escapeHtml(c) + '</span>'; }).join(' &rarr; ') : '-');
+		html += kvRow(_('Authoritative NS'), ns.length
+			? ns.map(escapeHtml).join(' · ')
+			: '<span style="color:#888;">' + _('Not available') + '</span>');
+		if (cnames.length)
+			html += kvRow(_('CNAME chain'), cnames.map(function(c) { return '<span style="color:#c00;">' + escapeHtml(c) + '</span>'; }).join(' &rarr; '));
 		var cdnText = cdn || (cfByIP ? 'Cloudflare (proxied, detected by IP range)' : '');
 		html += kvRow(_('CDN / hosting'), cdnText ? escapeHtml(cdnText) : '<span style="color:#888;">' + _('Not detected') + '</span>');
-		html += '</tbody></div>';
+		html += '</tbody></table>';
 		byId('oxidns-hosting-body').innerHTML = html;
 	}).catch(function() {
 		byId('oxidns-hosting-body').innerHTML = '<p style="color:#c00;">' + _('Failed to query NS info.') + '</p>';
@@ -567,31 +634,24 @@ function loadHosting(qname, entries) {
 var upstreamCache = { cn: [], abroad: [] };
 
 function renderUpstreamsStatic() {
-	return callUpstreams(state.group).then(function(res) {
-		var ups = (res && res.upstreams) ? res.upstreams : [];
-		upstreamCache[state.group] = ups;
-		var html = '<table class="table cbi-section-table"><thead><tr>'
-			+ '<th>' + _('Upstream') + '</th><th>' + _('Address') + '</th><th>' + _('Bootstrap') + '</th>'
-			+ '</tr></thead><tbody>';
-		for (var i = 0; i < ups.length; i++) {
-			html += '<tr><td>' + escapeHtml(ups[i].tag || '') + '</td><td>' + escapeHtml(ups[i].addr || '')
-				+ '</td><td>' + escapeHtml(ups[i].bootstrap || '-') + '</td></tr>';
-		}
-		if (!ups.length) html += '<tr><td colspan="3" style="color:#888;">' + _('No upstreams found for this group.') + '</td></tr>';
-		html += '</tbody></table>';
-		byId('oxidns-upstream-body').innerHTML = html;
-	}).catch(function() {
-		byId('oxidns-upstream-body').innerHTML = '<p style="color:#c00;">' + _('Failed to read upstream list.') + '</p>';
-	});
+	// Timing now follows the probed route automatically; only show a hint
+	// before any probe result exists.
+	if (!state.qname) {
+		byId('oxidns-upstream-body').innerHTML = '<p style="color:#888;">'
+			+ _('Resolve a domain to load upstream timing.') + '</p>';
+		return Promise.resolve();
+	}
+	return Promise.resolve();
 }
 
 function runProbe() {
-	if (!state.qname) { ui.showModal(_('Cache Lookup'), E('p', {}, _('Enter a domain first.'))); return; }
-	byId('oxidns-probe-status').textContent = _('Testing all upstreams (1-3s)...');
+	if (!state.qname) { ui.showModal(_('Cache Lookup'), E('p', {}, _('Enter a domain first.'))); return Promise.resolve(); }
+	byId('oxidns-probe-status').textContent = _('Testing %s upstreams (1-3s)...').format(
+		state.group === 'abroad' ? _('International') : _('Domestic'));
 	return callProbeUpstreams(state.qname, state.group).then(function(res) {
 		var results = (res && res.results) ? res.results : [];
-		var html = '<table class="table cbi-section-table"><thead><tr>'
-			+ '<th>' + _('Upstream') + '</th><th>' + _('Address') + '</th><th>' + _('Time') + '</th>'
+		var html = '<table class="table cbi-section-table" style="border:0;"><thead><tr>'
+			+ '<th>' + _('Upstream') + '</th><th>' + _('Time') + '</th>'
 			+ '<th>' + _('RCODE') + '</th><th>' + _('Answers') + '</th><th>' + _('Verdict') + '</th>'
 			+ '</tr></thead><tbody>';
 		var fastest = null;
@@ -604,12 +664,12 @@ function runProbe() {
 			var lat2 = parseFloat(r.latency_ms);
 			var latTxt = isNaN(lat2) ? '-' : (lat2.toFixed(1) + ' ms');
 			var isFast = (!isNaN(lat2) && fastest !== null && Math.abs(lat2 - fastest) < 0.05);
-			html += '<tr><td>' + escapeHtml(r.tag || '') + (isFast ? ' <span style="color:#c00;font-weight:bold;">' + _('fastest') + '</span>' : '')
-				+ '</td><td>' + escapeHtml(r.addr || '') + '</td><td>' + latTxt
+			html += '<tr><td>' + escapeHtml(r.tag || '') + (isFast ? ' <span class="oxidns-fastest">' + _('fastest') + '</span>' : '')
+				+ '</td><td>' + latTxt
 				+ '</td><td>' + escapeHtml(r.rcode || '-') + '</td><td>' + escapeHtml(String(r.answer_count !== undefined && r.answer_count !== '' ? r.answer_count : '-'))
 				+ '</td><td>' + escapeHtml(r.verdict || '-') + '</td></tr>';
 		}
-		if (!results.length) html += '<tr><td colspan="6" style="color:#888;">' + _('No results.') + '</td></tr>';
+		if (!results.length) html += '<tr><td colspan="5" style="color:#888;">' + _('No results.') + '</td></tr>';
 		html += '</tbody></table>';
 		byId('oxidns-upstream-body').innerHTML = html;
 		byId('oxidns-probe-status').textContent = _('Tested %s upstream(s).').format(results.length);
@@ -618,29 +678,49 @@ function runProbe() {
 	});
 }
 
-function onGroupChange() {
-	state.group = byId('oxidns-upstream-group').value;
-	if (state.qname) renderUpstreamsStatic();
-	else renderUpstreamsStatic();
-}
-
 return view.extend({
 	load: function() { return Promise.resolve({}); },
 
 	render: function() {
+		// One-time inline stylesheet for the polished card layout. Scoped to
+		// ids/classes unique to this view so other LuCI pages are unaffected.
+		var style = E('style', {}, [
+			'.oxidns-card{border:1px solid var(--border-color,#d4d7dc);border-radius:12px;'
+				+ 'background:var(--box-background-color,#fff);padding:16px 18px;'
+				+ 'margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,.05);}',
+			'.oxidns-card h3{margin:0 0 12px;font-size:15px;font-weight:600;}',
+			'.oxidns-route-badge{display:inline-block;margin-left:6px;padding:1px 8px;'
+				+ 'border-radius:10px;background:#e7f1ff;color:#1a5fb4;font-size:12px;}',
+			'.oxidns-fastest{display:inline-block;margin-left:4px;padding:0 6px;'
+				+ 'border-radius:8px;background:#c0392b;color:#fff;font-size:11px;}',
+			'.oxidns-card table.cbi-section-table{width:100%;}',
+			'.oxidns-card table.cbi-section-table td,.oxidns-card table.cbi-section-table th{'
+				+ 'padding:5px 4px;border-bottom:1px solid var(--border-color,#eee);}',
+			'.oxidns-card table.cbi-section-table tr:last-child td{border-bottom:0;}',
+			'.oxidns-card table.cbi-section-table th{font-size:12px;color:#888;font-weight:600;text-align:left;}'
+		].join('\n'));
+
+		var card = function(title, body, extraStyle) {
+			return E('div', { 'class': 'oxidns-card', 'style': extraStyle || '' }, [
+				E('h3', {}, title),
+				body
+			]);
+		};
+
 		return E('div', { 'class': 'cbi-map' }, [
+			style,
 			E('h2', {}, _('Cache Lookup')),
-			E('div', { 'class': 'cbi-map-descr' },
+			E('div', { 'class': 'cbi-map-descr', 'style': 'margin-bottom:16px;' },
 				_('Search the live OxiDNS cache and inspect answers, split routing, hosting info and upstream timing. Paste a URL to extract its hostname.')),
 
-			E('div', { 'class': 'cbi-section' }, [
-				E('div', { 'class': 'cbi-value-title' }, _('Domain')),
+			// Domain search card
+			card(_('Domain'), E('div', {}, [
 				E('div', { 'style': 'position:relative;max-width:42em;' }, [
 					E('input', {
 						'id': 'oxidns-cache-input',
 						'type': 'text',
 						'class': 'cbi-input-text',
-						'style': 'width:100%;',
+						'style': 'width:100%;box-sizing:border-box;border-radius:8px;',
 						'placeholder': _('Type a domain or paste a URL...'),
 						'autocomplete': 'off',
 						'input': onInput,
@@ -649,53 +729,46 @@ return view.extend({
 					E('div', {
 						'id': 'oxidns-cache-suggest',
 						'style': 'display:none;position:absolute;left:0;right:0;top:100%;z-index:20;background:#fff;'
-							+ 'border:1px solid #aaa;box-shadow:0 2px 6px rgba(0,0,0,.2);max-height:22em;overflow:auto;'
-					}, ''),
-					E('button', {
-						'class': 'btn cbi-button cbi-button-positive',
-						'style': 'margin-top:.5em;',
-						'click': function(ev) {
-							ev.preventDefault();
-							resolveName(extractHostname(byId('oxidns-cache-input').value));
-						}
-					}, _('Resolve'))
-				])
-			]),
+							+ 'border:1px solid #d4d7dc;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.12);max-height:22em;overflow:auto;'
+					}, '')
+				]),
+				E('button', {
+					'class': 'btn cbi-button cbi-button-positive',
+					'style': 'margin-top:.6em;border-radius:8px;',
+					'click': function(ev) {
+						ev.preventDefault();
+						resolveName(extractHostname(byId('oxidns-cache-input').value));
+					}
+				}, _('Resolve')),
+				E('span', { 'id': 'oxidns-probe-hint', 'style': 'color:#888;font-size:12px;margin-left:.75em;' },
+					_('Resolving also runs a bypass-cache route probe.'))
+			])),
 
-			E('div', { 'class': 'cbi-section' }, [
-				E('h3', {}, _('Answer & routing')),
-				E('div', { 'id': 'oxidns-detail-body' },
-					E('p', { 'style': 'color:#888;' }, _('Enter a domain to see cached answers and routing.')))
-			]),
+			// Answer & routing card
+			card(_('Answer & routing'), E('div', { 'id': 'oxidns-detail-body' },
+				E('p', { 'style': 'color:#888;' }, _('Enter a domain to see cached answers and routing.')))),
 
-			E('div', { 'class': 'cbi-section' }, [
-				E('h3', {}, _('Hosting info')),
-				E('div', { 'id': 'oxidns-hosting-body' }, '')
-			]),
+			// Hosting info card
+			card(_('Hosting info'), E('div', { 'id': 'oxidns-hosting-body' }, '')),
 
-			E('div', { 'class': 'cbi-section' }, [
-				E('h3', {}, _('Upstream timing')),
-				E('div', { 'style': 'display:flex;gap:.75em;align-items:center;flex-wrap:wrap;margin-bottom:.75em;' }, [
-					E('label', { 'for': 'oxidns-upstream-group' }, _('Group') + ': '),
-					E('select', {
-						'id': 'oxidns-upstream-group',
-						'class': 'cbi-input-select',
-						'change': onGroupChange
-					}, [
-						E('option', { 'value': 'cn' }, _('Domestic')),
-						E('option', { 'value': 'abroad' }, _('International'))
-					]),
+			// Upstream timing card
+			card(_('Upstream timing'), E('div', {}, [
+				E('div', { 'style': 'display:flex;gap:.75em;align-items:center;flex-wrap:wrap;margin-bottom:.6em;' }, [
+					E('span', { 'style': 'color:#666;font-size:13px;' }, _('Route group') + ': '),
+					E('span', { 'id': 'oxidns-trace-group', 'class': 'oxidns-route-badge',
+						'style': 'margin-left:0;' }, _('Auto (from probe)')),
 					E('button', {
 						'class': 'btn cbi-button cbi-button-action',
+						'style': 'border-radius:8px;',
 						'click': function(ev) { ev.preventDefault(); return runProbe(); }
-					}, _('Test all upstreams')),
+					}, _('Retest upstreams')),
 					E('span', { 'id': 'oxidns-probe-status', 'style': 'color:#888;font-size:12px;' }, '')
 				]),
-				E('p', { 'style': 'color:#888;font-size:12px;margin-top:0;' },
-					_('Static upstream list is shown first; timing is fetched asynchronously (1-3s) and bypasses cache without affecting health stats.')),
+				E('p', { 'style': 'color:#888;font-size:12px;margin:0 0 8px;' },
+					_('Upstreams follow the route detected by the bypass-cache probe; timing bypasses cache without affecting health stats.')),
 				E('div', { 'id': 'oxidns-upstream-body' },
-					E('p', { 'style': 'color:#888;' }, _('Resolve a domain to load upstreams.')))
-			])
+					E('p', { 'style': 'color:#888;' }, _('Resolve a domain to load upstream timing.')))
+			]))
 		]);
 	},
 

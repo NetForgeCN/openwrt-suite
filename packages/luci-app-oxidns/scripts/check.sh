@@ -80,8 +80,8 @@ grep -q 'config_get API_PASS main api_pass' root/etc/init.d/oxidns
 grep -q 'procd_set_param env OXIDNS_API_PASS=' root/etc/init.d/oxidns
 grep -q 'uci_get api_pass' root/usr/libexec/rpcd/luci.oxidns
 grep -q 'export OXIDNS_API_PASS' root/usr/libexec/rpcd/luci.oxidns
-# [cache lookup] rpcd must register all five new methods in both list and dispatch.
-for m in cache_suggest cache_detail upstreams probe_upstreams zone_info; do
+# [cache lookup] rpcd must register all diagnostic methods in list + dispatch.
+for m in cache_suggest cache_detail upstreams probe_upstreams zone_info trace_route; do
 	grep -q "\"$m\":" root/usr/libexec/rpcd/luci.oxidns
 	grep -q "^			$m)" root/usr/libexec/rpcd/luci.oxidns
 done
@@ -105,6 +105,21 @@ done
 # [cache lookup] The frontend must surface cache_ok=0 instead of silently
 # rendering an empty cache when the management API call failed.
 grep -q 'res.cache_ok === 0' htdocs/luci-static/resources/view/oxidns/cache.js
+# [cache lookup] trace_route (bypass-cache probe) contract:
+#  - ACL must grant it, else ubus rejects the call.
+#  - the handler must delete the cache entry, issue a real query, and read the
+#    recorder execution path, with a log fallback.
+#  - the frontend must read core's answer payload fields (payload_text/payload)
+#    so A/AAAA IPs actually render, and must auto-run the probe + drive group.
+grep -q '"trace_route"' root/usr/share/rpcd/acl.d/luci-app-oxidns.json
+awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
+	| grep -q 'entries/delete'
+awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
+	| grep -q 'recorder_main/records/'
+grep -q 'callTraceRoute' htdocs/luci-static/resources/view/oxidns/cache.js
+grep -q 'payload_text' htdocs/luci-static/resources/view/oxidns/cache.js
+grep -q 'answerValue' htdocs/luci-static/resources/view/oxidns/cache.js
+grep -q 'state.tracedGroup' htdocs/luci-static/resources/view/oxidns/cache.js
 sh -n scripts/build-luci-package.sh
 sh -n scripts/integration-check.sh
 sh -n scripts/service-check.sh
