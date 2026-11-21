@@ -23,7 +23,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-oxidns-plus
 PKG_VERSION:=0.3.0
-PKG_RELEASE:=3
+PKG_RELEASE:=4
 
 PKG_LICENSE:=GPL-3.0-or-later
 PKG_LICENSE_FILES:=LICENSE
@@ -125,6 +125,16 @@ endef
 # Build/Compile is supplied by rust-package.mk (Build/Compile/Cargo), which
 # runs: cargo install --path $(PKG_BUILD_DIR)/$(MAKE_PATH) --root $(PKG_INSTALL_DIR)
 # The resulting binary is at $(PKG_INSTALL_DIR)/bin/oxidns-prewarmer.
+#
+# Disable the generic Build/Install step. package.mk defines it as
+#   Build/Install=$(if $(PKG_INSTALL),$(call Build/Install/Default,))
+# and Build/Install/Default runs `make -C $(PKG_BUILD_DIR)/$(MAKE_PATH) install`.
+# Our MAKE_PATH (src/prewarmer-rs) is a pure Cargo project with no Makefile, so
+# that step would fail with "No rule to make target 'install'". cargo install
+# already places the binary into PKG_INSTALL_DIR during Build/Compile, and our
+# Package/.../install copies it into the package: no Build/Install is needed.
+# Define this BEFORE luci.mk, whose trailing BuildPackage eval captures it.
+Build/Install:=
 
 define Package/luci-app-oxidns-plus/install
 	$(INSTALL_DIR) $(1)/usr/libexec

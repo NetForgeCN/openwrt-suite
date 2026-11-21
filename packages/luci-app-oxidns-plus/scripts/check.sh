@@ -152,8 +152,13 @@ if '# call BuildPackage - OpenWrt buildroot signature' not in mk:
 # captures the Cargo Build/Compile rule.
 if mk.find('rust-package.mk') > mk.find('feeds/luci/luci.mk'):
     bad('rust-package.mk must be included before luci.mk')
+# Build/Install must be disabled: package.mk's default runs
+# `make -C $(MAKE_PATH) install`, which fails because the Cargo source has no
+# Makefile. cargo install already fills PKG_INSTALL_DIR during Build/Compile.
+if 'Build/Install:=' not in mk:
+    bad('Makefile missing "Build/Install:=" (default would run make in Cargo dir)')
 if not fail:
-    print('  OK   source-build Makefile (rust-package.mk, arch gate, cargo output, single registration)')
+    print('  OK   source-build Makefile (rust-package.mk, arch gate, cargo output, single registration, no default install)')
 
 # HARD RULE: must not modify OxiDNS main config anywhere.
 for rel in ['root/etc/init.d/oxidnsplus','root/usr/libexec/rpcd/luci.oxidnsplus',
