@@ -538,3 +538,163 @@ msgstr ""
 
 msgid "Rules"
 msgstr ""
+
+msgid "Address"
+msgstr ""
+
+msgid "Answer & routing"
+msgstr ""
+
+msgid "Answers"
+msgstr ""
+
+msgid "Authoritative NS"
+msgstr ""
+
+msgid "Bootstrap"
+msgstr ""
+
+msgid "CDN / hosting"
+msgstr ""
+
+msgid "CNAME chain"
+msgstr ""
+
+msgid "Cache Lookup"
+msgstr ""
+
+msgid "Cached domains (up to 15)"
+msgstr ""
+
+msgid "Cached entries"
+msgstr ""
+
+msgid "DNS provider"
+msgstr ""
+
+msgid "DNS zone"
+msgstr ""
+
+msgid "Default routing (no explicit split outlet recorded)"
+msgstr ""
+
+msgid "Domain"
+msgstr ""
+
+msgid "Domestic"
+msgstr ""
+
+msgid "Enter a domain first."
+msgstr ""
+
+msgid "Enter a domain to see cached answers and routing."
+msgstr ""
+
+msgid "Failed to query NS info."
+msgstr ""
+
+msgid "Failed to query OxiDNS API. Check that the service is running and api_pass is set."
+msgstr ""
+
+msgid "Failed to read upstream list."
+msgstr ""
+
+msgid "Group"
+msgstr ""
+
+msgid "Hosting info"
+msgstr ""
+
+msgid "International"
+msgstr ""
+
+msgid "Last access"
+msgstr ""
+
+msgid "Loading hosting info..."
+msgstr ""
+
+msgid "Name"
+msgstr ""
+
+msgid "No cache entry for this name yet. Run a query first or use probe below."
+msgstr ""
+
+msgid "No cached A/AAAA answer"
+msgstr ""
+
+msgid "No results."
+msgstr ""
+
+msgid "No upstreams found for this group."
+msgstr ""
+
+msgid "Not available"
+msgstr ""
+
+msgid "Not detected"
+msgstr ""
+
+msgid "Private / internal address"
+msgstr ""
+
+msgid "Probe failed."
+msgstr ""
+
+msgid "RCODE"
+msgstr ""
+
+msgid "Resolve"
+msgstr ""
+
+msgid "Resolve a domain to load upstreams."
+msgstr ""
+
+msgid "Resolving..."
+msgstr ""
+
+msgid "Route"
+msgstr ""
+
+msgid "Search the live OxiDNS cache and inspect answers, split routing, hosting info and upstream timing. Paste a URL to extract its hostname."
+msgstr ""
+
+msgid "Split reason"
+msgstr ""
+
+msgid "Static upstream list is shown first; timing is fetched asynchronously (1-3s) and bypasses cache without affecting health stats."
+msgstr ""
+
+msgid "TTL"
+msgstr ""
+
+msgid "Test all upstreams"
+msgstr ""
+
+msgid "Tested %s upstream(s)."
+msgstr ""
+
+msgid "Testing all upstreams (1-3s)..."
+msgstr ""
+
+msgid "Time"
+msgstr ""
+
+msgid "Type"
+msgstr ""
+
+msgid "Type a domain or paste a URL..."
+msgstr ""
+
+msgid "Upstream"
+msgstr ""
+
+msgid "Upstream timing"
+msgstr ""
+
+msgid "Verdict"
+msgstr ""
+
+msgid "fastest"
+msgstr ""
+

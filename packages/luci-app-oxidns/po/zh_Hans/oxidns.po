@@ -543,3 +543,163 @@ msgstr "工作副本"
 
 msgid "Rules"
 msgstr "规则"
+
+msgid "Address"
+msgstr "地址"
+
+msgid "Answer & routing"
+msgstr "应答与路由"
+
+msgid "Answers"
+msgstr "应答"
+
+msgid "Authoritative NS"
+msgstr "权威域名服务器"
+
+msgid "Bootstrap"
+msgstr "引导服务器"
+
+msgid "CDN / hosting"
+msgstr "CDN / 托管"
+
+msgid "CNAME chain"
+msgstr "CNAME 链"
+
+msgid "Cache Lookup"
+msgstr "缓存查找"
+
+msgid "Cached domains (up to 15)"
+msgstr "已缓存域名（最多 15 条）"
+
+msgid "Cached entries"
+msgstr "缓存条目数"
+
+msgid "DNS provider"
+msgstr "DNS 服务商"
+
+msgid "DNS zone"
+msgstr "DNS 区域"
+
+msgid "Default routing (no explicit split outlet recorded)"
+msgstr "默认路由（未记录明确的分流出口）"
+
+msgid "Domain"
+msgstr "域名"
+
+msgid "Domestic"
+msgstr "国内"
+
+msgid "Enter a domain first."
+msgstr "请先输入域名。"
+
+msgid "Enter a domain to see cached answers and routing."
+msgstr "输入域名以查看缓存应答与路由。"
+
+msgid "Failed to query NS info."
+msgstr "查询 NS 信息失败。"
+
+msgid "Failed to query OxiDNS API. Check that the service is running and api_pass is set."
+msgstr "查询 OxiDNS API 失败。请确认服务在运行且已设置 api_pass。"
+
+msgid "Failed to read upstream list."
+msgstr "读取上游列表失败。"
+
+msgid "Group"
+msgstr "分组"
+
+msgid "Hosting info"
+msgstr "托管信息"
+
+msgid "International"
+msgstr "国外"
+
+msgid "Last access"
+msgstr "最后访问时间"
+
+msgid "Loading hosting info..."
+msgstr "正在加载托管信息..."
+
+msgid "Name"
+msgstr "名称"
+
+msgid "No cache entry for this name yet. Run a query first or use probe below."
+msgstr "该域名暂无缓存记录，请先发起一次查询或使用下方探测。"
+
+msgid "No cached A/AAAA answer"
+msgstr "无缓存的 A/AAAA 应答"
+
+msgid "No results."
+msgstr "无结果。"
+
+msgid "No upstreams found for this group."
+msgstr "该分组未找到上游。"
+
+msgid "Not available"
+msgstr "不可用"
+
+msgid "Not detected"
+msgstr "未检测到"
+
+msgid "Private / internal address"
+msgstr "私有/内网地址"
+
+msgid "Probe failed."
+msgstr "探测失败。"
+
+msgid "RCODE"
+msgstr "响应码"
+
+msgid "Resolve"
+msgstr "解析"
+
+msgid "Resolve a domain to load upstreams."
+msgstr "解析域名以加载上游。"
+
+msgid "Resolving..."
+msgstr "正在解析..."
+
+msgid "Route"
+msgstr "路由"
+
+msgid "Search the live OxiDNS cache and inspect answers, split routing, hosting info and upstream timing. Paste a URL to extract its hostname."
+msgstr "搜索 OxiDNS 实时缓存，查看应答、分流路由、托管信息与上游测速。粘贴网址可自动提取主机名。"
+
+msgid "Split reason"
+msgstr "分流原因"
+
+msgid "Static upstream list is shown first; timing is fetched asynchronously (1-3s) and bypasses cache without affecting health stats."
+msgstr "先显示上游静态列表；测速结果异步获取（1-3 秒），绕过缓存且不影响健康统计。"
+
+msgid "TTL"
+msgstr "TTL"
+
+msgid "Test all upstreams"
+msgstr "测试所有上游"
+
+msgid "Tested %s upstream(s)."
+msgstr "已测试 %s 个上游。"
+
+msgid "Testing all upstreams (1-3s)..."
+msgstr "正在测试所有上游（1-3 秒）..."
+
+msgid "Time"
+msgstr "耗时"
+
+msgid "Type"
+msgstr "类型"
+
+msgid "Type a domain or paste a URL..."
+msgstr "输入域名或粘贴网址..."
+
+msgid "Upstream"
+msgstr "上游"
+
+msgid "Upstream timing"
+msgstr "上游测速"
+
+msgid "Verdict"
+msgstr "结论"
+
+msgid "fastest"
+msgstr "最快"
+

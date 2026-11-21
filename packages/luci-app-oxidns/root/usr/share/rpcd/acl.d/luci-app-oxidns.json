@@ -11,7 +11,12 @@
 					"settings_read",
 					"logs_recent",
 					"rules_status",
-					"rules_check"
+					"rules_check",
+					"cache_suggest",
+					"cache_detail",
+					"upstreams",
+					"probe_upstreams",
+					"zone_info"
 				]
 			}
 		},
