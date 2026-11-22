@@ -545,6 +545,14 @@ function maybeFinaliseRoute() {
 	if (pathText) detail.push(escapeHtml(pathText));
 	var geoNote = describeGeo(state.answerIPs);
 	if (geoNote) detail.push(escapeHtml(geoNote));
+	// Only when the probe failed to name the outlet: say which files it looked
+	// at, so a missing split reason is diagnosable instead of silent.
+	if (!pathText && state.traceInfo) {
+		var cand = state.traceInfo.log_candidates || '';
+		detail.push('<span style="color:#888;">'
+			+ escapeHtml(_('Probe found no split line in %s').format(cand || '-'))
+			+ '</span>');
+	}
 	var body = detail.length ? detail.join(' · ')
 		: escapeHtml(_('Default routing (no explicit split outlet recorded)'));
 	if (reason) reason.innerHTML = body + (grpLabel

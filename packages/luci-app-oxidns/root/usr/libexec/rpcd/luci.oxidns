@@ -850,6 +850,92 @@ classify_log() {
 	TR_PATH="$TR_OUTLET"
 }
 
+# Print the candidate OxiDNS log files, most trustworthy first, into $1.
+#
+# Discovery must not depend on guessing the config: with log.rotation=daily,
+# tracing-appender writes "<file>.<YYYY-MM-DD>" and never the bare "<file>",
+# so a config-only guess misses every rotated file. The running process's own
+# file descriptors are the ground truth — whatever path and rotation scheme is
+# in use, the active log file is open on one of them.
+#
+#   1) /proc/<pid>/fd of the oxidns process   (active file, exact path)
+#   2) log.file from the YAML config + rotated siblings <file>.*
+#   3) a shallow scan of the usual dirs for *oxidns*log* / *.log.*
+log_candidate_files() {
+	LC_OUT="$1"
+	LC_ACT="$LC_OUT.act"
+	LC_REST="$LC_OUT.rest"
+	: > "$LC_ACT"
+	: > "$LC_REST"
+
+	# --- 1) descriptors held by the running oxidns process -----------------
+	LC_PIDS="$(pidof oxidns 2>/dev/null || true)"
+	if [ -z "$LC_PIDS" ]; then
+		# No pidof, or the binary name differs: match on /proc/<pid>/cmdline.
+		# Kept un-nested on purpose — a command substitution inside a command
+		# substitution containing a case pattern trips some shells.
+		for P in /proc/[0-9]*; do
+			[ -r "$P/cmdline" ] || continue
+			LC_CMD="$(tr '\0' ' ' < "$P/cmdline" 2>/dev/null || true)"
+			case "$LC_CMD" in
+				*oxidns*) LC_PIDS="$LC_PIDS ${P##*/}" ;;
+			esac
+		done
+	fi
+	for P in $LC_PIDS; do
+		for FD in /proc/"$P"/fd/*; do
+			LC_T="$(readlink "$FD" 2>/dev/null || true)"
+			case "$LC_T" in
+				/*.log|/*.log.*|/*log.txt) [ -f "$LC_T" ] && printf '%s\n' "$LC_T" >> "$LC_ACT" ;;
+			esac
+		done
+	done
+
+	# --- 2) configured log.file and its rotated siblings -------------------
+	LC_CFG="$(config_log_file 2>/dev/null || true)"
+	if [ -n "$LC_CFG" ]; then
+		[ -f "$LC_CFG" ] && printf '%s\n' "$LC_CFG" >> "$LC_REST"
+		for LC_F in "$LC_CFG".*; do
+			[ -f "$LC_F" ] && printf '%s\n' "$LC_F" >> "$LC_REST"
+		done
+	fi
+
+	# --- 3) shallow scan (covers an unexpected directory or name) ----------
+	for LC_D in "$TMP_ROOT" /var/log /var/lib/oxidns /etc/oxidns "${WORKING_DIR:-}"; do
+		[ -d "$LC_D" ] || continue
+		for LC_F in "$LC_D"/*oxidns*log* "$LC_D"/*oxidns*.log.*; do
+			[ -f "$LC_F" ] && printf '%s\n' "$LC_F" >> "$LC_REST"
+		done
+	done
+	for LC_F in /tmp/oxidns.log /var/log/oxidns.log /var/lib/oxidns/oxidns.log; do
+		[ -f "$LC_F" ] && printf '%s\n' "$LC_F" >> "$LC_REST"
+	done
+
+	# Active fd files first; the rest newest-first. Rotated names end in a
+	# date, so a reverse sort puts today's file ahead of yesterday's.
+	cat "$LC_ACT" >> "$LC_OUT"
+	sort -r "$LC_REST" >> "$LC_OUT" 2>/dev/null || cat "$LC_REST" >> "$LC_OUT"
+	awk '!seen[$0]++' "$LC_OUT" > "$LC_OUT.u" 2>/dev/null && mv "$LC_OUT.u" "$LC_OUT"
+	rm -f "$LC_ACT" "$LC_REST"
+}
+
+# Newest query_summary line carrying "qname=<name>" in $1; empty if none.
+scan_log_for_qname() {
+	SL_FILE="$1"; SL_Q="$2"
+	SL_OUT=""
+	for SL_QN in "$SL_Q" "$SL_Q."; do
+		SL_OUT="$(grep -F "qname=$SL_QN" "$SL_FILE" 2>/dev/null | grep -v 'log_cache_' \
+			| grep -F 'query_summary' | tail -n 1 || true)"
+		[ -n "$SL_OUT" ] && break
+		# Fall back to any line for this name in case the build tags the
+		# summary differently.
+		SL_OUT="$(grep -F "qname=$SL_QN" "$SL_FILE" 2>/dev/null | grep -v 'log_cache_' \
+			| tail -n 1 || true)"
+		[ -n "$SL_OUT" ] && break
+	done
+	printf '%s' "$SL_OUT"
+}
+
 # trace_route {qname} -> bypass-cache path diagnostic.
 emit_trace_route() {
 	load_settings
@@ -891,62 +977,55 @@ emit_trace_route() {
 		api_http_get "${BASE}api/plugins/recorder_main/records/${REC_ID}" "$TDIR/detail.json" && STEP_OK=1
 	fi
 
+	SOURCE="none"
+	STEPS_PATH=""; STEPS_GROUP=""
 	if [ "$STEP_OK" = 1 ]; then
 		classify_steps "$TDIR/detail.json"
-		SOURCE="recorder"
-	else
-		# Log fallback. On OpenWrt the query_summary line normally reaches
-		# the syslog ring buffer (logread), NOT one of the files below — with
-		# log.file set to /tmp/oxidns.log the stdout copy still goes to syslog,
-		# and on minimal builds there is no on-disk file at all. Scanning only
-		# those files made every lookup report "unknown". Take a logread
-		# snapshot first, then scan it together with the file paths.
+		STEPS_PATH="$TR_PATH"; STEPS_GROUP="$TR_GROUP"
+		[ -n "$TR_OUTLET" ] && SOURCE="recorder"
+	fi
+
+	# Log fallback — runs whenever the recorder did not give a usable outlet,
+	# including the case where it returned steps but no log_* tag (a cache-only
+	# record left over from a failed bypass). The query_summary line is the
+	# only source that names the outlet directly, so it is worth the retries.
+	if [ -z "$TR_OUTLET" ]; then
 		LOG_LINE=""
 		LOG_SRC=""
+		LOG_TRIED=0
+		LOG_LIST=""
 		LREAD="$TDIR/logread.txt"
-		CFGLOG="$(config_log_file 2>/dev/null || true)"
 		# tracing-appender flushes asynchronously, so the probe's own line may
 		# land slightly after the first read. Retry a few times before giving up.
 		for TRY in 1 2 3 4; do
+			CANDS="$TDIR/cands.txt"
+			log_candidate_files "$CANDS"
+			# syslog ring buffer last: on builds without an on-disk log this is
+			# the only place query_summary shows up.
 			: > "$LREAD"
 			if command -v logread >/dev/null 2>&1; then
-				# Filter locally: some busybox builds do not support -e, and the
-				# tracing lines always carry "oxidns" in the module path.
-				logread 2>/dev/null | grep -i 'oxidns' | tail -n 3000 > "$LREAD" || true
+				logread 2>/dev/null | grep -i 'oxidns' | tail -n 3000 >> "$LREAD" || true
+				[ -s "$LREAD" ] && printf '%s\n' "$LREAD" >> "$CANDS"
 			fi
-			# The configured log.file is authoritative: OxiDNS writes
-			# query_summary there in tracing format and may not mirror it to
-			# syslog at all. Daily rotation (tracing-appender) renames it to
-			# <file>.<YYYY-MM-DD>, so include today's rotated name and any
-			# remaining rotated files before falling back to logread/defaults.
-			CANDS="$TDIR/cands.txt"
-			: > "$CANDS"
-			if [ -n "$CFGLOG" ]; then
-				TODAY="$(date +%Y-%m-%d)"
-				[ -r "$CFGLOG" ] && echo "$CFGLOG" >> "$CANDS"
-				[ -r "$CFGLOG.$TODAY" ] && echo "$CFGLOG.$TODAY" >> "$CANDS"
-				for RF in "$CFGLOG".*; do
-					[ -f "$RF" ] && echo "$RF" >> "$CANDS"
-				done
-			fi
-			for DF in "$LREAD" /tmp/oxidns.log /var/log/oxidns.log /var/lib/oxidns/oxidns.log; do
-				[ -n "$DF" ] && [ -r "$DF" ] && echo "$DF" >> "$CANDS"
-			done
-			# Newest rotated file first (names end in a date, so reverse sort).
-			sort -r "$CANDS" -o "$CANDS" 2>/dev/null || true
+			LOG_TRIED=0
+			LOG_LIST=""
 			while IFS= read -r LF; do
 				[ -n "$LF" ] && [ -r "$LF" ] || continue
-				for QN in "$Q" "$Q."; do
-					LOG_LINE="$(grep -F "qname=$QN" "$LF" 2>/dev/null | grep -v 'log_cache_' | tail -n 1 || true)"
-					[ -n "$LOG_LINE" ] && { LOG_SRC="$LF"; break; }
-				done
-				[ -n "$LOG_LINE" ] && break
+				LOG_TRIED=$((LOG_TRIED + 1))
+				[ "$LOG_TRIED" -le 4 ] && LOG_LIST="${LOG_LIST}${LOG_LIST:+|}${LF##*/}"
+				LOG_LINE="$(scan_log_for_qname "$LF" "$Q")"
+				[ -n "$LOG_LINE" ] && { LOG_SRC="$LF"; break; }
 			done < "$CANDS"
 			[ -n "$LOG_LINE" ] && break
 			[ "$TRY" -lt 4 ] && sleep 1
 		done
-		classify_log "$LOG_LINE"
-		SOURCE="log"
+		if [ -n "$LOG_LINE" ]; then
+			classify_log "$LOG_LINE"
+			SOURCE="log"
+		fi
+		# A recorder path with no outlet tag is still better than nothing.
+		[ -n "$TR_PATH" ] || TR_PATH="$STEPS_PATH"
+		[ -n "$TR_GROUP" ] || TR_GROUP="$STEPS_GROUP"
 	fi
 
 	printf '{"ok":true'
@@ -957,6 +1036,8 @@ emit_trace_route() {
 	printf ',"source":'; json_string "$SOURCE"
 	printf ',"log_source":'; json_string "${LOG_SRC:-}"
 	printf ',"log_found":%s' "$([ -n "${LOG_LINE:-}" ] && echo true || echo false)"
+	printf ',"log_tried":%s' "${LOG_TRIED:-0}"
+	printf ',"log_candidates":'; json_string "${LOG_LIST:-}"
 	printf ',"delete_ok":%s,"query_ok":%s,"recorder_ok":%s,"steps_ok":%s' "$DEL_OK" "$QUERY_OK" "$REC_OK" "$STEP_OK"
 	printf '}\n'
 	rm -rf "$TDIR"

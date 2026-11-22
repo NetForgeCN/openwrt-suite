@@ -116,19 +116,38 @@ awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rp
 	| grep -q 'entries/delete'
 awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
 	| grep -q 'recorder_main/records/'
-# [cache lookup r9] The log fallback must (a) read the configured log.file
-# first (OxiDNS writes tracing-format lines there and may not mirror to
-# syslog), and (b) scan a logread snapshot filtered locally instead of relying
-# on busybox logread -e, which some builds do not support. Otherwise every
-# split reason reads "unknown" on real firmware.
-awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
+# [cache lookup r10] The split reason is read from the query_summary line, so
+# candidate-log discovery must not depend on guessing the config. With
+# log.rotation=daily, tracing-appender writes "<file>.<YYYY-MM-DD>" and never
+# the bare "<file>", so a config-only guess finds nothing. Discovery therefore
+# starts from the oxidns process's own file descriptors and also globs the
+# rotated names.
+awk '/^log_candidate_files\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
+	| grep -q '/proc/'
+awk '/^log_candidate_files\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
+	| grep -q 'pidof oxidns'
+awk '/^log_candidate_files\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
+	| grep -q '\*oxidns\*log\*'
+awk '/^log_candidate_files\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
 	| grep -q 'config_log_file'
+awk '/^scan_log_for_qname\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
+	| grep -q 'qname=\$SL_QN'
 awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
-	| grep -q 'for RF in "\$CFGLOG"'
+	| grep -q 'log_candidate_files "\$CANDS"'
 awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
-	| grep -q 'TODAY="\$(date +%Y-%m-%d)"'
+	| grep -q 'scan_log_for_qname "\$LF" "\$Q"'
 awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
 	| grep -q "grep -i 'oxidns'"
+# The log fallback must also run when the recorder returned steps but no
+# log_* outlet (a cache-only record from a failed bypass), not only when the
+# recorder was unreachable.
+awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
+	| grep -q 'if \[ -z "\$TR_OUTLET" \]; then'
+# busybox logread has no portable -e; the snapshot is filtered with grep.
+if awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
+	| grep -q 'logread -l'; then
+	echo "logread -l is not portable; filter the snapshot locally" >&2; exit 1
+fi
 # A cache-hit outlet must never be reported as the split path: the probe deletes
 # the entry and re-queries, so "cache hit" would be a lie.
 if awk '/^classify_steps\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \

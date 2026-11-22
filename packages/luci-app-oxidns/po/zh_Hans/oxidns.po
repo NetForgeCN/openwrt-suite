@@ -148,6 +148,9 @@ msgstr "DNS 服务商"
 msgid "Default routing (no explicit split outlet recorded)"
 msgstr "默认路由（未记录明确的分流出口）"
 
+msgid "Probe found no split line in %s"
+msgstr "探测未在 %s 中找到分流日志"
+
 msgid "Delete configuration file"
 msgstr "删除配置文件"
 

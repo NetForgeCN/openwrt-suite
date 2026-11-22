@@ -146,6 +146,9 @@ msgstr ""
 msgid "Default routing (no explicit split outlet recorded)"
 msgstr ""
 
+msgid "Probe found no split line in %s"
+msgstr ""
+
 msgid "Delete configuration file"
 msgstr ""
 
