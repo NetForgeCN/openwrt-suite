@@ -557,10 +557,10 @@ msgstr ""
 msgid "Store the core binary and webui under /etc/oxidns/core, which is kept during firmware upgrades. Requires enough free space on the overlay partition."
 msgstr ""
 
-msgid "Original TTL"
+msgid "Record TTL"
 msgstr ""
 
-msgid "Remaining TTL"
+msgid "Cache remaining"
 msgstr ""
 
 msgid "Cache state"

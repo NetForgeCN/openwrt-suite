@@ -116,13 +116,29 @@ awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rp
 	| grep -q 'entries/delete'
 awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
 	| grep -q 'recorder_main/records/'
-# [cache lookup r8] The log fallback must read the syslog ring buffer via
-# logread before the on-disk files: OxiDNS query_summary normally reaches
-# logread, and scanning only files made every split reason read "unknown".
+# [cache lookup r9] The log fallback must (a) read the configured log.file
+# first (OxiDNS writes tracing-format lines there and may not mirror to
+# syslog), and (b) scan a logread snapshot filtered locally instead of relying
+# on busybox logread -e, which some builds do not support. Otherwise every
+# split reason reads "unknown" on real firmware.
 awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
-	| grep -q 'logread -l 1000 -e oxidns'
+	| grep -q 'config_log_file'
 awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
-	| grep -q '"$LREAD" /tmp/oxidns.log'
+	| grep -q 'for RF in "\$CFGLOG"'
+awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
+	| grep -q 'TODAY="\$(date +%Y-%m-%d)"'
+awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
+	| grep -q "grep -i 'oxidns'"
+# A cache-hit outlet must never be reported as the split path: the probe deletes
+# the entry and re-queries, so "cache hit" would be a lie.
+if awk '/^classify_steps\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
+	| grep -q '\*log_cache_.*TR_OUTLET'; then
+	echo "classify_steps must not map log_cache_* to a split outlet" >&2; exit 1
+fi
+if awk '/^classify_log\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
+	| grep -q 'TR_OUTLET="国内缓存命中"'; then
+	echo "classify_log must not report a cache hit as the split path" >&2; exit 1
+fi
 grep -q 'callTraceRoute' htdocs/luci-static/resources/view/oxidns/cache.js
 grep -q 'payload_text' htdocs/luci-static/resources/view/oxidns/cache.js
 grep -q 'answerValue' htdocs/luci-static/resources/view/oxidns/cache.js

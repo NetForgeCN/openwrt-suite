@@ -734,6 +734,24 @@ config_udp_port() {
 	printf '%s' "$P"
 }
 
+# Read the query-log file path from config (log.file). OxiDNS writes the
+# query_summary lines here in tracing format (ISO timestamp + T+ uptime), which
+# is not the same shape as the syslog copy. Returns empty when unset, so the
+# caller can fall back to logread and the usual default paths.
+config_log_file() {
+	[ -r "$CONFIG_PATH" ] || return 0
+	awk '
+		/^log:[[:space:]]*$/ { in_log = 1; next }
+		in_log && /^[^[:space:]#]/ { in_log = 0 }
+		in_log && /^[[:space:]]+file:[[:space:]]*/ {
+			sub(/^[[:space:]]+file:[[:space:]]*/, "", $0);
+			gsub(/["'"'"']/, "", $0);
+			sub(/[[:space:]]+#.*$/, "", $0);
+			print; exit
+		}
+	' "$CONFIG_PATH"
+}
+
 # POST a JSON body to the OxiDNS management API; raw response body -> $3.
 api_http_post() {
 	URL="$1"; BODY="$2"; OUT="$3"
@@ -798,9 +816,9 @@ classify_steps() {
 		*log_cn_list_req*) TR_OUTLET="国内请求 · 域名列表命中" ;;
 		*log_abroad_req*) TR_OUTLET="国外请求" ;;
 		*log_internal*) TR_OUTLET="内网组" ;;
-		*log_cache_cn*) TR_OUTLET="国内缓存命中" ;;
-		*log_cache_abroad*) TR_OUTLET="国外缓存命中" ;;
-		*log_cache_internal*) TR_OUTLET="内网缓存命中" ;;
+		# No log_cache_* cases: the probe deletes the entry and re-queries, so a
+		# cache hit here means the bypass failed. Reporting "cache hit" as the
+		# split path would be misleading, so it falls through to the default.
 		*log_blocked*) TR_OUTLET="安全拦截" ;;
 	esac
 	[ -n "$TR_PATH" ] || TR_PATH="默认路由（未匹配到明确分流序列）"
@@ -819,12 +837,15 @@ classify_log() {
 		*log_cn_geo_req*|*geosite*) TR_OUTLET="国内请求 · geosite 命中"; TR_GROUP="cn" ;;
 		*log_cn_list_req*|*域名列表命中*) TR_OUTLET="国内请求 · 域名列表命中"; TR_GROUP="cn" ;;
 		*log_abroad_req*|*国外请求*) TR_OUTLET="国外请求"; TR_GROUP="abroad" ;;
-		*log_cache_cn*|*国内缓存*) TR_OUTLET="国内缓存命中"; TR_GROUP="cn" ;;
-		*log_cache_abroad*|*国外缓存*) TR_OUTLET="国外缓存命中"; TR_GROUP="abroad" ;;
+		# log_cache_* lines are filtered out before this function runs (the probe
+		# always bypasses the cache), so no cache cases are needed here.
 		*log_internal*|*内网组*) TR_OUTLET="内网组"; TR_GROUP="internal" ;;
 		*国内组*) TR_OUTLET="国内组"; TR_GROUP="cn" ;;
 		*国外组*) TR_OUTLET="国外组"; TR_GROUP="abroad" ;;
-		*) TR_OUTLET="未知（日志中未找到该域名的分流记录）" ;;
+		# No "unknown" string on purpose: an unreadable log is a diagnostics
+		# gap, not a routing fact. Leaving it empty lets the frontend show only
+		# the geo-derived origin + badge instead of a misleading "unknown".
+		*) TR_OUTLET="" ;;
 	esac
 	TR_PATH="$TR_OUTLET"
 }
@@ -881,18 +902,48 @@ emit_trace_route() {
 		# those files made every lookup report "unknown". Take a logread
 		# snapshot first, then scan it together with the file paths.
 		LOG_LINE=""
+		LOG_SRC=""
 		LREAD="$TDIR/logread.txt"
-		: > "$LREAD"
-		if command -v logread >/dev/null 2>&1; then
-			logread -l 1000 -e oxidns 2>/dev/null > "$LREAD" || true
-		fi
-		for LF in "$LREAD" /tmp/oxidns.log /var/log/oxidns.log /var/lib/oxidns/oxidns.log; do
-			[ -r "$LF" ] || continue
-			for QN in "$Q" "$Q."; do
-				LOG_LINE="$(grep -F "qname=$QN" "$LF" 2>/dev/null | grep -v 'log_cache_' | tail -n 1 || true)"
-				[ -n "$LOG_LINE" ] && break
+		CFGLOG="$(config_log_file 2>/dev/null || true)"
+		# tracing-appender flushes asynchronously, so the probe's own line may
+		# land slightly after the first read. Retry a few times before giving up.
+		for TRY in 1 2 3 4; do
+			: > "$LREAD"
+			if command -v logread >/dev/null 2>&1; then
+				# Filter locally: some busybox builds do not support -e, and the
+				# tracing lines always carry "oxidns" in the module path.
+				logread 2>/dev/null | grep -i 'oxidns' | tail -n 3000 > "$LREAD" || true
+			fi
+			# The configured log.file is authoritative: OxiDNS writes
+			# query_summary there in tracing format and may not mirror it to
+			# syslog at all. Daily rotation (tracing-appender) renames it to
+			# <file>.<YYYY-MM-DD>, so include today's rotated name and any
+			# remaining rotated files before falling back to logread/defaults.
+			CANDS="$TDIR/cands.txt"
+			: > "$CANDS"
+			if [ -n "$CFGLOG" ]; then
+				TODAY="$(date +%Y-%m-%d)"
+				[ -r "$CFGLOG" ] && echo "$CFGLOG" >> "$CANDS"
+				[ -r "$CFGLOG.$TODAY" ] && echo "$CFGLOG.$TODAY" >> "$CANDS"
+				for RF in "$CFGLOG".*; do
+					[ -f "$RF" ] && echo "$RF" >> "$CANDS"
+				done
+			fi
+			for DF in "$LREAD" /tmp/oxidns.log /var/log/oxidns.log /var/lib/oxidns/oxidns.log; do
+				[ -n "$DF" ] && [ -r "$DF" ] && echo "$DF" >> "$CANDS"
 			done
+			# Newest rotated file first (names end in a date, so reverse sort).
+			sort -r "$CANDS" -o "$CANDS" 2>/dev/null || true
+			while IFS= read -r LF; do
+				[ -n "$LF" ] && [ -r "$LF" ] || continue
+				for QN in "$Q" "$Q."; do
+					LOG_LINE="$(grep -F "qname=$QN" "$LF" 2>/dev/null | grep -v 'log_cache_' | tail -n 1 || true)"
+					[ -n "$LOG_LINE" ] && { LOG_SRC="$LF"; break; }
+				done
+				[ -n "$LOG_LINE" ] && break
+			done < "$CANDS"
 			[ -n "$LOG_LINE" ] && break
+			[ "$TRY" -lt 4 ] && sleep 1
 		done
 		classify_log "$LOG_LINE"
 		SOURCE="log"
@@ -904,6 +955,8 @@ emit_trace_route() {
 	printf ',"path":'; json_string "$TR_PATH"
 	printf ',"outlet":'; json_string "$TR_OUTLET"
 	printf ',"source":'; json_string "$SOURCE"
+	printf ',"log_source":'; json_string "${LOG_SRC:-}"
+	printf ',"log_found":%s' "$([ -n "${LOG_LINE:-}" ] && echo true || echo false)"
 	printf ',"delete_ok":%s,"query_ok":%s,"recorder_ok":%s,"steps_ok":%s' "$DEL_OK" "$QUERY_OK" "$REC_OK" "$STEP_OK"
 	printf '}\n'
 	rm -rf "$TDIR"

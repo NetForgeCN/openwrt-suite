@@ -262,8 +262,13 @@ function startTtlCountdown(info) {
 		else { remEl.textContent = '-'; return; }
 		if (left < 0) left = 0;
 		remEl.textContent = left + ' s';
-		var stEl = byId('oxidns-ttl-state');
-		if (stEl) stEl.textContent = left > 0 ? _('Fresh') : _('Expired / stale');
+		// Only flag full expiry here. Fresh vs stale comes from the API's
+		// fresh_until window, which remaining_ttl does NOT represent (it
+		// includes the lazy stale retention), so do not overwrite it.
+		if (left === 0) {
+			var stEl = byId('oxidns-ttl-state');
+			if (stEl) stEl.textContent = _('Expired / stale');
+		}
 	}
 	tick();
 	ttlTimer = window.setInterval(tick, 1000);
@@ -665,15 +670,15 @@ function renderDetail(qname, entries, recs) {
 		}
 		var stateTxt = info.fresh === true || info.fresh === 1 ? _('Fresh')
 			: (info.stale === true || info.stale === 1 ? _('Stale') : '-');
-		html += kvRow(_('Original TTL'), '<span id="oxidns-ttl-original">'
+		html += kvRow(_('Record TTL'), '<span id="oxidns-ttl-original">'
 			+ (info.orig !== undefined ? escapeHtml(String(info.orig)) + ' s' : '-') + '</span>');
-		html += kvRow(_('Remaining TTL'), '<span id="oxidns-ttl-remaining" style="color:#c00;font-weight:600;">'
+		html += kvRow(_('Cache remaining'), '<span id="oxidns-ttl-remaining" style="color:#c00;font-weight:600;">'
 			+ (info.rem !== undefined ? escapeHtml(String(info.rem)) + ' s' : '-') + '</span>');
 		html += kvRow(_('Cache state'), '<span id="oxidns-ttl-state">' + stateTxt + '</span>');
 		html += kvRow(_('Expires at'), '<span id="oxidns-ttl-expires">' + escapeHtml(expTxt) + '</span>');
 	} else {
-		html += kvRow(_('Original TTL'), '-');
-		html += kvRow(_('Remaining TTL'), '-');
+		html += kvRow(_('Record TTL'), '-');
+		html += kvRow(_('Cache remaining'), '-');
 		html += kvRow(_('Cache state'), '-');
 		html += kvRow(_('Expires at'), '-');
 	}
