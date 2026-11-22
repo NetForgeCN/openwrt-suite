@@ -874,13 +874,19 @@ emit_trace_route() {
 		classify_steps "$TDIR/detail.json"
 		SOURCE="recorder"
 	else
-		# Log fallback. query_summary writes qname=... followed by either a
-		# space or end-of-line, and the name may carry a trailing dot. Match
-		# on the bare "qname=<name>" token and try both forms; also grep the
-		# newest line so a bypass-cache (non-cache-hit) query wins over an
-		# older "log_cache_*" hit for the same name.
+		# Log fallback. On OpenWrt the query_summary line normally reaches
+		# the syslog ring buffer (logread), NOT one of the files below — with
+		# log.file set to /tmp/oxidns.log the stdout copy still goes to syslog,
+		# and on minimal builds there is no on-disk file at all. Scanning only
+		# those files made every lookup report "unknown". Take a logread
+		# snapshot first, then scan it together with the file paths.
 		LOG_LINE=""
-		for LF in /tmp/oxidns.log /var/log/oxidns.log /var/lib/oxidns/oxidns.log; do
+		LREAD="$TDIR/logread.txt"
+		: > "$LREAD"
+		if command -v logread >/dev/null 2>&1; then
+			logread -l 1000 -e oxidns 2>/dev/null > "$LREAD" || true
+		fi
+		for LF in "$LREAD" /tmp/oxidns.log /var/log/oxidns.log /var/lib/oxidns/oxidns.log; do
 			[ -r "$LF" ] || continue
 			for QN in "$Q" "$Q."; do
 				LOG_LINE="$(grep -F "qname=$QN" "$LF" 2>/dev/null | grep -v 'log_cache_' | tail -n 1 || true)"

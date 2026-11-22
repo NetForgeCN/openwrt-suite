@@ -219,8 +219,75 @@ var state = {
 
 var suggestTimer = null;
 var currentDetail = null;
+var ttlTimer = null;        // 1s interval driving the remaining-TTL countdown
+var currentTtl = null;      // TTL fields of the currently displayed cache entry
 
 function byId(id) { return document.getElementById(id); }
+
+/* Collect the TTL fields exposed by GET cache_main/entries. OxiDNS reports
+ * ttl (original), remaining_ttl (decrementing truth), expire_at_unix_ms and
+ * fresh/stale. Older cores may only have ttl/remaining_ttl, so every field is
+ * optional and the countdown falls back to local time when no absolute
+ * expiry is present. */
+function collectTtlInfo(entry) {
+	var e = entry || {};
+	return {
+		orig: (e.ttl !== undefined ? e.ttl : undefined),
+		rem: (e.remaining_ttl !== undefined ? e.remaining_ttl : undefined),
+		expMs: e.expire_at_unix_ms || e.expires_at || e.expire_at_ms || undefined,
+		fresh: e.fresh,
+		stale: e.stale
+	};
+}
+
+/* Tick the remaining-TTL cell once per second. Uses the absolute expiry from
+ * the API when available (survives tab inactivity); otherwise decrements the
+ * last known remaining_ttl from page-load time. Note: pressing "resolve"
+ * deletes and re-inserts the cache entry, which resets remaining_ttl. */
+function startTtlCountdown(info) {
+	if (ttlTimer) { window.clearInterval(ttlTimer); ttlTimer = null; }
+	currentTtl = info || null;
+	var remEl = byId('oxidns-ttl-remaining');
+	if (!remEl || !currentTtl) return;
+	var expMs = Number(currentTtl.expMs);
+	// unix seconds vs milliseconds: a ms timestamp is > 1e11 in 2026
+	if (expMs > 0 && expMs < 1e11) expMs *= 1000;
+	var hasExp = expMs > 0 && !isNaN(expMs);
+	var base = (typeof currentTtl.rem === 'number') ? currentTtl.rem : null;
+	var loadedAt = Date.now();
+	function tick() {
+		var left;
+		if (hasExp) left = Math.ceil((expMs - Date.now()) / 1000);
+		else if (base !== null) left = base - Math.floor((Date.now() - loadedAt) / 1000);
+		else { remEl.textContent = '-'; return; }
+		if (left < 0) left = 0;
+		remEl.textContent = left + ' s';
+		var stEl = byId('oxidns-ttl-state');
+		if (stEl) stEl.textContent = left > 0 ? _('Fresh') : _('Expired / stale');
+	}
+	tick();
+	ttlTimer = window.setInterval(tick, 1000);
+}
+
+/* After the bypass-cache probe rewrites the cache entry, refresh just the TTL
+ * cells so they show the value of the entry that is actually cached now. */
+function refreshTtlAfterTrace(qname) {
+	return callCacheDetail(qname).then(function(res) {
+		if (!res || res.ok === false || res.cache_ok === 0) return;
+		var cache = parseJsonField(res && res.cache) || {};
+		var entry = pickEntry(cache.entries || [], qname);
+		if (!entry) return;
+		var info = collectTtlInfo(entry);
+		var oe = byId('oxidns-ttl-original');
+		if (oe) oe.textContent = (info.orig !== undefined ? info.orig + ' s' : '-');
+		var ee = byId('oxidns-ttl-expires');
+		if (ee && info.expMs) {
+			try { ee.textContent = new Date(Number(info.expMs) > 1e11 ? Number(info.expMs) : Number(info.expMs) * 1000).toLocaleString(); }
+			catch (x) { ee.textContent = '-'; }
+		}
+		startTtlCountdown(info);
+	}).catch(function() { /* best effort; keep the first render */ });
+}
 
 function tableLookup(name, table) {
 	if (!name) return null;
@@ -394,6 +461,7 @@ function resolveName(qname) {
 	byId('oxidns-detail-body').innerHTML = '<p style="color:#888;">' + _('Resolving...') + '</p>';
 	byId('oxidns-upstream-body').innerHTML = '';
 	currentDetail = null;
+	if (ttlTimer) { window.clearInterval(ttlTimer); ttlTimer = null; }
 
 	return callCacheDetail(qname).then(function(res) {
 		// rpcd reports per-API failures via cache_ok/records_ok. When the
@@ -421,6 +489,10 @@ function resolveName(qname) {
 		// Every resolve also performs a bypass-cache route probe so the
 		// "split reason" and upstream group reflect the real route right now.
 		return runTrace(qname);
+	}).then(function() {
+		// The probe deleted + re-inserted the entry, so re-read its TTL and
+		// restart the countdown against the entry that is cached now.
+		return refreshTtlAfterTrace(qname);
 	});
 }
 
@@ -584,15 +656,34 @@ function renderDetail(qname, entries, recs) {
 			+ escapeHtml(ip) + ' <span class="oxidns-geo" style="color:#888;font-size:12px;">…</span></span>'; }).join('<br>')
 		: '<span style="color:#888;">' + _('No cached A/AAAA answer') + '</span>');
 	if (entry) {
-		var ttl = entry.remaining_ttl !== undefined ? entry.remaining_ttl : entry.ttl;
-		html += kvRow(_('TTL / Route'), escapeHtml(String(ttl)) + ' s · cache');
+		var info = collectTtlInfo(entry);
+		var expTxt = '-';
+		if (info.expMs) {
+			var eMs = Number(info.expMs);
+			if (eMs > 0 && eMs < 1e11) eMs *= 1000;
+			try { expTxt = new Date(eMs).toLocaleString(); } catch (e) { expTxt = '-'; }
+		}
+		var stateTxt = info.fresh === true || info.fresh === 1 ? _('Fresh')
+			: (info.stale === true || info.stale === 1 ? _('Stale') : '-');
+		html += kvRow(_('Original TTL'), '<span id="oxidns-ttl-original">'
+			+ (info.orig !== undefined ? escapeHtml(String(info.orig)) + ' s' : '-') + '</span>');
+		html += kvRow(_('Remaining TTL'), '<span id="oxidns-ttl-remaining" style="color:#c00;font-weight:600;">'
+			+ (info.rem !== undefined ? escapeHtml(String(info.rem)) + ' s' : '-') + '</span>');
+		html += kvRow(_('Cache state'), '<span id="oxidns-ttl-state">' + stateTxt + '</span>');
+		html += kvRow(_('Expires at'), '<span id="oxidns-ttl-expires">' + escapeHtml(expTxt) + '</span>');
 	} else {
-		html += kvRow(_('TTL / Route'), '-');
+		html += kvRow(_('Original TTL'), '-');
+		html += kvRow(_('Remaining TTL'), '-');
+		html += kvRow(_('Cache state'), '-');
+		html += kvRow(_('Expires at'), '-');
 	}
 	html += kvRow(_('Split reason'), '<span id="oxidns-split-reason">'
 		+ '<span style="color:#888;">' + _('Probing live route (bypassing cache)...') + '</span></span>');
 	html += '</tbody></table>';
 	byId('oxidns-detail-body').innerHTML = html;
+
+	// Start the once-per-second remaining-TTL countdown for this entry.
+	if (entry) startTtlCountdown(collectTtlInfo(entry));
 
 	// Async geolocation for every answer IP. Results drive the split-group
 	// decision (domestic vs abroad answer) and CDN/hosting detection.

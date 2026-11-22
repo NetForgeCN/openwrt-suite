@@ -116,6 +116,13 @@ awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rp
 	| grep -q 'entries/delete'
 awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
 	| grep -q 'recorder_main/records/'
+# [cache lookup r8] The log fallback must read the syslog ring buffer via
+# logread before the on-disk files: OxiDNS query_summary normally reaches
+# logread, and scanning only files made every split reason read "unknown".
+awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
+	| grep -q 'logread -l 1000 -e oxidns'
+awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
+	| grep -q '"$LREAD" /tmp/oxidns.log'
 grep -q 'callTraceRoute' htdocs/luci-static/resources/view/oxidns/cache.js
 grep -q 'payload_text' htdocs/luci-static/resources/view/oxidns/cache.js
 grep -q 'answerValue' htdocs/luci-static/resources/view/oxidns/cache.js
@@ -135,6 +142,20 @@ grep -q "typeof v === 'object'" htdocs/luci-static/resources/view/oxidns/cache.j
 # youtube.com / taobao.com answer with A records and have no CNAME to match.
 grep -q 'function hostingFromGeo' htdocs/luci-static/resources/view/oxidns/cache.js
 grep -q 'HOSTING_ORG_RULES' htdocs/luci-static/resources/view/oxidns/cache.js
+# [cache lookup r8] Remaining TTL must be shown as a live countdown sourced
+# from expire_at_unix_ms (with a local-tick fallback) and refreshed after the
+# bypass-cache probe rewrites the entry. Assert the full chain so the page
+# never shows a single frozen TTL number again.
+for sym in collectTtlInfo startTtlCountdown refreshTtlAfterTrace; do
+	grep -q "function $sym" htdocs/luci-static/resources/view/oxidns/cache.js || {
+		echo "cache.js missing TTL function $sym" >&2; exit 1; }
+done
+for needle in 'expire_at_unix_ms' 'oxidns-ttl-remaining' 'oxidns-ttl-original' \
+	'oxidns-ttl-state' 'oxidns-ttl-expires' 'window.setInterval(tick, 1000)' \
+	'window.clearInterval(ttlTimer)' 'refreshTtlAfterTrace(qname)'; do
+	grep -q "$needle" htdocs/luci-static/resources/view/oxidns/cache.js || {
+		echo "cache.js missing TTL marker: $needle" >&2; exit 1; }
+done
 sh -n scripts/build-luci-package.sh
 sh -n scripts/integration-check.sh
 sh -n scripts/service-check.sh

@@ -562,8 +562,26 @@ msgstr "已停止"
 msgid "Store the core binary and webui under /etc/oxidns/core, which is kept during firmware upgrades. Requires enough free space on the overlay partition."
 msgstr "把内核二进制和 WebUI 存放到 /etc/oxidns/core，固件升级时会保留。需要 overlay 分区有足够剩余空间。"
 
-msgid "TTL / Route"
-msgstr "TTL / 路由"
+msgid "Original TTL"
+msgstr "原始 TTL"
+
+msgid "Remaining TTL"
+msgstr "剩余 TTL"
+
+msgid "Cache state"
+msgstr "缓存状态"
+
+msgid "Expires at"
+msgstr "到期时间"
+
+msgid "Fresh"
+msgstr "新鲜"
+
+msgid "Stale"
+msgstr "已过期"
+
+msgid "Expired / stale"
+msgstr "已过期 / stale"
 
 msgid "Target"
 msgstr "目标架构"
