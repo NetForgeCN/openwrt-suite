@@ -11,18 +11,29 @@ PERSIST_DIR="/etc/oxidns/core"
 PERSIST_BIN="$PERSIST_DIR/oxidns"
 PERSIST_WEBUI="$PERSIST_DIR/webui"
 WEBUI_DIR="/usr/share/oxidns/webui"
-RULES_DIR="/etc/oxidns/rules"
-RULES_BASELINE_DIR="/usr/share/oxidns/rules-baseline"
+RULES_DIR="${RULES_DIR:-/etc/oxidns/rules}"
+RULES_BASELINE_DIR="${RULES_BASELINE_DIR:-/usr/share/oxidns/rules-baseline}"
+PREWARM_BIN="${PREWARM_BIN:-/usr/libexec/oxidns-prewarm}"
+PREWARM_DIR="${PREWARM_DIR:-/etc/oxidns}"
+PREWARM_FILE="$PREWARM_DIR/prewarm.txt"
+PREWARM_DEFAULT_FILE="${PREWARM_DEFAULT_FILE:-/usr/share/oxidns/prewarm.default.txt}"
 # All rule files come from the baseline package / Rules page subscription
 # archive; there are no hand-maintained local policy lists.
 RULE_FILES="adguard-antiad.txt adguard-hostlist.txt anti-ad-domains.txt adrules-domains.txt neodevhost-domains.txt accelerated-domains.china.conf cn-domains.txt"
 
 load_oxidns_settings() {
+	API_PASS=""
 	config_load oxidns
 	config_get CONFIG_PATH main config_path "$DEFAULT_CONFIG_PATH"
 	config_get WORKING_DIR main working_dir "$DEFAULT_WORKING_DIR"
 	config_get_bool LOG_SYSLOG main log_syslog 1
 	config_get API_PASS main api_pass ""
+}
+
+load_prewarm_settings() {
+	PREWARM_ENABLED=1
+	config_load oxidns
+	config_get PREWARM_ENABLED prewarm enabled 1
 }
 
 # Boot self-heal: the persistent copy of the core survives firmware upgrades
@@ -80,10 +91,24 @@ seed_rule_files() {
 	return 0
 }
 
+# The prewarm list lives in /etc so it survives sysupgrade. Seed it from the
+# read-only package template only when missing; never overwrite user edits.
+seed_prewarm_file() {
+	[ -s "$PREWARM_FILE" ] && return 0
+	mkdir -p "$PREWARM_DIR" 2>/dev/null || return 1
+	[ -s "$PREWARM_DEFAULT_FILE" ] || return 1
+	if cp "$PREWARM_DEFAULT_FILE" "$PREWARM_FILE" 2>/dev/null; then
+		logger -t oxidns "seeded $PREWARM_FILE from package template"
+	fi
+	return 0
+}
+
 start_service() {
 	load_oxidns_settings
+	load_prewarm_settings
 	restore_core_links
 	seed_rule_files
+	seed_prewarm_file
 
 	if [ ! -x "$PROG" ]; then
 		echo "oxidns binary not found or not executable: $PROG" >&2
@@ -108,6 +133,18 @@ start_service() {
 	procd_set_param stdout "$LOG_SYSLOG"
 	procd_set_param stderr "$LOG_SYSLOG"
 	procd_close_instance
+
+	# Prewarmer is a separate procd instance so stopping OxiDNS also stops it.
+	# It re-reads UCI and the list every few seconds, so LuCI edits take effect
+	# without restarting the DNS service.
+	if [ "$PREWARM_ENABLED" = "1" ] && [ -x "$PREWARM_BIN" ]; then
+		procd_open_instance
+		procd_set_param command "$PREWARM_BIN"
+		procd_set_param respawn 3600 5 5
+		procd_set_param stdout "$LOG_SYSLOG"
+		procd_set_param stderr "$LOG_SYSLOG"
+		procd_close_instance
+	fi
 }
 
 reload_service() {

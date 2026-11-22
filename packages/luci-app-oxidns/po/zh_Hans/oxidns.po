@@ -543,3 +543,69 @@ msgstr "YAML"
 
 msgid "Yes"
 msgstr "是"
+
+msgid "0 = run once at service start."
+msgstr "0 = 仅在服务启动时预热一次。"
+
+msgid "127.0.0.1 (local listener)"
+msgstr "127.0.0.1（本机监听）"
+
+msgid "192.168.1.1 (LAN address)"
+msgstr "192.168.1.1（局域网地址）"
+
+msgid "Enable prewarming"
+msgstr "启用预热"
+
+msgid "Failed to save prewarm settings"
+msgstr "保存预热设置失败"
+
+msgid "Interval (seconds)"
+msgstr "间隔（秒）"
+
+msgid "Keep popular domains resolved so the first visit is fast. A and AAAA records are queried through the selected OxiDNS listener."
+msgstr "保持热门域名处于已解析状态，让首次访问更快。A 和 AAAA 记录都会通过所选 OxiDNS 监听入口查询。"
+
+msgid "One domain per line. Blank lines and lines starting with # are ignored. Changes apply on the next pass; use Run now to apply immediately."
+msgstr "每行一个域名；空行和以 # 开头的行会被忽略。修改后下一轮生效；点击“立即预热”可马上应用。"
+
+msgid "Port"
+msgstr "端口"
+
+msgid "Prewarm"
+msgstr "预热"
+
+msgid "Prewarm completed."
+msgstr "预热完成。"
+
+msgid "Prewarm failed"
+msgstr "预热失败"
+
+msgid "Prewarm list"
+msgstr "预热列表"
+
+msgid "Prewarm settings saved."
+msgstr "预热设置已保存。"
+
+msgid "Protocol"
+msgstr "协议"
+
+msgid "Run now"
+msgstr "立即预热"
+
+msgid "Saving prewarm settings..."
+msgstr "正在保存预热设置..."
+
+msgid "Server IP"
+msgstr "服务器 IP"
+
+msgid "TCP"
+msgstr "TCP"
+
+msgid "The selected server must be an OxiDNS listener with cache enabled."
+msgstr "所选服务器必须是已启用缓存的 OxiDNS 监听入口。"
+
+msgid "UDP"
+msgstr "UDP"
+
+msgid "Warming up..."
+msgstr "正在预热..."

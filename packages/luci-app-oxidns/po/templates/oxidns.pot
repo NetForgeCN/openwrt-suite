@@ -538,3 +538,69 @@ msgstr ""
 
 msgid "Yes"
 msgstr ""
+
+msgid "0 = run once at service start."
+msgstr ""
+
+msgid "127.0.0.1 (local listener)"
+msgstr ""
+
+msgid "192.168.1.1 (LAN address)"
+msgstr ""
+
+msgid "Enable prewarming"
+msgstr ""
+
+msgid "Failed to save prewarm settings"
+msgstr ""
+
+msgid "Interval (seconds)"
+msgstr ""
+
+msgid "Keep popular domains resolved so the first visit is fast. A and AAAA records are queried through the selected OxiDNS listener."
+msgstr ""
+
+msgid "One domain per line. Blank lines and lines starting with # are ignored. Changes apply on the next pass; use Run now to apply immediately."
+msgstr ""
+
+msgid "Port"
+msgstr ""
+
+msgid "Prewarm"
+msgstr ""
+
+msgid "Prewarm completed."
+msgstr ""
+
+msgid "Prewarm failed"
+msgstr ""
+
+msgid "Prewarm list"
+msgstr ""
+
+msgid "Prewarm settings saved."
+msgstr ""
+
+msgid "Protocol"
+msgstr ""
+
+msgid "Run now"
+msgstr ""
+
+msgid "Saving prewarm settings..."
+msgstr ""
+
+msgid "Server IP"
+msgstr ""
+
+msgid "TCP"
+msgstr ""
+
+msgid "The selected server must be an OxiDNS listener with cache enabled."
+msgstr ""
+
+msgid "UDP"
+msgstr ""
+
+msgid "Warming up..."
+msgstr ""

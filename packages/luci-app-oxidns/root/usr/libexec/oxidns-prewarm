@@ -1,0 +1,164 @@
+#!/bin/sh
+# Warm the OxiDNS cache by querying a local/listener address for every
+# configured domain (A and AAAA). Kept outside the OxiDNS core so this works
+# with release-installed binaries; all rules of the selected listener apply.
+set -u
+
+PREWARM_DIR="${PREWARM_DIR:-/etc/oxidns}"
+PREWARM_FILE="${PREWARM_FILE:-$PREWARM_DIR/prewarm.txt}"
+PREWARM_DEFAULT_FILE="${PREWARM_DEFAULT_FILE:-/usr/share/oxidns/prewarm.default.txt}"
+PREWARM_CONCURRENCY="${PREWARM_CONCURRENCY:-4}"
+PREWARM_QUERY_TIMEOUT="${PREWARM_QUERY_TIMEOUT:-2}"
+PREWARM_RETRIES="${PREWARM_RETRIES:-1}"
+PREWARM_TMP_DIR="${PREWARM_TMP_DIR:-/tmp}"
+
+ENABLED=1
+PROTOCOL=udp
+SERVER=127.0.0.1
+PORT=5333
+INTERVAL=3000
+
+log() {
+	logger -t oxidns-prewarm "$*" 2>/dev/null || true
+}
+
+load_settings() {
+	ENABLED=1
+	PROTOCOL=udp
+	SERVER=127.0.0.1
+	PORT=5333
+	INTERVAL=3000
+
+	command -v uci >/dev/null 2>&1 || return 0
+	ENABLED="$(uci -q get oxidns.prewarm.enabled 2>/dev/null || printf '1')"
+	PROTOCOL="$(uci -q get oxidns.prewarm.protocol 2>/dev/null || printf 'udp')"
+	SERVER="$(uci -q get oxidns.prewarm.server 2>/dev/null || printf '127.0.0.1')"
+	PORT="$(uci -q get oxidns.prewarm.port 2>/dev/null || printf '5333')"
+	INTERVAL="$(uci -q get oxidns.prewarm.interval 2>/dev/null || printf '3000')"
+
+	case "$ENABLED" in
+		0|1) ;;
+		*) ENABLED=1 ;;
+	esac
+	case "$PROTOCOL" in
+		udp|tcp) ;;
+		*) PROTOCOL=udp ;;
+	esac
+	case "$SERVER" in
+		127.0.0.1|192.168.1.1) ;;
+		*) SERVER=127.0.0.1 ;;
+	esac
+	case "$PORT" in
+		''|*[!0-9]*) PORT=5333 ;;
+		*)
+			if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+				PORT=5333
+			fi
+			;;
+	esac
+	case "$INTERVAL" in
+		''|*[!0-9]*) INTERVAL=3000 ;;
+		*)
+			if [ "$INTERVAL" -gt 86400 ]; then
+				INTERVAL=86400
+			fi
+			;;
+	esac
+}
+
+seed_file() {
+	[ -s "$PREWARM_FILE" ] && return 0
+	mkdir -p "$PREWARM_DIR" 2>/dev/null || return 1
+	[ -s "$PREWARM_DEFAULT_FILE" ] || return 1
+	if cp "$PREWARM_DEFAULT_FILE" "$PREWARM_FILE" 2>/dev/null; then
+		log "seeded default domain list"
+		return 0
+	fi
+	return 1
+}
+
+build_jobs() {
+	awk '
+		{
+			sub(/\r$/, "")
+			gsub(/^[[:space:]]+/, "")
+			gsub(/[[:space:]]+$/, "")
+			if ($0 == "" || substr($0, 1, 1) == "#")
+				next
+			if ($0 ~ /[^A-Za-z0-9._-]/)
+				next
+			print tolower($0)
+		}
+	' "$PREWARM_FILE" 2>/dev/null | sort -u | awk '{ print "A " $0; print "AAAA " $0 }'
+}
+
+run_pass() {
+	if ! seed_file; then
+		log "domain list unavailable: $PREWARM_FILE"
+		return 1
+	fi
+
+	JOBS_FILE="$PREWARM_TMP_DIR/oxidns-prewarm.jobs.$$"
+	if ! build_jobs > "$JOBS_FILE"; then
+		rm -f "$JOBS_FILE"
+		return 1
+	fi
+	JOB_COUNT="$(wc -l < "$JOBS_FILE" 2>/dev/null || printf '0')"
+	if [ "$JOB_COUNT" -eq 0 ]; then
+		rm -f "$JOBS_FILE"
+		log "domain list is empty"
+		return 0
+	fi
+
+	export PREWARM_SERVER="$SERVER" PREWARM_PORT="$PORT" PREWARM_PROTOCOL="$PROTOCOL"
+	export PREWARM_QUERY_TIMEOUT="$PREWARM_QUERY_TIMEOUT" PREWARM_RETRIES="$PREWARM_RETRIES"
+	xargs -P "$PREWARM_CONCURRENCY" -n 2 sh -c '
+		qtype="$1"
+		name="$2"
+		tcp_flag=""
+		[ "$PREWARM_PROTOCOL" = "tcp" ] && tcp_flag="+tcp"
+		if command -v dig >/dev/null 2>&1; then
+			dig +time="$PREWARM_QUERY_TIMEOUT" +tries="$PREWARM_RETRIES" \
+				@"$PREWARM_SERVER" -p "$PREWARM_PORT" $tcp_flag "$qtype" "$name" \
+				>/dev/null 2>&1 || \
+				logger -t oxidns-prewarm "query failed: $qtype $name"
+		elif command -v nslookup >/dev/null 2>&1; then
+			nslookup -type="$qtype" -port="$PREWARM_PORT" "$name" "$PREWARM_SERVER" \
+				>/dev/null 2>&1 || \
+				logger -t oxidns-prewarm "query failed: $qtype $name"
+		else
+			logger -t oxidns-prewarm "no dig or nslookup available"
+			exit 1
+		fi
+	' sh < "$JOBS_FILE" || true
+	rm -f "$JOBS_FILE"
+	log "refreshed $JOB_COUNT queries via $PROTOCOL $SERVER:$PORT"
+	return 0
+}
+
+if [ "${1:-}" = "--once" ]; then
+	load_settings
+	run_pass
+	exit $?
+fi
+
+LAST_INTERVAL=""
+NEXT_RUN=0
+while :; do
+	load_settings
+	NOW="$(date +%s 2>/dev/null || printf '0')"
+	DUE=0
+	if [ "$INTERVAL" != "$LAST_INTERVAL" ]; then
+		DUE=1
+		LAST_INTERVAL="$INTERVAL"
+	fi
+	if [ "$ENABLED" = "1" ] && { [ "$DUE" = "1" ] || [ "$NOW" -ge "$NEXT_RUN" ]; }; then
+		run_pass || true
+		if [ "$INTERVAL" -gt 0 ]; then
+			NEXT_RUN=$((NOW + INTERVAL))
+		else
+			NEXT_RUN=$((NOW + 3600))
+		fi
+	fi
+	sleep 5
+done

@@ -125,6 +125,11 @@ case "$1" in
 			esac
 		}
 		config_get_bool() { LOG_SYSLOG="$SERVICE_TEST_LOG_SYSLOG"; }
+		RULES_DIR="$SERVICE_TEST_DIR/rules"
+		RULES_BASELINE_DIR="$SERVICE_TEST_DIR/rules-baseline"
+		PREWARM_DIR="$SERVICE_TEST_DIR/prewarm"
+		PREWARM_FILE="$PREWARM_DIR/prewarm.txt"
+		PREWARM_DEFAULT_FILE="$REPO_DIR/root/usr/share/oxidns/prewarm.default.txt"
 		procd_open_instance() { :; }
 		procd_close_instance() { :; }
 		procd_set_param() { printf '%s\n' "$*" >> "$SERVICE_TEST_DIR/procd-args"; }
@@ -145,6 +150,12 @@ cat > "$SERVICE_TEST_DIR/drive.sh" <<'EOF'
 set -eu
 test_mode="$1"
 set -- list
+RULES_DIR="$SERVICE_TEST_DIR/rules"
+RULES_BASELINE_DIR="$SERVICE_TEST_DIR/rules-baseline"
+PREWARM_DIR="$SERVICE_TEST_DIR/prewarm"
+PREWARM_FILE="$PREWARM_DIR/prewarm.txt"
+PREWARM_DEFAULT_FILE="$REPO_DIR/root/usr/share/oxidns/prewarm.default.txt"
+export RULES_DIR RULES_BASELINE_DIR PREWARM_DIR PREWARM_FILE PREWARM_DEFAULT_FILE
 . "$REPO_DIR/root/usr/libexec/rpcd/luci.oxidns" >/dev/null
 OXIDNS_BIN="$SERVICE_TEST_DIR/oxidns"
 TMP_ROOT="$SERVICE_TEST_DIR"
@@ -158,8 +169,9 @@ core_progress_command() { :; }
 core_progress_log() { :; }
 service_running() { return 0; }
 WEBUI_DIR="$SERVICE_TEST_DIR/webui"
-case "$test_mode" in
-	restart|stop) run_service "$test_mode" ;;
+	case "$test_mode" in
+		prewarm_read) emit_prewarm_read ;;
+		restart|stop) run_service "$test_mode" ;;
 	config)
 		# Avoid the config backup's unrelated timestamp call in this test.
 		rm -f "$SERVICE_TEST_DIR/config.yaml"
@@ -278,4 +290,7 @@ reset_service_case delayed 0
 run_service_case stop
 assert_result 'v.ok === true'
 test "$(cat "$SERVICE_TEST_DIR/events")" = "$(printf 'stop\nquery\nwait\nquery\nwait\nquery')"
-printf 'Service restart checks passed\n'
+reset_service_case delayed 0
+printf '' | /bin/sh "$SERVICE_TEST_DIR/drive.sh" prewarm_read > "$SERVICE_TEST_DIR/result" 2> "$SERVICE_TEST_DIR/error"
+assert_result 'v.ok === true && v.protocol === "udp" && v.server === "127.0.0.1" && v.port === "5333" && v.content.includes("github.com") && v.content.includes("chatgpt.com")'
+printf 'Service restart and prewarm checks passed\n'

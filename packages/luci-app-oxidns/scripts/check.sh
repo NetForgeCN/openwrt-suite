@@ -2,7 +2,7 @@
 
 set -eu
 
-node -e "for (const f of ['htdocs/luci-static/resources/view/oxidns/overview.js','htdocs/luci-static/resources/view/oxidns/core.js','htdocs/luci-static/resources/view/oxidns/config.js','htdocs/luci-static/resources/view/oxidns/logs.js','htdocs/luci-static/resources/view/oxidns/settings.js','htdocs/luci-static/resources/view/oxidns/rules.js']) new Function(require('fs').readFileSync(f,'utf8'));"
+node -e "for (const f of ['htdocs/luci-static/resources/view/oxidns/overview.js','htdocs/luci-static/resources/view/oxidns/core.js','htdocs/luci-static/resources/view/oxidns/config.js','htdocs/luci-static/resources/view/oxidns/logs.js','htdocs/luci-static/resources/view/oxidns/settings.js','htdocs/luci-static/resources/view/oxidns/rules.js','htdocs/luci-static/resources/view/oxidns/prewarm.js']) new Function(require('fs').readFileSync(f,'utf8'));"
 node -e "for (const f of ['root/usr/share/luci/menu.d/luci-app-oxidns.json','root/usr/share/rpcd/acl.d/luci-app-oxidns.json','root/usr/share/oxidns/targets.json']) JSON.parse(require('fs').readFileSync(f,'utf8'));"
 node <<'NODE'
 const fs = require('fs');
@@ -15,6 +15,7 @@ for (const file of [
 	'htdocs/luci-static/resources/view/oxidns/logs.js',
 	'htdocs/luci-static/resources/view/oxidns/settings.js',
 	'htdocs/luci-static/resources/view/oxidns/rules.js',
+	'htdocs/luci-static/resources/view/oxidns/prewarm.js',
 ]) {
 	const source = fs.readFileSync(file, 'utf8');
 	const re = /_\(\s*(['"])((?:\\.|[^\\])*?)\1\s*\)/g;
@@ -79,6 +80,16 @@ grep -q 'config_get API_PASS main api_pass' root/etc/init.d/oxidns
 grep -q 'procd_set_param env OXIDNS_API_PASS=' root/etc/init.d/oxidns
 grep -q 'uci_get api_pass' root/usr/libexec/rpcd/luci.oxidns
 grep -q 'export OXIDNS_API_PASS' root/usr/libexec/rpcd/luci.oxidns
+# [prewarm] Keep the LuCI page, ACL endpoint, helper script and default list
+# wired together. A missing piece makes the tab render but every action fail.
+grep -q 'oxidns/prewarm' root/usr/share/luci/menu.d/luci-app-oxidns.json
+grep -q '"prewarm_read"' root/usr/share/rpcd/acl.d/luci-app-oxidns.json
+grep -q '"prewarm_save"' root/usr/share/rpcd/acl.d/luci-app-oxidns.json
+grep -q '"prewarm_run"' root/usr/share/rpcd/acl.d/luci-app-oxidns.json
+grep -q 'config prewarm' root/etc/config/oxidns
+test -s root/usr/share/oxidns/prewarm.default.txt
+test -x root/usr/libexec/oxidns-prewarm
+sh -n root/usr/libexec/oxidns-prewarm
 sh -n scripts/build-luci-package.sh
 sh -n scripts/integration-check.sh
 sh -n scripts/service-check.sh

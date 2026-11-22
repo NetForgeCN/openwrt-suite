@@ -35,6 +35,15 @@ RULES_TAG_PREFIX="rules-v"
 RULES_ASSET_PREFIX="oxidns-rules-baseline-"
 RULES_VERSION_FILE=".installed-version"
 
+# Prewarm list. Stored in /etc (survives sysupgrade); the read-only template
+# ships with the package and is only used to seed a missing list.
+PREWARM_DIR="${PREWARM_DIR:-/etc/oxidns}"
+PREWARM_FILE="$PREWARM_DIR/prewarm.txt"
+PREWARM_DEFAULT_FILE="${PREWARM_DEFAULT_FILE:-/usr/share/oxidns/prewarm.default.txt}"
+PREWARM_BIN="${PREWARM_BIN:-/usr/libexec/oxidns-prewarm}"
+PREWARM_MAX_BYTES=65536
+PREWARM_MAX_LINES=1000
+
 CONFIG_PATH="$DEFAULT_CONFIG_PATH"
 WORKING_DIR="$DEFAULT_WORKING_DIR"
 SERVICE_NAME="$DEFAULT_SERVICE_NAME"
@@ -2710,6 +2719,239 @@ emit_rules_restore_locked() {
 }
 
 
+load_prewarm_settings() {
+	PREWARM_ENABLED=1
+	PREWARM_PROTOCOL=udp
+	PREWARM_SERVER=127.0.0.1
+	PREWARM_PORT=5333
+	PREWARM_INTERVAL=3000
+	command -v uci >/dev/null 2>&1 || return 0
+	config_load oxidns
+	PREWARM_ENABLED="$(uci -q get oxidns.prewarm.enabled 2>/dev/null || printf '1')"
+	PREWARM_PROTOCOL="$(uci -q get oxidns.prewarm.protocol 2>/dev/null || printf 'udp')"
+	PREWARM_SERVER="$(uci -q get oxidns.prewarm.server 2>/dev/null || printf '127.0.0.1')"
+	PREWARM_PORT="$(uci -q get oxidns.prewarm.port 2>/dev/null || printf '5333')"
+	PREWARM_INTERVAL="$(uci -q get oxidns.prewarm.interval 2>/dev/null || printf '3000')"
+	case "$PREWARM_ENABLED" in
+		0|1) ;;
+		*) PREWARM_ENABLED=1 ;;
+	esac
+	case "$PREWARM_PROTOCOL" in
+		udp|tcp) ;;
+		*) PREWARM_PROTOCOL=udp ;;
+	esac
+	case "$PREWARM_SERVER" in
+		127.0.0.1|192.168.1.1) ;;
+		*) PREWARM_SERVER=127.0.0.1 ;;
+	esac
+	case "$PREWARM_PORT" in
+		''|*[!0-9]*) PREWARM_PORT=5333 ;;
+		*)
+			if [ "$PREWARM_PORT" -lt 1 ] || [ "$PREWARM_PORT" -gt 65535 ]; then
+				PREWARM_PORT=5333
+			fi
+			;;
+	esac
+	case "$PREWARM_INTERVAL" in
+		''|*[!0-9]*) PREWARM_INTERVAL=3000 ;;
+		*)
+			if [ "$PREWARM_INTERVAL" -gt 86400 ]; then
+				PREWARM_INTERVAL=86400
+			fi
+			;;
+	esac
+}
+
+prewarm_input_number() {
+	KEY="$1"
+	INPUT="$2"
+	if command -v jsonfilter >/dev/null 2>&1; then
+		printf '%s' "$INPUT" | jsonfilter -e "@.$KEY" 2>/dev/null || true
+	else
+		printf '%s' "$INPUT" | sed -n "s/.*\"$KEY\"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\\1/p"
+	fi
+}
+
+prewarm_input_content() {
+	INPUT="$1"
+	if command -v jsonfilter >/dev/null 2>&1; then
+		input_value content "$INPUT"
+		return 0
+	fi
+	# The sed fallback returns the raw JSON string; decode the escapes LuCI
+	# sends for newlines so the saved list is one domain per line.
+	VALUE="$(input_value content "$INPUT")"
+	printf '%b' "$VALUE"
+}
+
+prewarm_content_path() {
+	if [ -r "$PREWARM_FILE" ]; then
+		printf '%s' "$PREWARM_FILE"
+	elif [ -r "$PREWARM_DEFAULT_FILE" ]; then
+		printf '%s' "$PREWARM_DEFAULT_FILE"
+	fi
+}
+
+emit_prewarm_read() {
+	load_prewarm_settings
+	printf '{'
+	printf '"ok":true,'
+	printf '"enabled":'
+	json_bool "$PREWARM_ENABLED"
+	printf ',"protocol":'
+	json_string "$PREWARM_PROTOCOL"
+	printf ',"server":'
+	json_string "$PREWARM_SERVER"
+	printf ',"port":'
+	json_string "$PREWARM_PORT"
+	printf ',"interval":'
+	json_string "$PREWARM_INTERVAL"
+	printf ',"content":'
+	CONTENT_PATH="$(prewarm_content_path)"
+	if [ -n "$CONTENT_PATH" ]; then
+		json_file_string "$CONTENT_PATH"
+	else
+		json_string ''
+	fi
+	printf '}\n'
+}
+
+emit_prewarm_save() {
+	INPUT="$(cat)"
+	if ! command -v uci >/dev/null 2>&1; then
+		json_error "uci_unavailable" "uci command not found"
+		return 1
+	fi
+	load_prewarm_settings
+
+	ENABLED_VALUE="$(input_value enabled "$INPUT")"
+	[ -n "$ENABLED_VALUE" ] || ENABLED_VALUE="$PREWARM_ENABLED"
+	PROTOCOL_VALUE="$(input_value protocol "$INPUT")"
+	[ -n "$PROTOCOL_VALUE" ] || PROTOCOL_VALUE="$PREWARM_PROTOCOL"
+	SERVER_VALUE="$(input_value server "$INPUT")"
+	[ -n "$SERVER_VALUE" ] || SERVER_VALUE="$PREWARM_SERVER"
+	PORT_VALUE="$(prewarm_input_number port "$INPUT")"
+	[ -n "$PORT_VALUE" ] || PORT_VALUE="$PREWARM_PORT"
+	INTERVAL_VALUE="$(prewarm_input_number interval "$INPUT")"
+	[ -n "$INTERVAL_VALUE" ] || INTERVAL_VALUE="$PREWARM_INTERVAL"
+	CONTENT_VALUE="$(prewarm_input_content "$INPUT")"
+
+	if input_has_key enabled "$INPUT"; then
+		case "$ENABLED_VALUE" in
+			0|1|true|false) ;;
+			*)
+				json_error "invalid_prewarm_enabled" "enabled must be true or false"
+				return 1
+				;;
+		esac
+		case "$ENABLED_VALUE" in
+			1|true) ENABLED_VALUE=1 ;;
+			*) ENABLED_VALUE=0 ;;
+		esac
+	fi
+	case "$PROTOCOL_VALUE" in
+		udp|tcp) ;;
+		*)
+			json_error "invalid_prewarm_protocol" "protocol must be udp or tcp"
+			return 1
+			;;
+	esac
+	case "$SERVER_VALUE" in
+		127.0.0.1|192.168.1.1) ;;
+		*)
+			json_error "invalid_prewarm_server" "server must be 127.0.0.1 or 192.168.1.1"
+			return 1
+			;;
+	esac
+	case "$PORT_VALUE" in
+		''|*[!0-9]*) PORT_VALUE="" ;;
+	esac
+	if [ -z "$PORT_VALUE" ] || [ "$PORT_VALUE" -lt 1 ] || [ "$PORT_VALUE" -gt 65535 ]; then
+		json_error "invalid_prewarm_port" "port must be between 1 and 65535"
+		return 1
+	fi
+	case "$INTERVAL_VALUE" in
+		''|*[!0-9]*) INTERVAL_VALUE="" ;;
+	esac
+	if [ -z "$INTERVAL_VALUE" ] || [ "$INTERVAL_VALUE" -gt 86400 ]; then
+		json_error "invalid_prewarm_interval" "interval must be 0 or between 60 and 86400 seconds"
+		return 1
+	fi
+	if [ "$INTERVAL_VALUE" -ne 0 ] && [ "$INTERVAL_VALUE" -lt 60 ]; then
+		json_error "invalid_prewarm_interval" "interval must be 0 or between 60 and 86400 seconds"
+		return 1
+	fi
+
+	CONTENT_BYTES="$(printf '%s' "$CONTENT_VALUE" | wc -c 2>/dev/null || printf '0')"
+	if [ "$CONTENT_BYTES" -gt "$PREWARM_MAX_BYTES" ]; then
+		json_error "prewarm_list_too_large" "prewarm list exceeds ${PREWARM_MAX_BYTES} bytes"
+		return 1
+	fi
+
+	if ! mkdir -p "$PREWARM_DIR" 2>/dev/null; then
+		json_error "prewarm_dir_unavailable" "cannot create $PREWARM_DIR"
+		return 1
+	fi
+	TMP_FILE="$PREWARM_DIR/.prewarm.txt.$$"
+	if ! printf '%s' "$CONTENT_VALUE" | tr -d '\r' | \
+		awk 'BEGIN { ORS = "\n" } { print }' > "$TMP_FILE"; then
+		rm -f "$TMP_FILE"
+		json_error "prewarm_write_failed" "cannot write prewarm list"
+		return 1
+	fi
+	LINE_COUNT="$(wc -l < "$TMP_FILE" 2>/dev/null || printf '0')"
+	if [ "$LINE_COUNT" -gt "$PREWARM_MAX_LINES" ]; then
+		rm -f "$TMP_FILE"
+		json_error "prewarm_list_too_long" "prewarm list exceeds ${PREWARM_MAX_LINES} lines"
+		return 1
+	fi
+
+	if ! uci -q get oxidns.prewarm >/dev/null 2>&1; then
+		NEW_SECTION="$(uci -q add oxidns prewarm)" || {
+			rm -f "$TMP_FILE"
+			json_error "uci_write_failed" "cannot add prewarm section"
+			return 1
+		}
+		uci -q rename "oxidns.$NEW_SECTION=prewarm" || true
+	fi
+	uci -q set "oxidns.prewarm.enabled=$ENABLED_VALUE" || true
+	uci -q set "oxidns.prewarm.protocol=$PROTOCOL_VALUE" || true
+	uci -q set "oxidns.prewarm.server=$SERVER_VALUE" || true
+	uci -q set "oxidns.prewarm.port=$PORT_VALUE" || true
+	uci -q set "oxidns.prewarm.interval=$INTERVAL_VALUE" || true
+	if ! uci -q commit oxidns || ! mv -f "$TMP_FILE" "$PREWARM_FILE"; then
+		rm -f "$TMP_FILE"
+		json_error "prewarm_save_failed" "cannot commit prewarm settings"
+		return 1
+	fi
+
+	printf '{'
+	printf '"ok":true,'
+	printf '"enabled":'
+	json_bool "$ENABLED_VALUE"
+	printf ',"protocol":'
+	json_string "$PROTOCOL_VALUE"
+	printf ',"server":'
+	json_string "$SERVER_VALUE"
+	printf ',"port":'
+	json_string "$PORT_VALUE"
+	printf ',"interval":'
+	json_string "$INTERVAL_VALUE"
+	printf '}\n'
+}
+
+emit_prewarm_run() {
+	if [ ! -x "$PREWARM_BIN" ]; then
+		json_error "prewarm_unavailable" "prewarm helper is not installed"
+		return 1
+	fi
+	if ! "$PREWARM_BIN" --once >/dev/null 2>&1; then
+		json_error "prewarm_run_failed" "prewarm pass failed"
+		return 1
+	fi
+	printf '{"ok":true}\n'
+}
+
 case "${1:-}" in
 	list)
 		printf '{'
@@ -2724,8 +2966,11 @@ case "${1:-}" in
 		printf '"rules_status":{},'
 		printf '"rules_check":{},'
 		printf '"rules_update":{},'
-		printf '"rules_restore":{},'
-		printf '"service_start":{},'
+			printf '"rules_restore":{},'
+			printf '"prewarm_read":{},'
+			printf '"prewarm_save":{"enabled":"boolean","protocol":"string","server":"string","port":"number","interval":"number","content":"string"},'
+			printf '"prewarm_run":{},'
+			printf '"service_start":{},'
 		printf '"service_stop":{},'
 		printf '"service_restart":{},'
 		printf '"service_enable":{},'
@@ -2776,6 +3021,15 @@ case "${1:-}" in
 				;;
 			rules_restore)
 				emit_rules_restore
+				;;
+			prewarm_read)
+				emit_prewarm_read
+				;;
+			prewarm_save)
+				emit_prewarm_save
+				;;
+			prewarm_run)
+				emit_prewarm_run
 				;;
 			service_start)
 				run_service start

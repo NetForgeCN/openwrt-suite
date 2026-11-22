@@ -11,7 +11,8 @@
 					"settings_read",
 					"logs_recent",
 					"rules_status",
-					"rules_check"
+					"rules_check",
+					"prewarm_read"
 				]
 			}
 		},
@@ -36,7 +37,9 @@
 					"config_save",
 					"settings_save",
 					"rules_update",
-					"rules_restore"
+					"rules_restore",
+					"prewarm_save",
+					"prewarm_run"
 				]
 			}
 		}
