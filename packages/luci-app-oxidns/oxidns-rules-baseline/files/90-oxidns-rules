@@ -18,7 +18,7 @@ mkdir -p /etc/oxidns/rules 2>/dev/null || exit 0
 
 for rule_file in adguard-antiad.txt adguard-hostlist.txt anti-ad-domains.txt \
 	adrules-domains.txt neodevhost-domains.txt accelerated-domains.china.conf \
-	cn-domains.txt force-cn.txt force-abroad.txt; do
+	cn-domains.txt; do
 	if [ ! -s "/etc/oxidns/rules/$rule_file" ] && \
 	   [ -s "/usr/share/oxidns/rules-baseline/$rule_file" ]; then
 		cp "/usr/share/oxidns/rules-baseline/$rule_file" "/etc/oxidns/rules/$rule_file"

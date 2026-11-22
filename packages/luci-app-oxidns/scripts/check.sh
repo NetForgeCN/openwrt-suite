@@ -115,46 +115,19 @@ if [ -n "$self_copy" ]; then
 	exit 1
 fi
 
-# [force lists r12] force-cn.txt / force-abroad.txt are hand-maintained policy
-# lists shipped by the baseline package. Every non-comment line must be a valid
-# domain_set expression, both files must stay reasonably populated, and every
-# distribution path must list them so they are seeded and survive the Rules
-# page whole-directory swap.
-for f in oxidns-rules-baseline/files/rules/force-cn.txt \
-	oxidns-rules-baseline/files/rules/force-abroad.txt; do
-	[ -f "$f" ] || { echo "missing $f" >&2; exit 1; }
-	bad="$(grep -v '^[[:space:]]*#' "$f" | grep -v '^[[:space:]]*$' \
-		| grep -cv '^\(full\|domain\):[a-z0-9.-]*$' || true)"
-	[ "$bad" = 0 ] || { echo "$f has $bad invalid rule lines" >&2; exit 1; }
-done
-cn_count="$(grep -c '^\(full\|domain\):' oxidns-rules-baseline/files/rules/force-cn.txt)"
-ab_count="$(grep -c '^\(full\|domain\):' oxidns-rules-baseline/files/rules/force-abroad.txt)"
-[ "$cn_count" -ge 80 ] || { echo "force-cn.txt lost entries ($cn_count)" >&2; exit 1; }
-[ "$ab_count" -ge 50 ] || { echo "force-abroad.txt lost entries ($ab_count)" >&2; exit 1; }
+# [r13] v12 config and r13 package removed the hand-maintained force_cn /
+# force_abroad split lists, their baseline files, and every seeding path.
+# Guard against accidental reintroduction (scripts/ itself is excluded
+# because this assertion necessarily mentions the names).
+if grep -rqi 'force-cn\|force-abroad\|force_cn\|force_abroad' \
+	oxidns-rules-baseline root htdocs 2>/dev/null; then
+	echo "force split lists must stay removed (r13)" >&2
+	exit 1
+fi
 
-# Every seeding path must know about both files.
-for f in force-cn.txt force-abroad.txt; do
-	grep -q "$f" oxidns-rules-baseline/Makefile \
-		|| { echo "baseline Makefile does not seed $f" >&2; exit 1; }
-	grep -q "$f" oxidns-rules-baseline/files/90-oxidns-rules \
-		|| { echo "uci-defaults does not seed $f" >&2; exit 1; }
-	grep -q "$f" root/etc/init.d/oxidns \
-		|| { echo "init script does not seed $f" >&2; exit 1; }
-done
-
-# The baseline package must install the files/rules overlay.
-grep -q '\$(CP) ./files/rules/' oxidns-rules-baseline/Makefile \
-	|| { echo "baseline install missing files/rules overlay" >&2; exit 1; }
-
-# The Rules page swaps the whole rules directory, so the update flow must
-# carry the force lists over (current working copy first, baseline as seed).
-grep -q 'force-cn.txt force-abroad.txt' root/usr/libexec/rpcd/luci.oxidns \
-	|| { echo "rpcd rules update does not carry over the force lists" >&2; exit 1; }
-
-# The force lists are NOT subscription files: the Rules page stage check must
-# not require them in the release archive.
-if awk '/^rules_files\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
-	| grep -q 'force-'; then
-	echo "rules_files() must not list the force lists" >&2
+# All rule files shipped by the baseline must come from the release archive
+# overlay; there is no longer a local files/rules overlay to install.
+if grep -q './files/rules' oxidns-rules-baseline/Makefile; then
+	echo "baseline Makefile still installs a local files/rules overlay" >&2
 	exit 1
 fi

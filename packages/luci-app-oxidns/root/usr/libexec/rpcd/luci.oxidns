@@ -2580,25 +2580,6 @@ emit_rules_update_locked() {
 		json_detailed_error "rules_stage_failed" "cannot copy the staged rules into place" "stage_rules" "$COPY_FAILED"
 		return 1
 	fi
-	# The hand-maintained force lists are not part of the subscription
-	# archive, but the update swaps the whole rules directory: carry them
-	# over so an update never drops or reverts them. The current working
-	# copy wins (it may hold local edits); the baseline only seeds a
-	# missing file.
-	for FILE_NAME in force-cn.txt force-abroad.txt; do
-		if [ -s "$RULES_DIR/$FILE_NAME" ]; then
-			cp "$RULES_DIR/$FILE_NAME" "$STAGE_DIR/$FILE_NAME" 2>/dev/null \
-				|| COPY_FAILED="$FILE_NAME"
-		elif [ -s "$RULES_BASELINE_DIR/$FILE_NAME" ]; then
-			cp "$RULES_BASELINE_DIR/$FILE_NAME" "$STAGE_DIR/$FILE_NAME" 2>/dev/null \
-				|| COPY_FAILED="$FILE_NAME"
-		fi
-	done
-	if [ -n "$COPY_FAILED" ]; then
-		rm -rf "$STAGE_DIR" "$WORK_DIR"
-		json_detailed_error "rules_stage_failed" "cannot carry over the force lists" "stage_rules" "$COPY_FAILED"
-		return 1
-	fi
 	rm -rf "$WORK_DIR"
 
 	if ! rules_space_check "$STAGE_DIR"; then
