@@ -1,0 +1,120 @@
+name: Clean Releases and Tags
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep_releases:
+        description: '保留最新 Release 和 Tag 的数量'
+        required: true
+        default: '3'
+      keep_runs:
+        description: '保留最新 Workflow Runs 的数量（最少为 1，以防报错）'
+        required: true
+        default: '1'
+
+permissions:
+  actions: write
+  contents: write # 控制 Release 和 Git Tag
+
+concurrency:
+  group: clean-releases
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Delete Old Releases and Associated Tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEEP_COUNT: ${{ github.event.inputs.keep_releases }}
+        run: |
+          # 校验输入：必须是 >=1 的数字，防止手滑输入 0 删光全部 Release
+          case "$KEEP_COUNT" in
+            ''|*[!0-9]*)
+              echo "❌ keep_releases 必须是数字，当前值：'$KEEP_COUNT'"
+              exit 1
+              ;;
+          esac
+          if [ "$KEEP_COUNT" -lt 1 ]; then
+            echo "❌ keep_releases 至少为 1，防止误删全部 Release"
+            exit 1
+          fi
+
+          echo "=== 开始清理 Releases，保留最新 ${KEEP_COUNT} 个 ==="
+
+          releases_json=$(gh release list --repo ${{ github.repository }} --limit 1000 --json tagName)
+          releases_to_delete=$(echo "$releases_json" | jq -r ".[${KEEP_COUNT}:][].tagName")
+
+          if [ -z "$releases_to_delete" ]; then
+            echo "没有需要删除的 Release"
+          else
+            for tag in $releases_to_delete; do
+              echo "正在删除 Release: $tag"
+              gh release delete "$tag" --repo ${{ github.repository }} -y || true
+
+              echo "正在强制彻底删除远端 Git Tag: $tag"
+              gh api -X DELETE repos/${{ github.repository }}/git/refs/tags/$tag || true
+            done
+          fi
+
+      - name: Delete Orphan/Remaining Old Git Tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEEP_COUNT: ${{ github.event.inputs.keep_releases }}
+        run: |
+          echo "=== 检查并清理孤立的旧 Git Tags（保留最新的 ${KEEP_COUNT} 个 Tag）==="
+
+          case "$KEEP_COUNT" in
+            ''|*[!0-9]*)
+              echo "❌ keep_releases 必须是数字，当前值：'$KEEP_COUNT'"
+              exit 1
+              ;;
+          esac
+          if [ "$KEEP_COUNT" -lt 1 ]; then
+            echo "❌ keep_releases 至少为 1"
+            exit 1
+          fi
+
+          # 注意：tags API 的顺序没有官方保证，目前依赖 tag 名可按时序排序
+          # （OpenWrt-YYYYMMDD-HHMM 格式恰好满足）。手动打了其他名字的 tag 后请人工核对。
+          tags_to_delete=$(gh api repos/${{ github.repository }}/tags --paginate -q '.[].name' | tail -n +$((KEEP_COUNT + 1)))
+
+          if [ -z "$tags_to_delete" ]; then
+            echo "没有多余的 Git Tag 需要清理"
+          else
+            for tag in $tags_to_delete; do
+              echo "正在删除残留 Git Tag: $tag"
+              gh api -X DELETE repos/${{ github.repository }}/git/refs/tags/$tag || true
+            done
+          fi
+
+      - name: Delete Old Workflow Runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEEP_COUNT: ${{ github.event.inputs.keep_runs }}
+        run: |
+          echo "=== 开始清理 Workflow Runs，保留最新 ${KEEP_COUNT} 个 ==="
+
+          case "$KEEP_COUNT" in
+            ''|*[!0-9]*)
+              echo "❌ keep_runs 必须是数字，当前值：'$KEEP_COUNT'"
+              exit 1
+              ;;
+          esac
+          if [ "$KEEP_COUNT" -lt 1 ]; then
+            echo "❌ keep_runs 至少为 1，防止误删"
+            exit 1
+          fi
+
+          runs_to_delete=$(gh api repos/${{ github.repository }}/actions/runs --paginate -q '.workflow_runs[].id' | tail -n +$((KEEP_COUNT + 1)))
+
+          if [ -z "$runs_to_delete" ]; then
+            echo "没有需要删除的 Workflow Run"
+          else
+            for run_id in $runs_to_delete; do
+              echo "正在删除 Run ID: $run_id"
+              gh api -X DELETE repos/${{ github.repository }}/actions/runs/$run_id || true
+            done
+          fi
