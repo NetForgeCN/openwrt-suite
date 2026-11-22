@@ -26,7 +26,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=oxidns-rules-baseline
 PKG_VERSION:=2026.11.17.0223
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 PKGARCH:=all
 
 PKG_LICENSE:=GPL-3.0-or-later MIT 0BSD
@@ -76,6 +76,10 @@ endef
 define Package/oxidns-rules-baseline/install
 	$(INSTALL_DIR) $(1)/usr/share/oxidns/rules-baseline
 	$(CP) $(PKG_BUILD_DIR)/src/. $(1)/usr/share/oxidns/rules-baseline/
+	# The force-cn / force-abroad policy lists are hand-maintained in this
+	# repository (not part of the release archive) and ship next to the
+	# subscription files with the same seeding rules.
+	$(CP) ./files/rules/. $(1)/usr/share/oxidns/rules-baseline/
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) ./files/90-oxidns-rules $(1)/etc/uci-defaults/90-oxidns-rules
 endef
@@ -90,7 +94,7 @@ define Package/oxidns-rules-baseline/postinst
 mkdir -p /etc/oxidns/rules 2>/dev/null || exit 0
 for rule_file in adguard-antiad.txt adguard-hostlist.txt anti-ad-domains.txt \
 	adrules-domains.txt neodevhost-domains.txt accelerated-domains.china.conf \
-	cn-domains.txt; do
+	cn-domains.txt force-cn.txt force-abroad.txt; do
 	if [ ! -s "/etc/oxidns/rules/$$rule_file" ] && \
 	   [ -s "/usr/share/oxidns/rules-baseline/$$rule_file" ]; then
 		cp "/usr/share/oxidns/rules-baseline/$$rule_file" "/etc/oxidns/rules/$$rule_file"

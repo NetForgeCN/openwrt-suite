@@ -26,25 +26,10 @@ msgstr ""
 msgid "All"
 msgstr ""
 
-msgid "Answer & routing"
-msgstr ""
-
-msgid "Answer IP origin: %s domestic / %s overseas"
-msgstr ""
-
-msgid "Answers"
-msgstr ""
-
 msgid "Applying service action..."
 msgstr ""
 
 msgid "Archive"
-msgstr ""
-
-msgid "Authoritative NS"
-msgstr ""
-
-msgid "Auto (from probe)"
 msgstr ""
 
 msgid "Available"
@@ -63,18 +48,6 @@ msgid "Bundle"
 msgstr ""
 
 msgid "Bundled"
-msgstr ""
-
-msgid "CDN / hosting"
-msgstr ""
-
-msgid "CNAME chain"
-msgstr ""
-
-msgid "Cache Lookup"
-msgstr ""
-
-msgid "Cached domains (up to 15)"
 msgstr ""
 
 msgid "Cancel"
@@ -140,15 +113,6 @@ msgstr ""
 msgid "Current version"
 msgstr ""
 
-msgid "DNS provider"
-msgstr ""
-
-msgid "Default routing (no explicit split outlet recorded)"
-msgstr ""
-
-msgid "Probe found no split line in %s"
-msgstr ""
-
 msgid "Delete configuration file"
 msgstr ""
 
@@ -164,13 +128,7 @@ msgstr ""
 msgid "Disabled"
 msgstr ""
 
-msgid "Domain"
-msgstr ""
-
 msgid "Domain lists used for China/ad split and ad blocking. The working copy is seeded from the bundled baseline at boot and can be updated from a published release."
-msgstr ""
-
-msgid "Domestic"
 msgstr ""
 
 msgid "Download core archive"
@@ -194,12 +152,6 @@ msgstr ""
 msgid "Enabled (core not saved yet)"
 msgstr ""
 
-msgid "Enter a domain first."
-msgstr ""
-
-msgid "Enter a domain to see cached answers and routing."
-msgstr ""
-
 msgid "Error"
 msgstr ""
 
@@ -207,12 +159,6 @@ msgid "Error code"
 msgstr ""
 
 msgid "Example: http://127.0.0.1:7890"
-msgstr ""
-
-msgid "Failed to query NS info."
-msgstr ""
-
-msgid "Failed to query OxiDNS API. Check that the service is running and api_pass is set."
 msgstr ""
 
 msgid "Failed to save settings"
@@ -225,9 +171,6 @@ msgid "Format: http://host:port, https://host:port, socks5://host:port, or socks
 msgstr ""
 
 msgid "GitHub token"
-msgstr ""
-
-msgid "Hosting info"
 msgstr ""
 
 msgid "Install Core"
@@ -257,12 +200,6 @@ msgstr ""
 msgid "Installing uploaded OxiDNS core..."
 msgstr ""
 
-msgid "Internal"
-msgstr ""
-
-msgid "International"
-msgstr ""
-
 msgid "Keyword (qname, domain, text...)"
 msgstr ""
 
@@ -270,9 +207,6 @@ msgid "Latest version"
 msgstr ""
 
 msgid "Lines"
-msgstr ""
-
-msgid "Loading hosting info..."
 msgstr ""
 
 msgid "Local copy"
@@ -293,25 +227,10 @@ msgstr ""
 msgid "Missing"
 msgstr ""
 
-msgid "Name"
-msgstr ""
-
 msgid "No"
 msgstr ""
 
-msgid "No cached A/AAAA answer"
-msgstr ""
-
-msgid "No results."
-msgstr ""
-
 msgid "No rule update available."
-msgstr ""
-
-msgid "Not available"
-msgstr ""
-
-msgid "Not detected"
 msgstr ""
 
 msgid "Not installed"
@@ -380,22 +299,7 @@ msgstr ""
 msgid "Prepare download"
 msgstr ""
 
-msgid "Privacy"
-msgstr ""
-
-msgid "Private / internal address"
-msgstr ""
-
-msgid "Probe failed."
-msgstr ""
-
-msgid "Probing live route (bypassing cache)..."
-msgstr ""
-
 msgid "QType"
-msgstr ""
-
-msgid "RCODE"
 msgstr ""
 
 msgid "RCode"
@@ -434,18 +338,6 @@ msgstr ""
 msgid "Reset"
 msgstr ""
 
-msgid "Resolve"
-msgstr ""
-
-msgid "Resolve a domain to load upstream timing."
-msgstr ""
-
-msgid "Resolving also runs a bypass-cache route probe."
-msgstr ""
-
-msgid "Resolving..."
-msgstr ""
-
 msgid "Restart"
 msgstr ""
 
@@ -459,12 +351,6 @@ msgid "Restoring rules from the bundled baseline..."
 msgstr ""
 
 msgid "Resume"
-msgstr ""
-
-msgid "Retest upstreams"
-msgstr ""
-
-msgid "Route group"
 msgstr ""
 
 msgid "Rule Subscriptions"
@@ -506,9 +392,6 @@ msgstr ""
 msgid "Saving settings..."
 msgstr ""
 
-msgid "Search the live OxiDNS cache and inspect answers, split routing, hosting info and upstream timing. Paste a URL to extract its hostname."
-msgstr ""
-
 msgid "Select release archive"
 msgstr ""
 
@@ -531,9 +414,6 @@ msgid "Settings saved."
 msgstr ""
 
 msgid "Size"
-msgstr ""
-
-msgid "Split reason"
 msgstr ""
 
 msgid "Stage"
@@ -560,46 +440,13 @@ msgstr ""
 msgid "Store the core binary and webui under /etc/oxidns/core, which is kept during firmware upgrades. Requires enough free space on the overlay partition."
 msgstr ""
 
-msgid "Record TTL"
-msgstr ""
-
-msgid "Cache remaining"
-msgstr ""
-
-msgid "Cache state"
-msgstr ""
-
-msgid "Expires at"
-msgstr ""
-
-msgid "Fresh"
-msgstr ""
-
-msgid "Stale"
-msgstr ""
-
-msgid "Expired / stale"
-msgstr ""
-
 msgid "Target"
-msgstr ""
-
-msgid "Tested %s upstream(s)."
-msgstr ""
-
-msgid "Testing %s upstreams (1-3s)..."
 msgstr ""
 
 msgid "The OxiDNS core is already up to date."
 msgstr ""
 
 msgid "This overwrites every rule file in the working copy with the bundled baseline."
-msgstr ""
-
-msgid "Time"
-msgstr ""
-
-msgid "Type a domain or paste a URL..."
 msgstr ""
 
 msgid "Unable to load configuration."
@@ -635,15 +482,6 @@ msgstr ""
 msgid "Upload has been cancelled"
 msgstr ""
 
-msgid "Upstream"
-msgstr ""
-
-msgid "Upstream timing"
-msgstr ""
-
-msgid "Upstreams follow the route detected by the bypass-cache probe; timing bypasses cache without affecting health stats."
-msgstr ""
-
 msgid "Validate"
 msgstr ""
 
@@ -654,9 +492,6 @@ msgid "Validate uploaded core"
 msgstr ""
 
 msgid "Validating configuration..."
-msgstr ""
-
-msgid "Verdict"
 msgstr ""
 
 msgid "Verify checksum"
@@ -703,7 +538,3 @@ msgstr ""
 
 msgid "Yes"
 msgstr ""
-
-msgid "fastest"
-msgstr ""
-

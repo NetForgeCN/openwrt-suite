@@ -13,7 +13,10 @@ PERSIST_WEBUI="$PERSIST_DIR/webui"
 WEBUI_DIR="/usr/share/oxidns/webui"
 RULES_DIR="/etc/oxidns/rules"
 RULES_BASELINE_DIR="/usr/share/oxidns/rules-baseline"
-RULE_FILES="adguard-antiad.txt adguard-hostlist.txt anti-ad-domains.txt adrules-domains.txt neodevhost-domains.txt accelerated-domains.china.conf cn-domains.txt"
+# force-cn/force-abroad are hand-maintained policy lists shipped by the
+# baseline package (not part of the subscription archive); the Rules page
+# re-seeds them from the baseline after its whole-directory swap.
+RULE_FILES="adguard-antiad.txt adguard-hostlist.txt anti-ad-domains.txt adrules-domains.txt neodevhost-domains.txt accelerated-domains.china.conf cn-domains.txt force-cn.txt force-abroad.txt"
 
 load_oxidns_settings() {
 	config_load oxidns

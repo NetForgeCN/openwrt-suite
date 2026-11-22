@@ -2,7 +2,7 @@
 
 set -eu
 
-node -e "for (const f of ['htdocs/luci-static/resources/view/oxidns/overview.js','htdocs/luci-static/resources/view/oxidns/core.js','htdocs/luci-static/resources/view/oxidns/config.js','htdocs/luci-static/resources/view/oxidns/logs.js','htdocs/luci-static/resources/view/oxidns/settings.js','htdocs/luci-static/resources/view/oxidns/rules.js','htdocs/luci-static/resources/view/oxidns/cache.js']) new Function(require('fs').readFileSync(f,'utf8'));"
+node -e "for (const f of ['htdocs/luci-static/resources/view/oxidns/overview.js','htdocs/luci-static/resources/view/oxidns/core.js','htdocs/luci-static/resources/view/oxidns/config.js','htdocs/luci-static/resources/view/oxidns/logs.js','htdocs/luci-static/resources/view/oxidns/settings.js','htdocs/luci-static/resources/view/oxidns/rules.js']) new Function(require('fs').readFileSync(f,'utf8'));"
 node -e "for (const f of ['root/usr/share/luci/menu.d/luci-app-oxidns.json','root/usr/share/rpcd/acl.d/luci-app-oxidns.json','root/usr/share/oxidns/targets.json']) JSON.parse(require('fs').readFileSync(f,'utf8'));"
 node <<'NODE'
 const fs = require('fs');
@@ -15,7 +15,6 @@ for (const file of [
 	'htdocs/luci-static/resources/view/oxidns/logs.js',
 	'htdocs/luci-static/resources/view/oxidns/settings.js',
 	'htdocs/luci-static/resources/view/oxidns/rules.js',
-	'htdocs/luci-static/resources/view/oxidns/cache.js',
 ]) {
 	const source = fs.readFileSync(file, 'utf8');
 	const re = /_\(\s*(['"])((?:\\.|[^\\])*?)\1\s*\)/g;
@@ -80,123 +79,21 @@ grep -q 'config_get API_PASS main api_pass' root/etc/init.d/oxidns
 grep -q 'procd_set_param env OXIDNS_API_PASS=' root/etc/init.d/oxidns
 grep -q 'uci_get api_pass' root/usr/libexec/rpcd/luci.oxidns
 grep -q 'export OXIDNS_API_PASS' root/usr/libexec/rpcd/luci.oxidns
-# [cache lookup] rpcd must register all diagnostic methods in list + dispatch.
-for m in cache_suggest cache_detail upstreams probe_upstreams zone_info trace_route; do
-	grep -q "\"$m\":" root/usr/libexec/rpcd/luci.oxidns
-	grep -q "^			$m)" root/usr/libexec/rpcd/luci.oxidns
-done
-# [cache lookup] The two handlers that call the authenticated management API
-# (api_http_get -> Basic Auth with OXIDNS_API_PASS) MUST call load_settings in
-# their own body. rpcd does not inherit the procd service env; without this the
-# API returns 401, the body is empty, and the page silently shows 0 entries.
-# Check the function body, not the whole file, so a load_settings elsewhere
-# cannot satisfy the assertion.
-for fn in emit_cache_suggest emit_cache_detail; do
-	if ! awk -v fn="$fn" '
-		$0 == fn "() {" { in_fn = 1 }
-		in_fn && /load_settings/ { found = 1 }
-		in_fn && $0 == "}" { exit }
-		END { exit(found ? 0 : 1) }
-	' root/usr/libexec/rpcd/luci.oxidns; then
-		echo "$fn() must call load_settings() before api_http_get (API auth)" >&2
-		exit 1
-	fi
-done
-# [cache lookup] The frontend must surface cache_ok=0 instead of silently
-# rendering an empty cache when the management API call failed.
-grep -q 'res.cache_ok === 0' htdocs/luci-static/resources/view/oxidns/cache.js
-# [cache lookup] trace_route (bypass-cache probe) contract:
-#  - ACL must grant it, else ubus rejects the call.
-#  - the handler must delete the cache entry, issue a real query, and read the
-#    recorder execution path, with a log fallback.
-#  - the frontend must read core's answer payload fields (payload_text/payload)
-#    so A/AAAA IPs actually render, and must auto-run the probe + drive group.
-grep -q '"trace_route"' root/usr/share/rpcd/acl.d/luci-app-oxidns.json
-awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
-	| grep -q 'entries/delete'
-awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
-	| grep -q 'recorder_main/records/'
-# [cache lookup r10] The split reason is read from the query_summary line, so
-# candidate-log discovery must not depend on guessing the config. With
-# log.rotation=daily, tracing-appender writes "<file>.<YYYY-MM-DD>" and never
-# the bare "<file>", so a config-only guess finds nothing. Discovery therefore
-# starts from the oxidns process's own file descriptors and also globs the
-# rotated names.
-awk '/^log_candidate_files\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
-	| grep -q '/proc/'
-awk '/^log_candidate_files\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
-	| grep -q 'pidof oxidns'
-awk '/^log_candidate_files\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
-	| grep -q '\*oxidns\*log\*'
-awk '/^log_candidate_files\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
-	| grep -q 'config_log_file'
-awk '/^scan_log_for_qname\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
-	| grep -q 'qname=\$SL_QN'
-awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
-	| grep -q 'log_candidate_files "\$CANDS"'
-awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
-	| grep -q 'scan_log_for_qname "\$LF" "\$Q"'
-awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
-	| grep -q "grep -i 'oxidns'"
-# The log fallback must also run when the recorder returned steps but no
-# log_* outlet (a cache-only record from a failed bypass), not only when the
-# recorder was unreachable.
-awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
-	| grep -q 'if \[ -z "\$TR_OUTLET" \]; then'
-# busybox logread has no portable -e; the snapshot is filtered with grep.
-if awk '/^emit_trace_route\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
-	| grep -q 'logread -l'; then
-	echo "logread -l is not portable; filter the snapshot locally" >&2; exit 1
-fi
-# A cache-hit outlet must never be reported as the split path: the probe deletes
-# the entry and re-queries, so "cache hit" would be a lie.
-if awk '/^classify_steps\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
-	| grep -q '\*log_cache_.*TR_OUTLET'; then
-	echo "classify_steps must not map log_cache_* to a split outlet" >&2; exit 1
-fi
-if awk '/^classify_log\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
-	| grep -q 'TR_OUTLET="国内缓存命中"'; then
-	echo "classify_log must not report a cache hit as the split path" >&2; exit 1
-fi
-grep -q 'callTraceRoute' htdocs/luci-static/resources/view/oxidns/cache.js
-grep -q 'payload_text' htdocs/luci-static/resources/view/oxidns/cache.js
-grep -q 'answerValue' htdocs/luci-static/resources/view/oxidns/cache.js
-grep -q 'state.tracedGroup' htdocs/luci-static/resources/view/oxidns/cache.js
-# [cache lookup r7] The split group must be decided from answer-IP geography
-# (the reliable primary signal), with trace_route as enrichment only. Assert
-# the geo-driven decision chain exists so the page never falls back to a
-# single hard-coded group when recorder/dig are unavailable on minimal builds.
-for sym in geoText normaliseGeo decideGroupFromGeo startGeoBatch maybeFinaliseRoute describeGeo; do
-	grep -q "function $sym" htdocs/luci-static/resources/view/oxidns/cache.js || {
-		echo "cache.js missing geo-decision function $sym" >&2; exit 1; }
-done
-# geoText must coerce object fields, otherwise flag/country objects render as
-# "[object Object]" (the exact bug seen in the wild).
-grep -q "typeof v === 'object'" htdocs/luci-static/resources/view/oxidns/cache.js
-# CDN/hosting must be detectable from the geo provider's org/isp field, since
-# youtube.com / taobao.com answer with A records and have no CNAME to match.
-grep -q 'function hostingFromGeo' htdocs/luci-static/resources/view/oxidns/cache.js
-grep -q 'HOSTING_ORG_RULES' htdocs/luci-static/resources/view/oxidns/cache.js
-# [cache lookup r8] Remaining TTL must be shown as a live countdown sourced
-# from expire_at_unix_ms (with a local-tick fallback) and refreshed after the
-# bypass-cache probe rewrites the entry. Assert the full chain so the page
-# never shows a single frozen TTL number again.
-for sym in collectTtlInfo startTtlCountdown refreshTtlAfterTrace; do
-	grep -q "function $sym" htdocs/luci-static/resources/view/oxidns/cache.js || {
-		echo "cache.js missing TTL function $sym" >&2; exit 1; }
-done
-for needle in 'expire_at_unix_ms' 'oxidns-ttl-remaining' 'oxidns-ttl-original' \
-	'oxidns-ttl-state' 'oxidns-ttl-expires' 'window.setInterval(tick, 1000)' \
-	'window.clearInterval(ttlTimer)' 'refreshTtlAfterTrace(qname)'; do
-	grep -q "$needle" htdocs/luci-static/resources/view/oxidns/cache.js || {
-		echo "cache.js missing TTL marker: $needle" >&2; exit 1; }
-done
 sh -n scripts/build-luci-package.sh
 sh -n scripts/integration-check.sh
 sh -n scripts/service-check.sh
 sh -n scripts/release-check.sh
 sh -n scripts/build-rules-baseline.sh
 sh -n oxidns-rules-baseline/files/90-oxidns-rules
+
+# [cache lookup removed] Keep the page and its RPC surface gone. A stale menu
+# entry or ACL method would leave a dead view in LuCI, so fail if any of them
+# ever comes back.
+if grep -qi 'cache.js\|Cache Lookup\|cache_suggest\|cache_detail\|probe_upstreams\|zone_info\|trace_route' \
+	htdocs root 2>/dev/null; then
+	echo "Cache Lookup page artifacts are still present" >&2
+	exit 1
+fi
 
 # jsonfilter rejects "@.[*]" (dot before the bracket): it exits non-zero and
 # prints nothing, which is indistinguishable from an empty result and once
@@ -215,5 +112,49 @@ self_copy="$(grep -rnF --include=Makefile '$(PKG_BUILD_DIR)/.' . 2>/dev/null \
 if [ -n "$self_copy" ]; then
 	echo 'Makefile copies $(PKG_BUILD_DIR)/. into the package dir: use a subdirectory such as $(PKG_BUILD_DIR)/src' >&2
 	echo "$self_copy" >&2
+	exit 1
+fi
+
+# [force lists r12] force-cn.txt / force-abroad.txt are hand-maintained policy
+# lists shipped by the baseline package. Every non-comment line must be a valid
+# domain_set expression, both files must stay reasonably populated, and every
+# distribution path must list them so they are seeded and survive the Rules
+# page whole-directory swap.
+for f in oxidns-rules-baseline/files/rules/force-cn.txt \
+	oxidns-rules-baseline/files/rules/force-abroad.txt; do
+	[ -f "$f" ] || { echo "missing $f" >&2; exit 1; }
+	bad="$(grep -v '^[[:space:]]*#' "$f" | grep -v '^[[:space:]]*$' \
+		| grep -cv '^\(full\|domain\):[a-z0-9.-]*$' || true)"
+	[ "$bad" = 0 ] || { echo "$f has $bad invalid rule lines" >&2; exit 1; }
+done
+cn_count="$(grep -c '^\(full\|domain\):' oxidns-rules-baseline/files/rules/force-cn.txt)"
+ab_count="$(grep -c '^\(full\|domain\):' oxidns-rules-baseline/files/rules/force-abroad.txt)"
+[ "$cn_count" -ge 80 ] || { echo "force-cn.txt lost entries ($cn_count)" >&2; exit 1; }
+[ "$ab_count" -ge 50 ] || { echo "force-abroad.txt lost entries ($ab_count)" >&2; exit 1; }
+
+# Every seeding path must know about both files.
+for f in force-cn.txt force-abroad.txt; do
+	grep -q "$f" oxidns-rules-baseline/Makefile \
+		|| { echo "baseline Makefile does not seed $f" >&2; exit 1; }
+	grep -q "$f" oxidns-rules-baseline/files/90-oxidns-rules \
+		|| { echo "uci-defaults does not seed $f" >&2; exit 1; }
+	grep -q "$f" root/etc/init.d/oxidns \
+		|| { echo "init script does not seed $f" >&2; exit 1; }
+done
+
+# The baseline package must install the files/rules overlay.
+grep -q '\$(CP) ./files/rules/' oxidns-rules-baseline/Makefile \
+	|| { echo "baseline install missing files/rules overlay" >&2; exit 1; }
+
+# The Rules page swaps the whole rules directory, so the update flow must
+# carry the force lists over (current working copy first, baseline as seed).
+grep -q 'force-cn.txt force-abroad.txt' root/usr/libexec/rpcd/luci.oxidns \
+	|| { echo "rpcd rules update does not carry over the force lists" >&2; exit 1; }
+
+# The force lists are NOT subscription files: the Rules page stage check must
+# not require them in the release archive.
+if awk '/^rules_files\(\) \{/{f=1} f{print} f&&/^}/{exit}' root/usr/libexec/rpcd/luci.oxidns \
+	| grep -q 'force-'; then
+	echo "rules_files() must not list the force lists" >&2
 	exit 1
 fi
