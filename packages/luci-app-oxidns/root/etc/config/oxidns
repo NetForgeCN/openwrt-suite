@@ -11,7 +11,11 @@ config settings 'main'
 	# 留空 = 不注入，oxidns 会因变量未定义而启动/检查失败（fail closed）。
 	option api_pass ''
 
-config prewarm 'main'
+# Section ID must be 'prewarm', not 'main': rpcd/init.d read these via
+# `uci get oxidns.prewarm.*`. Reusing the 'main' ID collides with the
+# settings section above and makes `uci get oxidns.main.api_pass` return
+# empty, which breaks ${OXIDNS_API_PASS} expansion in the UI check.
+config prewarm 'prewarm'
 	option enabled '1'
 	option protocol 'udp'
 	option server '127.0.0.1'

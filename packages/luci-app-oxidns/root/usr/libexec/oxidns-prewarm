@@ -59,7 +59,10 @@ load_settings() {
 	case "$INTERVAL" in
 		''|*[!0-9]*) INTERVAL=3000 ;;
 		*)
-			if [ "$INTERVAL" -gt 86400 ]; then
+			# Mirror rpcd prewarm_save: 0 = run once, otherwise 60..86400.
+			if [ "$INTERVAL" -ne 0 ] && [ "$INTERVAL" -lt 60 ]; then
+				INTERVAL=3000
+			elif [ "$INTERVAL" -gt 86400 ]; then
 				INTERVAL=86400
 			fi
 			;;
@@ -157,7 +160,10 @@ while :; do
 		if [ "$INTERVAL" -gt 0 ]; then
 			NEXT_RUN=$((NOW + INTERVAL))
 		else
-			NEXT_RUN=$((NOW + 3600))
+			# 0 = run once (at start / on config change), matching the UI text
+			# "0 = run once at service start". No periodic re-run; a future
+			# interval change still fires immediately via the DUE=1 path.
+			NEXT_RUN=$((NOW + 31536000))
 		fi
 	fi
 	sleep 5

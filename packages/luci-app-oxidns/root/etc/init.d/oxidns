@@ -21,8 +21,35 @@ PREWARM_DEFAULT_FILE="${PREWARM_DEFAULT_FILE:-/usr/share/oxidns/prewarm.default.
 # archive; there are no hand-maintained local policy lists.
 RULE_FILES="adguard-antiad.txt adguard-hostlist.txt anti-ad-domains.txt adrules-domains.txt neodevhost-domains.txt accelerated-domains.china.conf cn-domains.txt"
 
+# One-time self-heal for the shipped bad config (fde42f8): `config prewarm
+# 'main'` collided with `config settings 'main'`, hiding api_pass. Two cases:
+# only the bad section -> rename it; both bad and a proper `prewarm 'prewarm'`
+# section exist (prewarm_save may have created one) -> drop the bad block so
+# IDs stay unique. Never use uci commit here (shadowed options get lost).
+heal_prewarm_section_id() {
+	local cfg="${UCI_CONFIG_FILE:-/etc/config/oxidns}"
+	[ -r "$cfg" ] || return 0
+	grep -q "^config prewarm 'main'" "$cfg" 2>/dev/null || return 0
+
+	if grep -q "^config prewarm 'prewarm'" "$cfg" 2>/dev/null; then
+		local tmp="${cfg}.oxidns-heal.$$"
+		if awk -v bad="config prewarm 'main'" '
+			$0 == bad { drop = 1; next }
+			/^config / { drop = 0 }
+			!drop { print }
+		' "$cfg" > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+			cat "$tmp" > "$cfg" 2>/dev/null || true
+		fi
+		rm -f "$tmp" 2>/dev/null || true
+	else
+		sed -i "s/^config prewarm 'main'/config prewarm 'prewarm'/" "$cfg" 2>/dev/null || true
+	fi
+	return 0
+}
+
 load_oxidns_settings() {
 	API_PASS=""
+	heal_prewarm_section_id
 	config_load oxidns
 	config_get CONFIG_PATH main config_path "$DEFAULT_CONFIG_PATH"
 	config_get WORKING_DIR main working_dir "$DEFAULT_WORKING_DIR"

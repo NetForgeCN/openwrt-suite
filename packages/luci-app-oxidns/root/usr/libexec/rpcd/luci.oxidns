@@ -4,6 +4,7 @@ set -eu
 
 UCI_PACKAGE="oxidns"
 UCI_SECTION="main"
+UCI_CONFIG_FILE="${UCI_CONFIG_FILE:-/etc/config/oxidns}"
 OXIDNS_BIN="${OXIDNS_BIN:-/usr/bin/oxidns}"
 WEBUI_DIR="/usr/share/oxidns/webui"
 PERSIST_DIR="/etc/oxidns/core"
@@ -296,7 +297,44 @@ uci_get() {
 	fi
 }
 
+# One-time self-heal for the shipped bad config: fde42f8 wrote the prewarm
+# section as `config prewarm 'main'`, colliding with `config settings 'main'`.
+# UCI keeps one section per ID, so `uci get oxidns.main.api_pass` returned the
+# prewarm section (no api_pass) and ${OXIDNS_API_PASS} expansion failed with
+# "undefined environment variable". This also means `uci get oxidns.prewarm.*`
+# never resolved, so prewarm settings saved in LuCI silently fell back to
+# defaults until this fix.
+#
+# Two cases must be handled (prewarm_save creates a proper 'prewarm' section
+# when it can't see one, so a persisted config may contain BOTH sections):
+#   1) only `prewarm 'main'`  -> rename it, keeping its options
+#   2) `prewarm 'main'` AND `prewarm 'prewarm'` -> drop the whole bad block,
+#      keeping the user-saved 'prewarm' section (renaming would duplicate IDs)
+# Do NOT use `uci rename` + commit: on a colliding file UCI's parser drops the
+# shadowed settings options and a commit would erase api_pass. Idempotent.
+heal_prewarm_section_id() {
+	[ -r "$UCI_CONFIG_FILE" ] || return 0
+	grep -q "^config prewarm 'main'" "$UCI_CONFIG_FILE" 2>/dev/null || return 0
+
+	if grep -q "^config prewarm 'prewarm'" "$UCI_CONFIG_FILE" 2>/dev/null; then
+		local tmp="${UCI_CONFIG_FILE}.oxidns-heal.$$"
+		if awk -v bad="config prewarm 'main'" '
+			$0 == bad { drop = 1; next }
+			/^config / { drop = 0 }
+			!drop { print }
+		' "$UCI_CONFIG_FILE" > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+			cat "$tmp" > "$UCI_CONFIG_FILE" 2>/dev/null || true
+		fi
+		rm -f "$tmp" 2>/dev/null || true
+	else
+		sed -i "s/^config prewarm 'main'/config prewarm 'prewarm'/" \
+			"$UCI_CONFIG_FILE" 2>/dev/null || true
+	fi
+	return 0
+}
+
 load_settings() {
+	heal_prewarm_section_id
 	SERVICE_NAME="$DEFAULT_SERVICE_NAME"
 	CONFIG_PATH="$(uci_get config_path "$DEFAULT_CONFIG_PATH")"
 	WORKING_DIR="$(uci_get working_dir "$DEFAULT_WORKING_DIR")"
@@ -2720,6 +2758,14 @@ emit_rules_restore_locked() {
 
 
 load_prewarm_settings() {
+	# Heal the legacy colliding section ID before any UCI access. This function
+	# is reached by both prewarm_read (page load) and prewarm_save (page save).
+	# prewarm_save ends with `uci commit oxidns`, which rewrites the whole file;
+	# on a colliding config libuci keeps only one 'main' section and silently
+	# drops api_pass / config_path / working_dir. Self-healing here makes the
+	# save path safe even when it is the very first action after upgrading from
+	# fde42f8 (no status call, no service restart to trigger the other heals).
+	heal_prewarm_section_id
 	PREWARM_ENABLED=1
 	PREWARM_PROTOCOL=udp
 	PREWARM_SERVER=127.0.0.1
@@ -2755,7 +2801,9 @@ load_prewarm_settings() {
 	case "$PREWARM_INTERVAL" in
 		''|*[!0-9]*) PREWARM_INTERVAL=3000 ;;
 		*)
-			if [ "$PREWARM_INTERVAL" -gt 86400 ]; then
+			if [ "$PREWARM_INTERVAL" -ne 0 ] && [ "$PREWARM_INTERVAL" -lt 60 ]; then
+				PREWARM_INTERVAL=3000
+			elif [ "$PREWARM_INTERVAL" -gt 86400 ]; then
 				PREWARM_INTERVAL=86400
 			fi
 			;;
@@ -2873,11 +2921,11 @@ emit_prewarm_save() {
 	case "$INTERVAL_VALUE" in
 		''|*[!0-9]*) INTERVAL_VALUE="" ;;
 	esac
-	if [ -z "$INTERVAL_VALUE" ] || [ "$INTERVAL_VALUE" -gt 86400 ]; then
-		json_error "invalid_prewarm_interval" "interval must be 0 or between 60 and 86400 seconds"
-		return 1
-	fi
-	if [ "$INTERVAL_VALUE" -ne 0 ] && [ "$INTERVAL_VALUE" -lt 60 ]; then
+	# 0 = run once; otherwise enforce the documented 60..86400 range so the
+	# error text matches what is actually accepted.
+	if [ -z "$INTERVAL_VALUE" ] || \
+		{ [ "$INTERVAL_VALUE" -ne 0 ] && \
+		  { [ "$INTERVAL_VALUE" -lt 60 ] || [ "$INTERVAL_VALUE" -gt 86400 ]; }; }; then
 		json_error "invalid_prewarm_interval" "interval must be 0 or between 60 and 86400 seconds"
 		return 1
 	fi
