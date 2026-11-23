@@ -156,6 +156,16 @@ if grep -rqi 'force-cn\|force-abroad\|force_cn\|force_abroad' \
 	exit 1
 fi
 
+# [r16] Only the five rule lists actually loaded by OxiDNS are shipped and
+# validated. The two redundant files must not reappear in the baseline or in
+# any seeding path (scripts/ is excluded: the build script still needs the
+# dnsmasq-china-list source to convert into cn-domains.txt).
+if grep -rqi 'adguard-antiad\.txt\|accelerated-domains\.china\.conf' \
+	oxidns-rules-baseline root htdocs 2>/dev/null; then
+	echo "redundant rule files must stay out of the baseline (r16)" >&2
+	exit 1
+fi
+
 # All rule files shipped by the baseline must come from the release archive
 # overlay; there is no longer a local files/rules overlay to install.
 if grep -q './files/rules' oxidns-rules-baseline/Makefile; then

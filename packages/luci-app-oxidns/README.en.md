@@ -1,158 +1,164 @@
-# luci-app-oxidns
+# luci-app-oxidns (NetForgeCN)
 
-Language: [中文](./README.md) | English
+[中文](./README.md)
 
-`luci-app-oxidns` is the LuCI management app for OxiDNS on OpenWrt. After installation, LuCI adds `Services -> OxiDNS` pages for managing the OxiDNS core binary, the OpenWrt service, configuration, and logs.
+A LuCI management app for OxiDNS on OpenWrt. Once installed, `Services -> OxiDNS` gives you a complete UI for the core binary, configuration, service, logs, rule subscriptions and DNS prewarming.
 
-Built on [svenshi/luci-app-oxidns](https://github.com/svenshi/luci-app-oxidns). Licensed under GPL-3.0-or-later.
+Built on the [svenshi/luci-app-oxidns](https://github.com/svenshi/luci-app-oxidns) framework, with one extra goal: **installed and ready, resilient across upgrades, and popular domains already resolved**. Licensed under GPL-3.0-or-later.
 
-## Features
+## What this fork adds
 
-| Capability | Description |
+| Capability | What you get | Why it matters |
+|---|---|---|
+| Bundled core | `oxidns-core` packages the official binary, WebUI and default config at build time | DNS works right after flashing; no first-run core download |
+| Bundled rule baseline | `oxidns-rules-baseline` ships five rule lists | First boot works offline; missing rule files are restored automatically |
+| Rule subscriptions | `Rules` page checks and applies updates with SHA256 verification, staging and rollback | One-click rule updates, validated and staged before replacement |
+| DNS prewarming | `Prewarm` page queries A / AAAA records ahead of time and fills the cache | First visit to common domains is served from cache |
+| Core upgrades | `Core -> Check Update` | Upgrade the core without rebuilding firmware |
+| Log filtering | Keyword plus `plugin` / `qtype` / `rcode` filters and a live line count | Find the queries you care about, even in large logs |
+| API password handling | Password lives in UCI and is injected into both the service and rpcd | No plaintext password in YAML; config validation and service stay in sync |
+| Upgrade self-healing | Core, WebUI, config and rules recover after sysupgrade | Keep settings, reinstall the app once, and the service is back |
+
+## Pages
+
+| Page | Purpose |
 |---|---|
-| Core binary location | `/etc/oxidns/core/oxidns` (persistent); runtime path `/usr/bin/oxidns` is a symlink |
-| Configuration persistence | `/etc/oxidns` and `/etc/config/oxidns` are added to `/etc/sysupgrade.conf`, so config survives a "keep settings" firmware upgrade |
-| Recovery after sysupgrade | Symlinks are rebuilt automatically; reinstall the package once and the service is back |
-| Core upgrades | `Check Update` button on the `Core` page |
-| Logs | Keyword filter plus `plugin` / `qtype` / `rcode` dropdowns with a live line counter |
-| Low-flash devices | Persistence can be disabled in `Settings` |
-| Rule subscriptions | `oxidns-rules-baseline` ships the baseline; files are seeded locally at boot, the `Rules` page updates from a repository release |
+| `Overview` | Core / service status, WebUI entry, config path, log status |
+| `Core` | Install, upload, upgrade, repair or remove the core |
+| `Configuration` | View, validate and save `config.yaml` |
+| `Logs` | Filter and refresh OxiDNS logs |
+| `Settings` | Repository, bundle, proxy, paths, logging and API password |
+| `Rules` | Baseline status, check for updates, apply updates |
+| `Prewarm` | Enable switch, domain list, target endpoint, interval and manual run |
 
-## Building From Source
+## Quick start
 
-### Option 1: OpenWrt buildroot / SDK (recommended, can be baked into firmware)
+1. Install the package as described in “Build and install”.
+2. Set the API password; it is stored only in UCI:
+
+   ```sh
+   uci set oxidns.main.api_pass="$(openssl rand -base64 24)"
+   uci commit oxidns
+   /etc/init.d/rpcd restart
+   ```
+
+3. Open `Services -> OxiDNS -> Configuration`, adjust `config.yaml`, then click `Save & Restart`.
+4. Open `Overview`, start the service and enable it at boot.
+5. Open `Prewarm`, make sure the target matches the listener in `config.yaml`, then click `Run now`.
+
+## DNS prewarming
+
+Prewarming walks the domain list and sends A and AAAA queries to the selected OxiDNS listener. The queries pass through that listener's rule chain, fill the cache, and later client requests hit the cache directly.
+
+| Item | Default |
+|---|---|
+| Enabled | yes |
+| Target | `udp://127.0.0.1:5333` |
+| Interval | 3000 seconds (~50 minutes) |
+| List | 89 bundled domains, editable in the page |
+| Concurrency | 4 |
+| Query timeout / retries | 2 seconds / 1 |
+
+Three things make prewarming effective:
+
+- `config.yaml` contains a `cache` plugin on the chain used by the target listener;
+- the IP, port and protocol in the page match the listener's `listen` value;
+- the router has `dig`, or an `nslookup` that supports `-port`.
+
+`Server IP` accepts `127.0.0.1` or `192.168.1.1`; port and protocol are free-form. `Run now` ignores the enable switch and always runs one pass. An interval of `0` runs once at service start.
+
+Verify it:
 
 ```sh
-# 1. Prepare an OpenWrt build environment matching your target firmware
+logread -t oxidns-prewarm              # per-pass results
+/usr/libexec/oxidns-prewarm --once     # run one pass manually
+dig @127.0.0.1 -p 5333 youtube.com A   # confirm the listener responds
+```
+
+## Rule baseline
+
+The baseline ships only the five lists OxiDNS actually loads. Lists are fetched and validated at build time, so the device never converts formats:
+
+| File | Purpose |
+|---|---|
+| `cn-domains.txt` | Long-tail China domains, used with geosite |
+| `anti-ad-domains.txt` | anti-AD domain list |
+| `adrules-domains.txt` | AdRules domain list |
+| `neodevhost-domains.txt` | neoDevHost domain list |
+| `adguard-hostlist.txt` | AdGuard HostlistsRegistry rules |
+
+`cn-domains.txt` is converted from dnsmasq-china-list on the build machine; the original conf is not shipped. Updates go through the `Rules` page: staged, validated, then swapped in. If validation does not pass, the previous set is kept.
+
+## Build and install
+
+### Option 1: OpenWrt buildroot (recommended, can be baked into firmware)
+
+```sh
 git clone https://github.com/openwrt/openwrt.git
 cd openwrt
 ./scripts/feeds update -a
 ./scripts/feeds install -a
 
-# 2. Clone this repository as a package (includes the oxidns-core and
-#    oxidns-rules-baseline subpackages)
 git clone https://github.com/NetForgeCN/luci-app-oxidns.git package/luci-app-oxidns
-
-# 3. Select it in menuconfig (LuCI -> Applications -> luci-app-oxidns; oxidns-core
-#    and oxidns-rules-baseline are hard dependencies and get selected with it)
 make menuconfig
-
-# 4. Build
+# LuCI -> Applications -> luci-app-oxidns
 make package/luci-app-oxidns/compile V=s
 ```
 
-**Bundled core**: the `oxidns-core` subpackage downloads the official OxiDNS release for the target architecture at build time (URL and SHA256 pinned in `oxidns-core/Makefile`) and bakes the binary, webui and default config into the firmware/ipk. The installed system has a working core out of the box — no first-run download needed. Runtime updates via the LuCI `Check Update` button are not limited to the pinned version.
+`oxidns-core` and `oxidns-rules-baseline` are hard dependencies and are selected with the app. Artifacts appear in `bin/packages/<arch>/`.
 
-**Bundled rules**: `oxidns-rules-baseline` is another build-time download (URL and SHA256 pinned) that lands in `/usr/share/oxidns/rules-baseline`. `luci-app-oxidns` depends on it unconditionally, so a firmware that includes the app always includes the rule baseline: the files are copied into `/etc/oxidns/rules` at package install and again before every service start, which means **the first boot needs no network at all**. Use `Services -> OxiDNS -> Rules` to check for and install newer lists.
+Supported targets: x86_64, aarch64, i386 and ARM hard-float (cortex maps to armv7, others to armv6). On architectures without a published musl core (for example MIPS), leave `oxidns-core` unselected and upload a core from the page.
 
-- Supported architectures: x86_64, aarch64, i386 (i686 binary), ARM hard-float (cortex → armv7, others → armv6).
-- For unsupported architectures (e.g. MIPS), build `luci-app-oxidns` without `oxidns-core` and install the core from the LuCI page instead.
-- To bump the core version, edit `PKG_VERSION` and the matching `PKG_HASH` in `oxidns-core/Makefile` and rebuild.
+### Option 2: Quick packaging
 
-Artifacts land in `bin/packages/<arch>/`: `oxidns-core_*.ipk`, `oxidns-rules-baseline_*.ipk`, `luci-app-oxidns_*.ipk` and `luci-i18n-oxidns-zh-cn_*.ipk`. Selecting `<*>` in menuconfig bakes the plugin, the core and the rule baseline directly into the firmware image.
-
-### Option 2: Quick packaging without the SDK
-
-Requires `node`, `tar`, `gzip`, `sha256sum`:
+Requires `node`, `tar`, `gzip` and `sha256sum`:
 
 ```sh
 git clone https://github.com/NetForgeCN/luci-app-oxidns.git
 cd luci-app-oxidns
 
-# Plain package (core downloaded from the LuCI page after install)
+# App only; install the core later from LuCI
 ./scripts/build-luci-package.sh 0.2.0 dist
 
-# Package with an embedded core (works out of the box on the matching arch)
-curl -LO https://github.com/svenshi/oxidns/releases/download/v1.6.1/oxidns-x86_64-unknown-linux-musl.tar.gz
-./scripts/build-luci-package.sh 0.2.0 dist-embedded oxidns-x86_64-unknown-linux-musl.tar.gz
-
-# Core plus the rule baseline. The fourth argument is the baseline tarball from
-# the release pinned in oxidns-rules-baseline/Makefile.
+# App with embedded core and rule baseline (pick the asset for your CPU)
+curl -LO https://github.com/svenshi/oxidns/releases/download/v1.7.1/oxidns-x86_64-unknown-linux-musl.tar.gz
 curl -LO https://github.com/NetForgeCN/luci-app-oxidns/releases/download/rules-v2026.11.17.0223/oxidns-rules-baseline-2026.11.17.0223.tar.gz
-./scripts/build-luci-package.sh 0.2.0 dist-embedded oxidns-x86_64-unknown-linux-musl.tar.gz \
+./scripts/build-luci-package.sh 0.2.0 dist-embedded \
+	oxidns-x86_64-unknown-linux-musl.tar.gz \
 	oxidns-rules-baseline-2026.11.17.0223.tar.gz
 ```
 
-When embedding a core, pick the release asset matching the router CPU (x86_64 / aarch64 / armv7 / i686). postinst unpacks it into `/etc/oxidns/core` on install and creates the symlinks. An embedded rule baseline lands in `/usr/share/oxidns/rules-baseline` and is copied to `/etc/oxidns/rules` by `/etc/init.d/oxidns` on the first start.
-
-## Install On The Router
+Install:
 
 ```sh
-opkg install luci-app-oxidns_0.2.0-r1_all.ipk
-opkg install luci-i18n-oxidns-zh-cn_0.2.0-r1_all.ipk
-# or on apk-based OpenWrt:
-apk add --allow-untrusted ./luci-app-oxidns_0.2.0-r1_all.apk
+opkg install luci-app-oxidns_*.ipk
+opkg install luci-i18n-oxidns-zh-cn_*.ipk
+# apk systems:
+apk add --allow-untrusted ./luci-app-oxidns_*.apk
 ```
 
-Then open LuCI → `Services -> OxiDNS`:
+## Persistence and upgrades
 
-1. Core already in the package (buildroot or embedded-core build): `Configuration` page → edit `config.yaml` → `Save & Restart`, then `Overview` page → `Start` + `Start on boot`;
-2. Plain package: `Core` page → `Install Core` (auto-selects the release for your CPU architecture and verifies SHA256; use `Upload Core` offline), then the configuration and start steps above.
+- Core and WebUI live in `/etc/oxidns/core/`; runtime paths are symlinks.
+- `/etc/oxidns` and `/etc/config/oxidns` are added to `/etc/sysupgrade.conf`, so configuration survives a keep-settings upgrade.
+- At boot, missing symlinks and rule files are restored from persistent storage.
+- For a firmware upgrade, keep settings, flash, then reinstall the app once.
+- Upgrade the core with `Core -> Check Update` and the lists with `Rules`; they are independent.
 
-## Persistence And Self-Healing
+## Default paths
 
-- **Bundled core (build time)**: buildroot builds embed the official core via the `oxidns-core` subpackage; quick packaging embeds one when a core archive is passed as the third argument. The system has DNS capability right after install — no first-run download.
-- **Persistent core**: the binary and webui live in `/etc/oxidns/core/` on the persistent partition; runtime paths are symlinks. They survive a sysupgrade with "keep settings".
-- **Persistent configuration**: `/etc/oxidns` and `/etc/config/oxidns` are appended to `/etc/sysupgrade.conf` on install.
-- **Boot self-healing**: init script, rpcd status and package postinst all recreate missing symlinks from the persistent copy. After a firmware upgrade, reinstalling the package once brings the service back.
-- **LuCI core updates**: `Check Update` compares the installed version with the latest GitHub release and updates in place (with SHA256 verification).
-- **Log filtering**: keyword filter plus `plugin` / `qtype` / `rcode` dropdowns with a live line counter.
-
-## Firmware Upgrade Steps
-
-1. LuCI → System → Backup / Flash Firmware, check **"keep settings"**;
-2. Flash the new firmware;
-3. Reinstall this package once (the plugin's own files are wiped by sysupgrade — that is how OpenWrt works);
-4. Done. postinst rebuilds the core symlinks automatically; configuration is preserved.
-
-Without "keep settings", everything is wiped — that is the OpenWrt mechanism itself.
-
-## API Password (Environment Variable)
-
-The config references the API password as `${OXIDNS_API_PASS}` instead of storing
-it in plaintext YAML. **Two** scripts must inject this variable — missing either
-one causes failure (symptom: clicking check/save in the UI reports
-`env expansion failed ... undefined environment variable 'OXIDNS_API_PASS'`):
-
-- `/etc/init.d/oxidns`: injects via `procd_set_param env` at service start;
-- `/usr/libexec/rpcd/luci.oxidns`: exported so rpcd's children (config check/save,
-  core install) inherit it.
-
-The password lives in UCI at `oxidns.main.api_pass`; both scripts read it:
-
-```sh
-uci set oxidns.main.api_pass='your-strong-password'   # e.g. openssl rand -base64 24
-uci commit oxidns
-/etc/init.d/oxidns restart
-/etc/init.d/rpcd restart
-```
-
-Leaving it empty means the variable is not exported and oxidns **fails closed**
-rather than falling back to a weak password. UCI files are plaintext — keep
-`/etc/config/oxidns` root-readable only. If you manually added a hardcoded
-`procd_set_param env OXIDNS_API_PASS='...'` line to the init script, remove it
-and use UCI instead, otherwise the rpcd path still fails.
-
-## Default Paths
-
-- Binary (runtime): `/usr/bin/oxidns` (symlink)
-- Binary (persistent): `/etc/oxidns/core/oxidns`
-- WebUI (runtime): `/usr/share/oxidns/webui` (symlink)
-- WebUI (persistent): `/etc/oxidns/core/webui`
-- Config: `/etc/oxidns/config.yaml`
-- Working directory: `/var/lib/oxidns` (tmpfs, runtime only)
-- Init script: `/etc/init.d/oxidns`
-- Rule baseline (read-only): `/usr/share/oxidns/rules-baseline`
-- Rule working copy: `/etc/oxidns/rules` (seeded from the baseline when missing)
-
-## Known Limitations
-
-- Only published Linux musl release targets of OxiDNS are supported.
-- Low-flash devices (less free overlay space than the core bundle) should disable `Persist core across upgrades` in `Settings`.
-- The `Overview` WebUI entry is generated from the HTTP listen address; `127.0.0.1` requires local access or an SSH tunnel.
-- Private core repositories or restricted networks can use a GitHub token or download proxy in `Settings` (requires `curl`).
-- The rule baseline unpacks to about 24MB (7 lists) and is a hard dependency: `luci-app-oxidns` declares `+oxidns-rules-baseline`, so selecting the app compiles the baseline into the firmware too. `Rules` page updates come from this repository's release assets.
+| Purpose | Path |
+|---|---|
+| Core (runtime / persistent) | `/usr/bin/oxidns` → `/etc/oxidns/core/oxidns` |
+| WebUI (runtime / persistent) | `/usr/share/oxidns/webui` → `/etc/oxidns/core/webui` |
+| Core config | `/etc/oxidns/config.yaml` |
+| Working directory | `/var/lib/oxidns` |
+| UCI config | `/etc/config/oxidns` |
+| Rule baseline (read-only) | `/usr/share/oxidns/rules-baseline` |
+| Rule working copy | `/etc/oxidns/rules` |
+| Prewarm list | `/etc/oxidns/prewarm.txt` |
+| Init script | `/etc/init.d/oxidns` |
 
 ## License
 
-GPL-3.0-or-later, see [LICENSE](LICENSE). Based on [svenshi/luci-app-oxidns](https://github.com/svenshi/luci-app-oxidns) and [svenshi/oxidns](https://github.com/svenshi/oxidns). Thanks to the original author.
+GPL-3.0-or-later, see [LICENSE](LICENSE). Built on [svenshi/luci-app-oxidns](https://github.com/svenshi/luci-app-oxidns) and [svenshi/oxidns](https://github.com/svenshi/oxidns); thanks to the original authors.

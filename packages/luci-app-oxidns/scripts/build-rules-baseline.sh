@@ -9,7 +9,7 @@
 #         dist/oxidns-rules-baseline/            (unpacked tree, for inspection)
 #
 # The archive root is oxidns-rules-baseline/ and it contains:
-#   6 upstream lists + cn-domains.txt (converted) + MANIFEST.txt
+#   4 upstream rule lists + cn-domains.txt (converted) + MANIFEST.txt
 #   + VERSION + SHA256SUMS + LICENSES/
 #
 # Everything is validated before the tarball is written: OxiDNS aborts the
@@ -24,6 +24,10 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BASE_NAME="oxidns-rules-baseline"
 BASE_DIR="$OUT_DIR/$BASE_NAME"
 ASSET="$OUT_DIR/$BASE_NAME-$VERSION.tar.gz"
+# The dnsmasq source is only needed to produce cn-domains.txt. Keep it out of
+# the archive so only the five lists actually loaded by OxiDNS are shipped.
+CHINA_SRC="$OUT_DIR/.accelerated-domains.china.conf.$$"
+trap 'rm -f "$CHINA_SRC"' EXIT HUP INT TERM
 
 need_cmd() {
 	command -v "$1" >/dev/null 2>&1 || {
@@ -114,7 +118,6 @@ rm -rf "$BASE_DIR" "$ASSET" "$ASSET.sha256"
 mkdir -p "$BASE_DIR/LICENSES"
 
 printf '== downloading upstream lists ==\n'
-fetch "$BASE_DIR/adguard-antiad.txt" "https://anti-ad.net/easylist.txt"
 fetch "$BASE_DIR/adguard-hostlist.txt" \
 	"https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt"
 fetch "$BASE_DIR/anti-ad-domains.txt" \
@@ -126,17 +129,17 @@ fetch "$BASE_DIR/adrules-domains.txt" \
 fetch "$BASE_DIR/neodevhost-domains.txt" \
 	"https://cdn.jsdelivr.net/gh/neodevpro/neodevhost@master/domain" \
 	"https://raw.githubusercontent.com/neodevpro/neodevhost/master/domain"
-fetch "$BASE_DIR/accelerated-domains.china.conf" \
+fetch "$CHINA_SRC" \
 	"https://cdn.jsdelivr.net/gh/felixonmars/dnsmasq-china-list@master/accelerated-domains.china.conf" \
 	"https://raw.githubusercontent.com/felixonmars/dnsmasq-china-list/master/accelerated-domains.china.conf"
 
-printf '== converting accelerated-domains.china.conf ==\n'
-sed -n 's|^server=/\([^/]*\)/.*|\1|p' "$BASE_DIR/accelerated-domains.china.conf" \
+printf '== converting dnsmasq-china-list to cn-domains.txt ==\n'
+sed -n 's|^server=/\([^/]*\)/.*|\1|p' "$CHINA_SRC" \
 	| grep -F . \
 	| LC_ALL=C sort -u > "$BASE_DIR/cn-domains.txt"
+rm -f "$CHINA_SRC"
 
 printf '== validating ==\n'
-validate_plain_list "$BASE_DIR/adguard-antiad.txt" 50000
 validate_plain_list "$BASE_DIR/adguard-hostlist.txt" 50000
 validate_domain_set "$BASE_DIR/anti-ad-domains.txt" 50000
 validate_domain_set "$BASE_DIR/adrules-domains.txt" 100000
@@ -159,12 +162,10 @@ printf '%s\n' "$VERSION" > "$BASE_DIR/VERSION"
 	printf '#\n'
 	printf '%-34s %10s %8s  %s\n' FILE BYTES LINES LICENSE
 	for entry in \
-		"adguard-antiad.txt:GPL-3.0-or-later" \
 		"adguard-hostlist.txt:GPL-3.0-or-later" \
 		"anti-ad-domains.txt:MIT" \
 		"adrules-domains.txt:0BSD" \
 		"neodevhost-domains.txt:MIT" \
-		"accelerated-domains.china.conf:WTFPL" \
 		"cn-domains.txt:derived"
 	do
 		name="${entry%%:*}"
@@ -176,13 +177,11 @@ printf '%s\n' "$VERSION" > "$BASE_DIR/VERSION"
 	done
 	printf '#\n'
 	printf '# sources:\n'
-	printf '#  adguard-antiad.txt            https://anti-ad.net/easylist.txt\n'
 	printf '#  adguard-hostlist.txt          https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt\n'
 	printf '#  anti-ad-domains.txt           https://github.com/privacy-protection-tools/anti-AD\n'
 	printf '#  adrules-domains.txt           https://github.com/Cats-Team/AdRules\n'
 	printf '#  neodevhost-domains.txt        https://github.com/neodevpro/neodevhost\n'
-	printf '#  accelerated-domains.china...  https://github.com/felixonmars/dnsmasq-china-list\n'
-	printf '#  cn-domains.txt                converted from accelerated-domains.china.conf\n'
+	printf '#  cn-domains.txt                converted from dnsmasq-china-list (source not shipped)\n'
 	printf '#\n'
 	printf '# License texts: LICENSES/ (GPL-3.0 for the AdGuard filter, MIT for anti-AD and\n'
 	printf '# neodevhost, 0BSD for AdRules, WTFPL-style for dnsmasq-china-list).\n'
@@ -190,7 +189,7 @@ printf '%s\n' "$VERSION" > "$BASE_DIR/VERSION"
 
 (
 	cd "$BASE_DIR"
-	sha256_list *.txt *.conf > SHA256SUMS
+	sha256_list *.txt > SHA256SUMS
 )
 
 # Reproducible timestamps: two builds of the same rule data must produce the
@@ -250,9 +249,8 @@ sha256_of "$ASSET" > "$ASSET.sha256"
 # data actually changed between two builds (the tarball bytes always differ
 # because of timestamps).
 {
-	for name in adguard-antiad.txt adguard-hostlist.txt anti-ad-domains.txt \
-		adrules-domains.txt neodevhost-domains.txt \
-		accelerated-domains.china.conf cn-domains.txt; do
+	for name in adguard-hostlist.txt anti-ad-domains.txt \
+		adrules-domains.txt neodevhost-domains.txt cn-domains.txt; do
 		printf '%s  %s\n' "$(sha256_of "$BASE_DIR/$name")" "$name"
 	done
 } | LC_ALL=C sort | sha256_stdin > "$OUT_DIR/CONTENT-SHA256"

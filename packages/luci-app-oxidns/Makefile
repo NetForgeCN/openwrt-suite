@@ -2,10 +2,10 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-oxidns
 PKG_VERSION:=0.2.0
-PKG_RELEASE:=15
+PKG_RELEASE:=16
 
 PKG_LICENSE:=GPL-3.0-or-later
-PKG_MAINTAINER:=Sven Shi <isvenshi@gmail.com>
+PKG_MAINTAINER:=NetForgeCN
 
 LUCI_TITLE:=LuCI support for OxiDNS
 # oxidns-rules-baseline is a hard dependency, not "+PACKAGE_...:" (conditional):

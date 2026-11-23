@@ -1,6 +1,6 @@
 name: rules-baseline
 
-# Rebuilds the bundled OxiDNS rule baseline from the four upstream projects and
+# Rebuilds the bundled OxiDNS rule baseline from five upstream projects and
 # publishes it as a release asset (tag rules-vYYYY.MM.DD[.HHMM]) of this
 # repository.
 #

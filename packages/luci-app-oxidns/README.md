@@ -1,157 +1,164 @@
-# luci-app-oxidns
+# luci-app-oxidns（NetForgeCN）
 
-语言：中文 | [English](./README.en.md)
+[English](./README.en.md)
 
-`luci-app-oxidns` 是 OxiDNS 的 OpenWrt / LuCI 管理插件。安装后，LuCI 会出现 `Services -> OxiDNS` 页面，用来管理 OxiDNS 内核二进制、OpenWrt 服务、配置与日志。
+一个面向 OpenWrt 的 OxiDNS 管理插件。安装后，LuCI 的 `Services -> OxiDNS` 提供内核、配置、服务、日志、规则和预热的完整管理界面。
 
-本仓库在 [svenshi/luci-app-oxidns](https://github.com/svenshi/luci-app-oxidns) 的基础上实现，遵循 GPL-3.0-or-later 开源。
+它在 [svenshi/luci-app-oxidns](https://github.com/svenshi/luci-app-oxidns) 的框架之上，补齐了“**装好即用、升级不丢、常用域名提前解析**”的能力。基于 GPL-3.0-or-later 发布。
 
-## 功能特性
+## 相比上游增加了什么
 
-| 能力 | 说明 |
+| 能力 | 这个版本 | 带来的好处 |
+|---|---|---|
+| 内核随包分发 | `oxidns-core` 子包在编译期内置官方核心、WebUI 和默认配置 | 刷完固件就有 DNS 能力，首次使用无需联网安装内核 |
+| 规则随包分发 | `oxidns-rules-baseline` 子包内置 5 份规则基线 | 首次启动完全离线完成，规则文件缺失时自动补齐 |
+| 规则订阅管理 | `Rules` 页检查 / 更新，带 SHA256 校验、暂存校验和回滚 | 一键完成规则升级，替换前先完成校验与暂存 |
+| 域名预热 | `Prewarm` 页按 A / AAAA 提前查询并写入缓存 | 常用域名首次访问直接使用缓存，减少等待 |
+| 内核在线升级 | `Core` 页 `Check Update` | 不用重新编译固件即可升级内核 |
+| 日志筛选 | 关键词 + `plugin` / `qtype` / `rcode` 过滤，实时行数 | 快速定位某类查询，日志再多也能看 |
+| API 密码托管 | 密码存 UCI，脚本自动注入 `${OXIDNS_API_PASS}` | 配置里不放明文，服务与网页校验都能正常工作 |
+| 升级自愈 | 内核、WebUI、配置和规则在 sysupgrade 后自动恢复 | 保留配置升级固件后，重装一次插件即可恢复服务 |
+
+## 页面一览
+
+| 页面 | 用途 |
 |---|---|
-| 内核二进制存放 | `/etc/oxidns/core/oxidns`（持久区），运行路径 `/usr/bin/oxidns` 为符号链接 |
-| 配置持久化 | `/etc/oxidns`、`/etc/config/oxidns` 写入 `/etc/sysupgrade.conf`，勾选"保留配置"升级固件后保留 |
-| 升级固件后恢复 | 自动重建符号链接，重装一次插件包即恢复 |
-| 内核升级 | `Core` 页 `Check Update` 一键检查并升级 |
-| 日志 | 关键词过滤 + `plugin` / `qtype` / `rcode` 字段筛选，实时显示筛选后行数 |
-| 低闪存设备 | `Settings` 可关闭持久化 |
-| 规则订阅 | `oxidns-rules-baseline` 包内置基线，启动前本地补齐；`Rules` 页从仓库 release 检查并更新 |
+| `Overview` | 内核 / 服务状态、WebUI 入口、配置路径、日志状态 |
+| `Core` | 安装、上传、升级、修复或移除内核 |
+| `Configuration` | 查看、校验、保存 `config.yaml` |
+| `Logs` | 过滤和刷新 OxiDNS 日志 |
+| `Settings` | 仓库、bundle、代理、路径、日志与 API 密码 |
+| `Rules` | 规则基线状态、检查更新、一键更新 |
+| `Prewarm` | 预热开关、域名清单、目标地址与周期、手动执行 |
 
-## 从源码构建
+## 快速开始
 
-### 方式一：OpenWrt buildroot / SDK 编译（推荐，可集成进固件）
+1. 按下面的“构建与安装”把插件装进固件或路由器。
+2. 设置 API 密码，密码只保存在 UCI：
+
+   ```sh
+   uci set oxidns.main.api_pass="$(openssl rand -base64 24)"
+   uci commit oxidns
+   /etc/init.d/rpcd restart
+   ```
+
+3. 打开 `Services -> OxiDNS -> Configuration`，按需编辑 `config.yaml`，点 `Save & Restart`。
+4. 打开 `Overview`，启动服务并启用开机自启。
+5. 打开 `Prewarm`，确认目标地址与 `config.yaml` 中的监听一致，点 `Run now` 立即预热。
+
+## 域名预热（Prewarm）
+
+预热会遍历清单里的每个域名，向指定的 OxiDNS 监听地址发起 A 和 AAAA 查询。查询经过该监听入口的规则链并进入缓存后，客户端首次访问这些域名时就能直接命中。
+
+| 项目 | 默认值 |
+|---|---|
+| 启用 | 开 |
+| 目标 | `udp://127.0.0.1:5333` |
+| 周期 | 3000 秒（约 50 分钟） |
+| 清单 | 包内默认 89 个域名，可在页面增删 |
+| 并发 | 4 |
+| 单次查询超时 / 重试 | 2 秒 / 1 次 |
+
+让预热生效只需要三件事：
+
+- `config.yaml` 里有 `cache` 插件，并且它在预热目标入口实际执行的链路上；
+- 预热页里的 IP、端口、协议与 `udp_server` / `tcp_server` 的 `listen` 一致；
+- 路由器上有 `dig`，或支持 `-port` 的 `nslookup`。
+
+页面上的 `Server IP` 可选 `127.0.0.1` 或 `192.168.1.1`；端口和协议可自由填写。`Run now` 不受总开关影响，可随时手动执行一轮。周期填 `0` 表示服务启动时执行一次。
+
+验证预热：
 
 ```sh
-# 1. 准备 OpenWrt 构建环境（版本需与目标固件匹配）
+logread -t oxidns-prewarm              # 查看每轮结果
+/usr/libexec/oxidns-prewarm --once     # 手动执行一轮
+dig @127.0.0.1 -p 5333 youtube.com A   # 验证监听口在应答
+```
+
+## 规则基线
+
+基线只包含 OxiDNS 实际加载的 5 份列表，构建时从上游拉取并校验，设备中不需要再做格式转换：
+
+| 文件 | 用途 |
+|---|---|
+| `cn-domains.txt` | 国内域名长尾，配合 geosite 判定国内组 |
+| `anti-ad-domains.txt` | anti-AD 域名表 |
+| `adrules-domains.txt` | AdRules 域名表 |
+| `neodevhost-domains.txt` | neoDevHost 域名表 |
+| `adguard-hostlist.txt` | AdGuard HostlistsRegistry 规则 |
+
+`cn-domains.txt` 由 dnsmasq-china-list 在构建机上转换生成，原始 conf 不随包分发。规则更新由 `Rules` 页统一处理，先校验再替换；校验不通过时自动保留上一版。
+
+## 构建与安装
+
+### 方式一：OpenWrt buildroot（推荐，可编进固件）
+
+```sh
 git clone https://github.com/openwrt/openwrt.git
 cd openwrt
 ./scripts/feeds update -a
 ./scripts/feeds install -a
 
-# 2. 把本仓库克隆为 package（自带 oxidns-core 与 oxidns-rules-baseline 子包）
 git clone https://github.com/NetForgeCN/luci-app-oxidns.git package/luci-app-oxidns
-
-# 3. menuconfig 中选中（LuCI -> Applications -> luci-app-oxidns；
-#    oxidns-core 与 oxidns-rules-baseline 是硬依赖，会随它自动选中）
 make menuconfig
-
-# 4. 编译
+# LuCI -> Applications -> luci-app-oxidns
 make package/luci-app-oxidns/compile V=s
 ```
 
-**自带核心**：`oxidns-core` 子包在编译期根据目标架构下载对应的官方 OxiDNS release（下载地址与 SHA256 固化在 `oxidns-core/Makefile`），把内核二进制、WebUI 和默认配置直接打进固件/ipk。装好的系统开箱即有核心，第一次使用不需要手动下载；之后可在 `Core` 页用 `Check Update` 升级到任意新版本。
+`oxidns-core` 和 `oxidns-rules-baseline` 是硬依赖，选中插件会一起选中。产物在 `bin/packages/<架构>/`。
 
-**自带规则**：`oxidns-rules-baseline` 子包同样在编译期从本仓库 release 下载并固化 `PKG_HASH`。刷完固件 `/usr/share/oxidns/rules-baseline` 就有 7 份完整列表，包安装时和每次启动前都会把缺失的文件补到 `/etc/oxidns/rules`，因此**首启完全不联网**；要更新再到 `Services -> OxiDNS -> Rules` 页检查/更新。
+支持 x86_64、aarch64、i386、ARM hard-float（cortex 映射 armv7，其余映射 armv6）。MIPS 等未发布 musl 内核的架构可不选 `oxidns-core`，再用页面上传内核。
 
-- 支持架构：x86_64、aarch64、i386（i686 二进制）、ARM hard-float（cortex 系列映射 armv7，其余映射 armv6）。
-- 不支持架构（如 MIPS）：buildroot 中不勾选 `oxidns-core` 也可以单独编译 `luci-app-oxidns`，再用页面里的 `Install Core` 手动安装。
-- 升级核心版本：改 `oxidns-core/Makefile` 里的 `PKG_VERSION` 和对应 `PKG_HASH` 后重新编译。
+### 方式二：快速打包
 
-编译产物在 `bin/packages/<架构>/` 下：`oxidns-core_*.ipk`、`oxidns-rules-baseline_*.ipk`、`luci-app-oxidns_*.ipk` 和 `luci-i18n-oxidns-zh-cn_*.ipk`。在 menuconfig 里直接勾选 `<*>` 也可以把插件、核心和规则基线一起编进固件镜像。
-
-### 方式二：无 SDK 快速打包（只出安装包）
-
-适合不想拉整套 OpenWrt 源码、只想快速拿到 ipk/apk 的场景，需要 `node`、`tar`、`gzip`、`sha256sum`：
+需要 `node`、`tar`、`gzip`、`sha256sum`：
 
 ```sh
 git clone https://github.com/NetForgeCN/luci-app-oxidns.git
 cd luci-app-oxidns
 
-# 普通包（安装后需在 LuCI 页面下载核心）
+# 只打插件，内核到页面安装
 ./scripts/build-luci-package.sh 0.2.0 dist
 
-# 内嵌核心包（把官方 release tar.gz 打进 ipk，安装时自动解包到持久区，开箱即用）
-curl -LO https://github.com/svenshi/oxidns/releases/download/v1.6.1/oxidns-x86_64-unknown-linux-musl.tar.gz
-./scripts/build-luci-package.sh 0.2.0 dist-embedded oxidns-x86_64-unknown-linux-musl.tar.gz
-
-# 内嵌核心 + 内嵌规则基线（第四个参数是基线 tar.gz，取自
-# oxidns-rules-baseline/Makefile 里 PKG_SOURCE_URL/PKG_HASH 指向的 release 资产）
+# 内置内核 + 规则基线（按路由器架构选 release 资产）
+curl -LO https://github.com/svenshi/oxidns/releases/download/v1.7.1/oxidns-x86_64-unknown-linux-musl.tar.gz
 curl -LO https://github.com/NetForgeCN/luci-app-oxidns/releases/download/rules-v2026.11.17.0223/oxidns-rules-baseline-2026.11.17.0223.tar.gz
-./scripts/build-luci-package.sh 0.2.0 dist-embedded oxidns-x86_64-unknown-linux-musl.tar.gz \
+./scripts/build-luci-package.sh 0.2.0 dist-embedded \
+	oxidns-x86_64-unknown-linux-musl.tar.gz \
 	oxidns-rules-baseline-2026.11.17.0223.tar.gz
 ```
 
-内嵌核心时请按目标路由器的 CPU 架构选择 release 资产（x86_64 / aarch64 / armv7 / i686），此时包虽然仍是 `_all` 后缀，但只能在对应架构上使用。安装时 postinst 会自动把核心解包到 `/etc/oxidns/core` 并建好符号链接，`Core` 页会显示已安装。规则基线内嵌后落在 `/usr/share/oxidns/rules-baseline`，首次启动时由 `/etc/init.d/oxidns` 复制到 `/etc/oxidns/rules`。
-
-## 路由器上安装
+安装：
 
 ```sh
-# ipk（旧版 opkg 系统）
-opkg install luci-app-oxidns_0.2.0-r1_all.ipk
-opkg install luci-i18n-oxidns-zh-cn_0.2.0-r1_all.ipk
-
-# apk（新版 OpenWrt）
-apk add --allow-untrusted ./luci-app-oxidns_0.2.0-r1_all.apk
-apk add --allow-untrusted ./luci-i18n-oxidns-zh-cn_0.2.0-r1_all.apk
+opkg install luci-app-oxidns_*.ipk
+opkg install luci-i18n-oxidns-zh-cn_*.ipk
+# apk 系统：
+apk add --allow-untrusted ./luci-app-oxidns_*.apk
 ```
 
-安装完成后浏览器打开 LuCI 的 `Services -> OxiDNS`：
+## 持久化与升级
 
-1. 内核已在包里（buildroot 方式或内嵌核心包）：到 `Configuration` 页编辑 `config.yaml` → `Save & Restart`，再到 `Overview` 页 `Start` + `Start on boot`；
-2. 普通包：先到 `Core` 页 `Install Core`（自动按 CPU 架构下载并校验 SHA256；离线环境用 `Upload Core`），再执行配置和启动步骤。
-
-## 持久化与自愈
-
-- **开箱自带核心（编译期）**：buildroot 方式编译通过 `oxidns-core` 子包把官方内核打进固件/ipk；快速打包加第 3 个参数也会内嵌核心。装上即有 DNS 能力，第一次使用不需要任何下载。
-- **核心持久保存**：内核二进制和 WebUI 安装到持久分区 `/etc/oxidns/core/`，`/usr/bin/oxidns` 与 `/usr/share/oxidns/webui` 是指向它的符号链接。固件升级（勾选保留配置）后内核原样保留。
-- **配置持久保存**：安装时自动把 `/etc/oxidns`、`/etc/config/oxidns` 追加进 `/etc/sysupgrade.conf`，`config.yaml` 和 UCI 设置升级后不丢。
-- **开机自愈**：init 脚本、rpcd 状态查询、插件 postinst 三个时机检测符号链接，丢失即自动从持久区重建。固件升级后只需重装一次插件包，服务即恢复。
-- **LuCI 内核更新**：`Core` 页 `Check Update` 对比当前版本与 GitHub 最新 release，确认后自动下载（含 SHA256 校验）、替换、重启服务。
-- **日志字段过滤**：`Logs` 页支持关键词过滤和 `plugin`、`qtype`、`rcode` 下拉筛选。
-
-## 固件升级操作步骤
-
-1. LuCI → System → Backup / Flash Firmware，**勾选"保留配置"**；
-2. 刷入新固件；
-3. 升级完成后重新安装一次本插件的 ipk/apk（插件自身文件会被 sysupgrade 清除，这是 OpenWrt 机制）；
-4. 完成。postinst 会自动重建内核符号链接，OxiDNS 服务照常运行，配置原样保留。
-
-不勾选"保留配置"则所有数据都会被清除，这是 OpenWrt 机制本身的行为。
-
-## API 密码（环境变量）
-
-配置文件里 `api.http.auth.password` 用 `${OXIDNS_API_PASS}` 引用密码，不在 YAML 里写明文。
-这个值由两个脚本分别注入——**缺任何一处都会报错**（典型症状：网页点"检查/保存配置"
-提示 `env expansion failed ... undefined environment variable 'OXIDNS_API_PASS'`）：
-
-- `/etc/init.d/oxidns`：服务启动时用 `procd_set_param env` 注入；
-- `/usr/libexec/rpcd/luci.oxidns`：网页 check / save / 核心安装时由 rpcd 子进程继承。
-
-密码统一存在 UCI 的 `oxidns.main.api_pass`，两处脚本自动读取：
-
-```sh
-uci set oxidns.main.api_pass='你的强密码'   # 例如 openssl rand -base64 24
-uci commit oxidns
-/etc/init.d/oxidns restart                  # 服务进程重新注入
-/etc/init.d/rpcd restart                    # rpcd 子进程重新继承
-```
-
-留空或删除该选项时变量不会被注入，oxidns 会**启动失败**（fail closed），不会退回到弱口令。
-注意 UCI 配置是明文存储，请确认 `/etc/config/oxidns` 只有 root 可读。
-如果手动在 init 脚本里加了硬编码的 `procd_set_param env OXIDNS_API_PASS='...'`，
-请删掉改用 UCI——否则网页那条路径仍会报错。
+- 内核和 WebUI 放在 `/etc/oxidns/core/`，运行路径是符号链接；
+- `/etc/oxidns`、`/etc/config/oxidns` 加入 `/etc/sysupgrade.conf`，配置跨固件升级保留；
+- 开机时自动补齐缺失的符号链接和规则文件；
+- 升级固件时勾选“保留配置”，刷完重装一次插件即可恢复服务；
+- 内核升级用 `Core -> Check Update`，规则升级用 `Rules` 页，二者互不影响。
 
 ## 默认路径
 
-- 二进制（运行时）：`/usr/bin/oxidns`（符号链接）
-- 二进制（持久化）：`/etc/oxidns/core/oxidns`
-- WebUI（运行时）：`/usr/share/oxidns/webui`（符号链接）
-- WebUI（持久化）：`/etc/oxidns/core/webui`
-- 配置：`/etc/oxidns/config.yaml`
-- 工作目录：`/var/lib/oxidns`（tmpfs，重启清空，仅运行时数据）
-- 服务脚本：`/etc/init.d/oxidns`
-- 规则基线（只读）：`/usr/share/oxidns/rules-baseline`（`oxidns-rules-baseline` 包）
-- 规则工作副本：`/etc/oxidns/rules`（缺失时由启动脚本从基线补齐）
+| 用途 | 路径 |
+|---|---|
+| 内核（运行 / 持久） | `/usr/bin/oxidns` → `/etc/oxidns/core/oxidns` |
+| WebUI（运行 / 持久） | `/usr/share/oxidns/webui` → `/etc/oxidns/core/webui` |
+| 核心配置 | `/etc/oxidns/config.yaml` |
+| 工作目录 | `/var/lib/oxidns` |
+| UCI 配置 | `/etc/config/oxidns` |
+| 规则基线（只读） | `/usr/share/oxidns/rules-baseline` |
+| 规则工作副本 | `/etc/oxidns/rules` |
+| 预热清单 | `/etc/oxidns/prewarm.txt` |
+| 服务脚本 | `/etc/init.d/oxidns` |
 
-## 已知限制
+## 许可与致谢
 
-- 目前只支持 OxiDNS 已发布的 Linux musl release target。
-- 低闪存设备（overlay 剩余空间小于内核包体积）请在 `Settings` 关闭 `Persist core across upgrades`。
-- `Overview` 的 WebUI 入口根据配置文件中的 HTTP listen 地址生成；监听 `127.0.0.1` 时 LuCI 会提示需要本机访问或 SSH 隧道。
-- 私有内核仓库或受限网络环境可在 `Settings` 配置 GitHub token 或下载代理（需要 `curl`）。
-- 规则基线包解包后约 24MB（7 份列表），是硬依赖：`luci-app-oxidns` 的构建依赖里直接写了 `+oxidns-rules-baseline`，选中这个应用就会把基线一起编译进固件。`Rules` 页的更新走本仓库 release 资产。
-
-## 许可
-
-GPL-3.0-or-later，见 [LICENSE](LICENSE)。基于 [svenshi/luci-app-oxidns](https://github.com/svenshi/luci-app-oxidns) 与 [svenshi/oxidns](https://github.com/svenshi/oxidns) 实现与扩展，感谢原作者。
+GPL-3.0-or-later，详见 [LICENSE](LICENSE)。基于 [svenshi/luci-app-oxidns](https://github.com/svenshi/luci-app-oxidns) 和 [svenshi/oxidns](https://github.com/svenshi/oxidns) 构建，感谢上游作者的贡献。

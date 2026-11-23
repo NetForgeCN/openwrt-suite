@@ -19,7 +19,7 @@ PREWARM_FILE="$PREWARM_DIR/prewarm.txt"
 PREWARM_DEFAULT_FILE="${PREWARM_DEFAULT_FILE:-/usr/share/oxidns/prewarm.default.txt}"
 # All rule files come from the baseline package / Rules page subscription
 # archive; there are no hand-maintained local policy lists.
-RULE_FILES="adguard-antiad.txt adguard-hostlist.txt anti-ad-domains.txt adrules-domains.txt neodevhost-domains.txt accelerated-domains.china.conf cn-domains.txt"
+RULE_FILES="adguard-hostlist.txt anti-ad-domains.txt adrules-domains.txt neodevhost-domains.txt cn-domains.txt"
 
 # One-time self-heal for the shipped bad config (fde42f8): `config prewarm
 # 'main'` collided with `config settings 'main'`, hiding api_pass. Two cases:

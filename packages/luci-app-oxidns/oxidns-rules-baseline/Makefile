@@ -17,7 +17,7 @@
 # Why this package exists: domain_set / adguard_rule abort the whole OxiDNS
 # process when a referenced file is missing or contains an unparsable line,
 # and every download/reload path runs after plugin initialisation. Without a
-# local copy the first boot depends on six upstream URLs being reachable.
+# local copy the first boot depends on the upstream rule archives being reachable.
 #
 # The archive is produced by scripts/build-rules-baseline.sh and published as
 # a release asset (tag rules-v<version>) on this repository.
@@ -26,7 +26,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=oxidns-rules-baseline
 PKG_VERSION:=2026.11.17.0223
-PKG_RELEASE:=4
+PKG_RELEASE:=5
 PKGARCH:=all
 
 PKG_LICENSE:=GPL-3.0-or-later MIT 0BSD
@@ -54,7 +54,7 @@ endef
 
 define Package/oxidns-rules-baseline/description
   Bundled baseline of the OxiDNS rule subscriptions (China domain list plus
-  three ad domain lists). Installed to /usr/share/oxidns/rules-baseline and
+  four ad/privacy rule lists). Installed to /usr/share/oxidns/rules-baseline and
   used to seed /etc/oxidns/rules when files are missing, so the DNS service
   starts without downloading anything. Runtime updates are handled by the
   LuCI "Rules" page, which pulls a newer release of the same archive.
@@ -75,7 +75,20 @@ endef
 
 define Package/oxidns-rules-baseline/install
 	$(INSTALL_DIR) $(1)/usr/share/oxidns/rules-baseline
-	$(CP) $(PKG_BUILD_DIR)/src/. $(1)/usr/share/oxidns/rules-baseline/
+	# Copy only the five lists OxiDNS actually loads. The pinned release asset
+	# may still be an older seven-file archive, so installing src/. verbatim
+	# would ship redundant lists that are neither seeded nor validated.
+	$(INSTALL_DATA) \
+		$(PKG_BUILD_DIR)/src/adguard-hostlist.txt \
+		$(PKG_BUILD_DIR)/src/anti-ad-domains.txt \
+		$(PKG_BUILD_DIR)/src/adrules-domains.txt \
+		$(PKG_BUILD_DIR)/src/neodevhost-domains.txt \
+		$(PKG_BUILD_DIR)/src/cn-domains.txt \
+		$(PKG_BUILD_DIR)/src/VERSION \
+		$(PKG_BUILD_DIR)/src/MANIFEST.txt \
+		$(PKG_BUILD_DIR)/src/SHA256SUMS \
+		$(1)/usr/share/oxidns/rules-baseline/
+	$(CP) $(PKG_BUILD_DIR)/src/LICENSES $(1)/usr/share/oxidns/rules-baseline/
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) ./files/90-oxidns-rules $(1)/etc/uci-defaults/90-oxidns-rules
 endef
@@ -88,9 +101,8 @@ define Package/oxidns-rules-baseline/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT:-}" ] && exit 0
 mkdir -p /etc/oxidns/rules 2>/dev/null || exit 0
-for rule_file in adguard-antiad.txt adguard-hostlist.txt anti-ad-domains.txt \
-	adrules-domains.txt neodevhost-domains.txt accelerated-domains.china.conf \
-	cn-domains.txt; do
+for rule_file in adguard-hostlist.txt anti-ad-domains.txt \
+	adrules-domains.txt neodevhost-domains.txt cn-domains.txt; do
 	if [ ! -s "/etc/oxidns/rules/$$rule_file" ] && \
 	   [ -s "/usr/share/oxidns/rules-baseline/$$rule_file" ]; then
 		cp "/usr/share/oxidns/rules-baseline/$$rule_file" "/etc/oxidns/rules/$$rule_file"

@@ -2235,7 +2235,7 @@ emit_core_remove() {
 # ---------------------------------------------------------------------------
 # Rule subscriptions
 #
-# The seven files below are read by file-backed providers during plugin
+# The five files below are read by file-backed providers during plugin
 # initialisation. domain_set/adguard_rule abort the whole process when a file
 # is missing or contains an unparsable line, so every update is staged and
 # validated before it replaces the live directory, and the previous set is
@@ -2244,23 +2244,19 @@ emit_core_remove() {
 
 rules_files() {
 	printf '%s\n' \
-		adguard-antiad.txt \
 		adguard-hostlist.txt \
 		anti-ad-domains.txt \
 		adrules-domains.txt \
 		neodevhost-domains.txt \
-		accelerated-domains.china.conf \
 		cn-domains.txt
 }
 
 rules_min_lines() {
 	case "$1" in
-		adguard-antiad.txt) printf '50000' ;;
 		adguard-hostlist.txt) printf '50000' ;;
 		anti-ad-domains.txt) printf '50000' ;;
 		adrules-domains.txt) printf '100000' ;;
 		neodevhost-domains.txt) printf '100000' ;;
-		accelerated-domains.china.conf) printf '50000' ;;
 		cn-domains.txt) printf '50000' ;;
 		*) printf '1000' ;;
 	esac
