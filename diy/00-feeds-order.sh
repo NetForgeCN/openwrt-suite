@@ -14,7 +14,8 @@
 #   SUITE_REPO   本仓库地址（默认 NetForgeCN/openwrt-suite）
 #   SUITE_DIR    本仓库的本地 checkout 目录。指向有效 suite 仓库时改用 src-link
 #                挂载其 packages/（同提交构建，不再联网克隆远端 main）；
-#                未设置或不是 suite 仓库时回退 src-git（手工接入已有构建的用法）
+#                未设置时自动识别脚本所在的 suite 仓库，识别不到才回退 src-git。
+#                显式指定 SUITE_DIR 始终优先。
 #   FEED_NAME    feed 名（默认 suite，勿与官方 packages/luci/routing/telephony 重名）
 #
 
@@ -24,6 +25,17 @@ export LC_ALL=C LANG=C
 OW="${1:-$PWD}"
 SUITE_REPO="${SUITE_REPO:-https://github.com/NetForgeCN/openwrt-suite.git}"
 FEED_NAME="${FEED_NAME:-suite}"
+
+# 从本仓库里直接调用（手工接入的常见用法）时，自动识别脚本所在的 suite 仓库，
+# 不必额外设 SUITE_DIR 就能用 src-link 挂本地 packages/。把脚本单独复制到别处
+# 执行时识别失败，回退 src-git，行为与旧版一致。
+SUITE_DIR="${SUITE_DIR:-}"
+if [[ -z "$SUITE_DIR" ]]; then
+    SUITE_SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+    if [[ -d "$SUITE_SELF_DIR/packages" && -f "$SUITE_SELF_DIR/sources.conf" ]]; then
+        SUITE_DIR="$SUITE_SELF_DIR"
+    fi
+fi
 
 [[ -d "$OW" ]] || { echo "[00-feeds-order] 目录不存在：$OW" >&2; exit 1; }
 

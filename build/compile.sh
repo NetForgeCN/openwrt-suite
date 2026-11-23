@@ -2,7 +2,7 @@
 #
 # OpenWrt (x86-64) 一键构建脚本 —— openwrt-suite 单源版
 #
-# 与旧版的区别: 所有第三方组件（31 个包 / 34 个包源目录 + .config）全部来自
+# 与旧版的区别: 所有第三方组件（packages/ 下的全部包快照 + .config）来自
 # 自有的聚合仓库 openwrt-suite（https://github.com/NetForgeCN/openwrt-suite），构建时只需
 # 拉取这一个源；官方 feed 同名包（nqptp / v2ray-geodata / ddns-go 等）由
 # feeds.conf 顺序保证优先使用 suite 版本，不再需要任何特判。
@@ -15,9 +15,11 @@
 # 常用环境变量（见 --help）:
 #   WORKDIR=/path/to/openwrt  JOBS=8  SKIP_UPDATE=1  REFRESH_CONFIG=1 ...
 #
-# 说明: 主仓库与 suite 仓库均不锁定版本，跟随默认分支最新代码
-#       （上游 commit 由 suite 仓库的每日同步锁定，构建可复现）；
-#       不使用文件锁（flock），所有准备工作均可重复执行（幂等）。
+# 说明: 默认直接使用脚本所在的这份 suite 检出（不自动 git pull），因此对
+#       packages/、config/、diy/ 乃至本脚本的本地修改都会原样参与构建；
+#       OpenWrt 主仓库不锁定版本，跟随默认分支最新代码（上游 commit 由 suite
+#       仓库的每日同步锁定，构建可复现）；不使用文件锁（flock），所有准备工作
+#       均可重复执行（幂等）。
 #
 
 set -Eeuo pipefail
@@ -33,7 +35,24 @@ export LC_ALL=C LANG=C
 WORKDIR="${WORKDIR:-${HOME}/openwrt}"
 OPENWRT_REPO="${OPENWRT_REPO:-https://github.com/openwrt/openwrt.git}"
 SUITE_REPO="${SUITE_REPO:-https://github.com/NetForgeCN/openwrt-suite.git}"
-SUITE_DIR="${SUITE_DIR:-${WORKDIR}/suite}"
+
+# SUITE_DIR 默认就是「脚本所在的这份 suite 检出」：克隆本仓库后直接运行
+# build/compile.sh，本地对 packages/、config/dot.config、diy/ 的修改即可生效，
+# 不需要额外指定变量。只有脚本被单独复制到别处（找不到 packages/ + sources.conf）
+# 时，才回退到 $WORKDIR/suite 自行克隆。显式设置 SUITE_DIR 始终优先（CI 用它
+# 指向本次 checkout）。路径在 cd 之前解析成绝对路径，避免后来 cd "$WORKDIR"
+# 造成相对路径失效。
+SUITE_SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+SUITE_DIR_IS_SELF=0
+if [[ -z "${SUITE_DIR:-}" ]]; then
+    if [[ -d "$SUITE_SELF_DIR/packages" && -f "$SUITE_SELF_DIR/sources.conf" ]]; then
+        SUITE_DIR="$SUITE_SELF_DIR"
+        SUITE_DIR_IS_SELF=1
+    else
+        SUITE_DIR="${WORKDIR}/suite"
+    fi
+fi
+
 CONFIG_URL="${CONFIG_URL:-}"                # 留空 = 用 suite 仓库的 config/dot.config 快照；
                                              # 非空 = 从该 URL 下载 .config（临时覆盖快照）
 GO_AMD64_LEVEL="${GO_AMD64_LEVEL:-v3}"     # GOAMD64 微架构级别：v1/v2/v3/v4
@@ -235,8 +254,16 @@ prepare_source() {
 prepare_suite() {
     log "检查 openwrt-suite 聚合仓库"
 
-    ensure_repo "$SUITE_REPO" "$SUITE_DIR"
-    [[ -d "$SUITE_DIR/.git" ]] || die "$SUITE_DIR 不是有效的 Git 仓库"
+    if [[ "$SUITE_DIR_IS_SELF" == "1" ]]; then
+        # 自动识别到脚本自身所在仓库：直接沿用这份检出，不做 git pull。
+        # 否则 pull 可能覆盖正在执行的脚本文件，也会把用户对 packages/、
+        # config/、diy/ 的本地改动冲掉，与「克隆即用」的语义相悖。
+        # 需要跟进远端最新快照时，请自行在本仓库执行 git pull。
+        log "suite 使用脚本所在检出（本地修改直接生效，不自动更新）：$SUITE_DIR"
+    else
+        ensure_repo "$SUITE_REPO" "$SUITE_DIR"
+    fi
+    [[ -d "$SUITE_DIR/.git" ]] || die "$SUITE_DIR 不是有效的 Git 仓库（请用 git clone 获取本仓库）"
     [[ -d "$SUITE_DIR/packages" ]] || die "$SUITE_DIR 缺少 packages/ 目录（仓库结构异常）"
 
     git_safe "$SUITE_DIR"
@@ -684,7 +711,9 @@ OpenWrt 一键构建脚本（openwrt-suite 单源版）
   WORKDIR           OpenWrt 源码目录（默认 $HOME/openwrt）
   OPENWRT_REPO      OpenWrt 主仓库地址
   SUITE_REPO        openwrt-suite 聚合仓库地址（第三方包 + .config 的唯一来源）
-  SUITE_DIR         suite 本地克隆位置（默认 $WORKDIR/suite）
+  SUITE_DIR         suite 本地检出位置（默认 = 脚本所在的本仓库；显式指定优先）。
+                    默认检出不会被 git pull，本地修改原样生效；想跟进远端最新
+                    快照请自行在本仓库执行 git pull。
   CONFIG_URL        非空则从该 URL 下载 .config（临时覆盖 suite 快照，如试配置用）
   TARGET_SUBDIR     target/linux 下的子目录（默认 x86）
   KERNEL_CONFIG     手动指定内核配置文件路径（默认自动探测最新版本）
@@ -695,7 +724,8 @@ OpenWrt 一键构建脚本（openwrt-suite 单源版）
   RUST_MAKEFILE     Rust Makefile 路径（默认 feeds/packages/lang/rust/Makefile）
   GOLANG_VALUES     golang-values.mk 路径（默认 feeds/packages/lang/golang/golang-values.mk）
   JOBS              并行任务数
-  SKIP_UPDATE=1     跳过主仓库与 suite 仓库更新
+  SKIP_UPDATE=1     跳过源码仓库更新（默认只更新 OpenWrt 主仓库；脚本所在的
+                    suite 检出始终不自动更新）
   SKIP_DOWNLOAD=1   跳过 make download
   SKIP_BUILD=1       只做准备工作，不编译
   REFRESH_CONFIG=1  用 suite 快照覆盖本地 .config（默认 0 保留本地，含 menuconfig 改动）

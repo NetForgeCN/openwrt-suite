@@ -1,12 +1,12 @@
 # openwrt-suite
 
-OpenWrt 第三方组件**单一聚合 feed 仓库**：把 35 个第三方包（39 个包源目录）与一份固件 `.config` 统一收进本仓库，每日由 GitHub Actions 从各上游同步（纯快照方式）。使用时把本仓库挂成一个 feed，第三方包就会出现在 `make menuconfig` 里；`build/compile.sh` 可一条命令完成从准备到编译的全过程。
+OpenWrt 第三方组件**单一聚合 feed 仓库**：把 35 个第三方包（39 个包源目录）与一份固件 `.config` 统一收进本仓库，每日由 GitHub Actions 从各上游同步（纯快照方式）。使用时把本仓库挂成一个 feed，第三方包就会出现在 `make menuconfig` 里；`build/compile.sh` 克隆后直接运行即可完成从准备到编译的全过程，本地修改原样生效。
 
 ## 使用方法
 
 本仓库同时提供三样东西：一个标准 OpenWrt feed（`packages/`）、一份固件配置快照（`config/dot.config`）、一套一键构建脚本（`build/compile.sh`），三者由同一提交保证一致。
 
-**两个关键默认值**：`WORKDIR=$HOME/openwrt` 是 OpenWrt 源码树；`SUITE_DIR=$WORKDIR/suite` 是脚本自行克隆 suite 的位置。直接运行 `build/compile.sh` 而不指定 `SUITE_DIR` 时，它会在源码树里**另克隆一份** suite，当前目录那份 clone 以及你对 `config/dot.config`、`diy/`、`packages/` 的本地修改都不会参与构建。下面三种方式都显式指定 `SUITE_DIR`，让本地 clone 生效。
+**克隆即用**：`build/compile.sh` 会自动把 `SUITE_DIR` 指向脚本所在的这份检出，因此对 `packages/`、`config/dot.config`、`diy/` 乃至脚本本身的本地修改都会原样参与构建，无需设置任何变量；这份检出也不会被脚本 `git pull`，要跟进远端最新快照请自行 `git pull`。通常唯一需要按需指定的是 `WORKDIR`（OpenWrt 源码树，默认 `~/openwrt`）。显式设置 `SUITE_DIR` 仍然优先（CI 用它指向本次 checkout）；只有把脚本单独复制到别处、识别不到仓库结构时，才回退到 `$WORKDIR/suite` 自行克隆。
 
 ### 方式一：全新环境，一键构建（推荐）
 
@@ -16,32 +16,32 @@ cd openwrt-suite
 
 # 第一步：准备到可配置状态（克隆 OpenWrt、挂 feed、装包、写 .config、打三处现场补丁），
 #         然后打开 menuconfig
-SUITE_DIR="$PWD" bash build/compile.sh --menuconfig
+bash build/compile.sh --menuconfig
 
 # 第二步：menuconfig 里勾选并保存退出后，按这份 .config 编译
-SUITE_DIR="$PWD" bash build/compile.sh
+bash build/compile.sh
 ```
 
-`--menuconfig` 只做准备、不编译；第二次运行才会 `make download` 与 `make`。`.config` 落在 `$WORKDIR/.config`（默认 `~/openwrt/.config`）：首次由 `config/dot.config` 写入，之后 menuconfig 的改动留在本地、**不回写**仓库快照，重跑脚本默认保留。想强制回到快照用 `REFRESH_CONFIG=1`（旧配置自动备份），临时试另一份配置用 `CONFIG_URL=<url>`，冻结本地快照不被 `git pull` 更新用 `SKIP_UPDATE=1`（同时跳过 OpenWrt 主仓库更新）。
+`--menuconfig` 只做准备、不编译；第二次运行才会 `make download` 与 `make`。`.config` 落在 `$WORKDIR/.config`（默认 `~/openwrt/.config`）：首次由 `config/dot.config` 写入，之后 menuconfig 的改动留在本地、**不回写**仓库快照，重跑脚本默认保留。想强制回到快照用 `REFRESH_CONFIG=1`（旧配置自动备份），临时试另一份配置用 `CONFIG_URL=<url>`，跳过 OpenWrt 主仓库更新用 `SKIP_UPDATE=1`（本仓库检出本来就不会被脚本更新）。
 
 ### 方式二：接入已有 OpenWrt 构建树
 
-把 `WORKDIR` 指向已有源码树，其余与方式一相同 —— 仍然由 `compile.sh` 完成全部现场修改：
+只需把 `WORKDIR` 指向已有源码树，其余与方式一相同 —— 仍然由 `compile.sh` 完成全部现场修改：
 
 ```bash
-OW=$HOME/openwrt                 # 已有的 OpenWrt 源码树
-SUITE=$HOME/openwrt-suite        # 本仓库的本地 clone
+export WORKDIR="$HOME/openwrt"   # 已有的 OpenWrt 源码树
+cd "$HOME/openwrt-suite"         # 本仓库的本地 clone
 
-WORKDIR="$OW" SUITE_DIR="$SUITE" bash "$SUITE/build/compile.sh" --menuconfig
+bash build/compile.sh --menuconfig
 # menuconfig 保存退出后
-WORKDIR="$OW" SUITE_DIR="$SUITE" bash "$SUITE/build/compile.sh"
+bash build/compile.sh
 ```
 
 脚本会更新 `$OW`；该树有未提交修改时自动跳过更新以保留改动，也可显式 `SKIP_UPDATE=1`。这是接入已有构建时唯一能拿到完整行为的路径：三处 `diy/` 现场补丁、同名包来源校正、构建缓存清理、honk 宿主机工具链都由脚本包办。
 
 ### 方式三：纯手工接入
 
-只想把 suite 当 feed 挂进自己的构建流程、不跑 `compile.sh` 时，按下面顺序执行。`SUITE_DIR="$SUITE"` 让首个脚本用 `src-link` 挂本地 `packages/`（与本次检出同提交）；不设它会回退 `src-git`，每次 `feeds update -a` 都拉远端 main。
+只想把 suite 当 feed 挂进自己的构建流程、不跑 `compile.sh` 时，按下面顺序执行。`diy/00-feeds-order.sh` 会自动识别自身所在的 suite 仓库，用 `src-link` 挂本地 `packages/`（与本次检出同提交）；也可用 `SUITE_DIR` 显式指定另一份检出，识别不到时才回退 `src-git`（每次 `feeds update -a` 拉远端 main）。
 
 ```bash
 OW=$HOME/openwrt
@@ -49,7 +49,7 @@ SUITE=$HOME/openwrt-suite
 cd "$OW"
 
 # 1) feeds update 之前：把 suite 放到 feeds 配置第一条
-SUITE_DIR="$SUITE" bash "$SUITE/diy/00-feeds-order.sh" "$OW"
+bash "$SUITE/diy/00-feeds-order.sh" "$OW"
 
 # 2) 更新并安装 feeds
 ./scripts/feeds update -a
@@ -130,18 +130,18 @@ NetForgeCN 提供三套 OpenWrt x86-64 固件构建仓库，编译入口不同�
 
 ```bash
 cd openwrt-suite
-SUITE_DIR="$PWD" bash build/compile.sh
+bash build/compile.sh
 ```
 
-脚本自动完成：克隆/更新 OpenWrt → 配置 feeds → `feeds update/install` → 打官方 feed 补丁 → 写入 `.config` → 打内核补丁 → 下载 → 编译。`SUITE_DIR="$PWD"` 让它使用本次 clone（含本地修改）；不指定时脚本会自行克隆到 `$WORKDIR/suite`。
+脚本自动完成：克隆/更新 OpenWrt → 配置 feeds → `feeds update/install` → 打官方 feed 补丁 → 写入 `.config` → 打内核补丁 → 下载 → 编译。脚本自动识别自身所在的 suite 仓库，本次 clone 的本地修改直接生效；显式设置 `SUITE_DIR` 可改用另一份检出。
 
-`--help` 查看全部可配置项，`--jobs N` 指定并行任务数，`--menuconfig` 只准备到可配置状态并打开 menuconfig。常用环境变量：`WORKDIR`（OpenWrt 源码树，默认 `~/openwrt`）、`SUITE_DIR`（本仓库本地 clone，默认 `$WORKDIR/suite`）、`CONFIG_URL`、`JOBS`、`SKIP_UPDATE=1`、`SKIP_DOWNLOAD=1`、`SKIP_BUILD=1`（只准备不编译）、`REFRESH_CONFIG=1`、`GO_AMD64_LEVEL`、`HONK_TOOLCHAIN_AUTO`。
+`--help` 查看全部可配置项，`--jobs N` 指定并行任务数，`--menuconfig` 只准备到可配置状态并打开 menuconfig。常用环境变量：`WORKDIR`（OpenWrt 源码树，默认 `~/openwrt`）、`SUITE_DIR`（默认脚本所在的本仓库，通常无需设置）、`CONFIG_URL`、`JOBS`、`SKIP_UPDATE=1`、`SKIP_DOWNLOAD=1`、`SKIP_BUILD=1`（只准备不编译）、`REFRESH_CONFIG=1`、`GO_AMD64_LEVEL`、`HONK_TOOLCHAIN_AUTO`。
 
 ### 本仓库：每日固件构建（GitHub Actions）
 
 `.github/workflows/build.yml` 每天**北京时间 02:45** 用 `build/compile.sh` 出一版 x86-64 固件并发布 Release（保留最近 7 个，artifact 保留 3 天），支持手动 `Run workflow`。构建使用独立 cron：同步失败不阻塞出固件，当晚沿用前一天的快照。`.github/workflows/sync.yml` 每天 02:30 同步上游快照。
 
-构建直接使用 workflow 所在提交的 suite（脚本、`packages/`、`config/dot.config` 同源）：`SUITE_DIR` 指向本次 checkout，`00-feeds-order.sh` 检测到它是本地 suite 仓库就写 `src-link suite <构建树/feeds/.suite-local>`，该目录里只有一个 `packages` 软链指向 checkout 的 `packages/`。`feeds update -a` 把它挂成 feed，包快照与配置严格同属一个提交。只暴露 `packages/` 一层：`scan.mk` 用 `find -L` 递归扫整个 feed 目录，只挂一个干净的 `packages` 软链可以让扫描范围精确可控。本地手动跑 `compile.sh` 时同理。
+构建直接使用 workflow 所在提交的 suite（脚本、`packages/`、`config/dot.config` 同源）：`SUITE_DIR` 指向本次 checkout，`00-feeds-order.sh` 检测到它是本地 suite 仓库就写 `src-link suite <构建树/feeds/.suite-local>`，该目录里只有一个 `packages` 软链指向 checkout 的 `packages/`。`feeds update -a` 把它挂成 feed，包快照与配置严格同属一个提交。只暴露 `packages/` 一层：`scan.mk` 用 `find -L` 递归扫整个 feed 目录，只挂一个干净的 `packages` 软链可以让扫描范围精确可控。本地手动跑 `compile.sh` 时脚本会自动识别自身所在检出，行为一致。
 
 缓存分三类：dl（key 绑 `dot.config` / `compile.sh`）、staging_dir 工具链（含 photondns 需要的 rust/host）、ccache（key 带 run_id）。热构建约 3~3.5 小时；首次冷构建耗时更长，可先手动触发一次预热缓存。`honk` 的宿主机工具链由 `compile.sh` 里的 `ensure_honk_toolchain` 按 `.config` 自动准备，不选 honk 则整段跳过。
 
@@ -150,7 +150,7 @@ SUITE_DIR="$PWD" bash build/compile.sh
 ```
 git clone 本仓库  ──►  一个标准 OpenWrt feed（顶层 packages/ 里每个目录 = 一个包）
                               │
-              feeds.conf 首行 src-git suite <url>（本地 checkout 时为 src-link）
+              feeds.conf 首行 src-link suite <本地检出>（回退时 src-git <url>）
                               │
    ./scripts/feeds update -a  ──►  克隆 / 软链到 feeds/suite/
    ./scripts/feeds install -a ──►  在 package/feeds/suite/ 下为每个包建符号链接
@@ -172,7 +172,7 @@ git clone 本仓库  ──►  一个标准 OpenWrt feed（顶层 packages/ 里
 
 ### feeds 顺序与包名冲突
 
-OpenWrt 的 `feeds install -a` 对同名包按 feeds.conf 中的**出现顺序**取先到者。官方 packages feed 也有 `nqptp`、`v2ray-geodata`、`ddns-go`、`dae` 等同名包，`diy/00-feeds-order.sh` 把 suite 行插到所有官方 feed 之前，因此这些包始终使用本仓库版本。没设置 `SUITE_DIR` 时写入的是 `src-git suite <URL>`；设置了 `SUITE_DIR` 指向本地 suite 仓库时（由 `compile.sh` 调用或手工调用均可），会改写为 `src-link suite <构建树/feeds/.suite-local>`：脚本建一个只含 `packages` 软链的干净目录（指向 `SUITE_DIR/packages`），`feeds update -a` 会 `ln -s` 该目录并照常生成 index。`compile.sh` 的同名包校验以 `feeds/suite/packages` 的真实路径为基准，两种接入方式行为一致。
+OpenWrt 的 `feeds install -a` 对同名包按 feeds.conf 中的**出现顺序**取先到者。官方 packages feed 也有 `nqptp`、`v2ray-geodata`、`ddns-go`、`dae` 等同名包，`diy/00-feeds-order.sh` 把 suite 行插到所有官方 feed 之前，因此这些包始终使用本仓库版本。脚本会自动识别自身所在的 suite 仓库并写入 `src-link suite <构建树/feeds/.suite-local>`；也可用 `SUITE_DIR` 显式指定另一份检出。只有识别不到仓库结构（例如把脚本单独复制到别处执行）时才回退 `src-git suite <URL>`。`src-link` 指向的是一个只含 `packages` 软链的干净目录（链到 `SUITE_DIR/packages`），`feeds update -a` 会 `ln -s` 该目录并照常生成 index。`compile.sh` 的同名包校验以 `feeds/suite/packages` 的真实路径为基准，两种接入方式行为一致。
 
 `compile.sh` 在每个包安装后还会逐包解析 `package/feeds/*/` 链接的真实指向：凡是指向非 `feeds/suite` 的（包括悬空链接），一律清掉并从 suite 重装，最后复核一遍，不一致直接报错退出。
 

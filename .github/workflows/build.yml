@@ -22,8 +22,9 @@ env:
   TZ: Asia/Shanghai
   DEBIAN_FRONTEND: noninteractive
   WORKDIR: ${{ github.workspace }}/openwrt
-  # 用本次 checkout 的 suite（脚本、packages、config/dot.config 都来自同一提交，
-  # compile.sh 默认就从 $SUITE_DIR/config/dot.config 取配置），不再让脚本自己克隆/更新。
+  # 用本次 checkout 的 suite（脚本、packages、config/dot.config 都来自同一提交）：
+  # 显式指定 SUITE_DIR 后 compile.sh 不再自行克隆/更新，且始终从该目录取配置；
+  # 本地手动运行时的自动识别同样指向脚本所在的检出。
   # 00-feeds-order.sh 检测到这个本地目录会用 src-link 直接挂成 feed，
   # 避免 feeds update -a 又去克隆远端 main 导致包与配置来自不同提交。
   SUITE_DIR: ${{ github.workspace }}
