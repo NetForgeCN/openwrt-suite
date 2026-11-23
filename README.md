@@ -1,54 +1,97 @@
 # openwrt-suite
 
-OpenWrt 第三方组件**单一聚合 feed 仓库**：把 35 个第三方包（39 个包源目录）与一份固件 `.config` 统一收进本仓库，每日由 GitHub Actions 从各上游同步（纯快照方式）。使用时**只需克隆本仓库**，第三方包就会出现在 `make menuconfig` 里。
+OpenWrt 第三方组件**单一聚合 feed 仓库**：把 35 个第三方包（39 个包源目录）与一份固件 `.config` 统一收进本仓库，每日由 GitHub Actions 从各上游同步（纯快照方式）。使用时把本仓库挂成一个 feed，第三方包就会出现在 `make menuconfig` 里；`build/compile.sh` 可一条命令完成从准备到编译的全过程。
 
 ## 使用方法
 
-### 方式一：克隆本仓库 → menuconfig 勾选 → 编译
+本仓库同时提供三样东西：一个标准 OpenWrt feed（`packages/`）、一份固件配置快照（`config/dot.config`）、一套一键构建脚本（`build/compile.sh`），三者由同一提交保证一致。
+
+**两个关键默认值**：`WORKDIR=$HOME/openwrt` 是 OpenWrt 源码树；`SUITE_DIR=$WORKDIR/suite` 是脚本自行克隆 suite 的位置。直接运行 `build/compile.sh` 而不指定 `SUITE_DIR` 时，它会在源码树里**另克隆一份** suite，当前目录那份 clone 以及你对 `config/dot.config`、`diy/`、`packages/` 的本地修改都不会参与构建。下面三种方式都显式指定 `SUITE_DIR`，让本地 clone 生效。
+
+### 方式一：全新环境，一键构建（推荐）
 
 ```bash
-# 1) 克隆这一个仓库
 git clone https://github.com/NetForgeCN/openwrt-suite.git
+cd openwrt-suite
 
-# 2) 准备到可配置状态（自动克隆 OpenWrt 主仓库、配置 feeds、安装全部第三方包），
-#    然后直接打开 make menuconfig
-bash openwrt-suite/build/compile.sh --menuconfig
+# 第一步：准备到可配置状态（克隆 OpenWrt、挂 feed、装包、写 .config、打三处现场补丁），
+#         然后打开 menuconfig
+SUITE_DIR="$PWD" bash build/compile.sh --menuconfig
 
-# 3) 在 menuconfig 里勾选需要的包，保存退出后开始编译
-bash openwrt-suite/build/compile.sh
+# 第二步：menuconfig 里勾选并保存退出后，按这份 .config 编译
+SUITE_DIR="$PWD" bash build/compile.sh
 ```
 
-`config/dot.config` 提供一份初始包选择，保存退出后自动勾选好；其余包按需在 menuconfig 里勾选，实际以 `config/dot.config` 为准。
+`--menuconfig` 只做准备、不编译；第二次运行才会 `make download` 与 `make`。`.config` 落在 `$WORKDIR/.config`（默认 `~/openwrt/.config`）：首次由 `config/dot.config` 写入，之后 menuconfig 的改动留在本地、**不回写**仓库快照，重跑脚本默认保留。想强制回到快照用 `REFRESH_CONFIG=1`（旧配置自动备份），临时试另一份配置用 `CONFIG_URL=<url>`，冻结本地快照不被 `git pull` 更新用 `SKIP_UPDATE=1`（同时跳过 OpenWrt 主仓库更新）。
 
-### 方式一（等价的手工版）
+### 方式二：接入已有 OpenWrt 构建树
 
-不想用脚本，就是三条命令：
+把 `WORKDIR` 指向已有源码树，其余与方式一相同 —— 仍然由 `compile.sh` 完成全部现场修改：
+
+```bash
+OW=$HOME/openwrt                 # 已有的 OpenWrt 源码树
+SUITE=$HOME/openwrt-suite        # 本仓库的本地 clone
+
+WORKDIR="$OW" SUITE_DIR="$SUITE" bash "$SUITE/build/compile.sh" --menuconfig
+# menuconfig 保存退出后
+WORKDIR="$OW" SUITE_DIR="$SUITE" bash "$SUITE/build/compile.sh"
+```
+
+脚本会更新 `$OW`；该树有未提交修改时自动跳过更新以保留改动，也可显式 `SKIP_UPDATE=1`。这是接入已有构建时唯一能拿到完整行为的路径：三处 `diy/` 现场补丁、同名包来源校正、构建缓存清理、honk 宿主机工具链都由脚本包办。
+
+### 方式三：纯手工接入
+
+只想把 suite 当 feed 挂进自己的构建流程、不跑 `compile.sh` 时，按下面顺序执行。`SUITE_DIR="$SUITE"` 让首个脚本用 `src-link` 挂本地 `packages/`（与本次检出同提交）；不设它会回退 `src-git`，每次 `feeds update -a` 都拉远端 main。
+
+```bash
+OW=$HOME/openwrt
+SUITE=$HOME/openwrt-suite
+cd "$OW"
+
+# 1) feeds update 之前：把 suite 放到 feeds 配置第一条
+SUITE_DIR="$SUITE" bash "$SUITE/diy/00-feeds-order.sh" "$OW"
+
+# 2) 更新并安装 feeds
+./scripts/feeds update -a
+./scripts/feeds install -a
+
+# 3) feeds install 之后：官方 packages feed 现场补丁（Rust LLVM / Golang GOAMD64）
+bash "$SUITE/diy/01-feed-patches.sh" "$OW"
+
+# 4) 首次接入时写入配置快照并展开（已有 .config 请跳过 cp，避免覆盖）
+cp -f "$SUITE/config/dot.config" .config
+make defconfig
+
+# 5) .config 就绪之后：内核配置补丁（NETKIT / X86_NATIVE_CPU / X86_SGX）
+bash "$SUITE/diy/02-kernel-config.sh" "$OW"
+
+# 6) 按需勾选，然后下载、编译
+make menuconfig
+make download
+make -j"$(nproc)"
+```
+
+这条路径不含 `compile.sh` 的下列环节，需要自行处理：
+
+| `compile.sh` 的环节 | 纯手工时的后果 |
+|---|---|
+| `verify_feed_priority()` | 旧构建树里已装过的官方同名包（nqptp、v2ray-geodata、ddns-go、dae）会被 `feeds install -a` 跳过，仍指向官方版本 |
+| `clean_stale_artifacts()` | 改了 Rust LLVM / GOAMD64 / 内核配置后，已有 `build_dir` 缓存不清理，新设置可能不生效 |
+| `ensure_honk_toolchain()` | `.config` 选中 honk 时，宿主机缺 Zig / bpf-linker 会在编译阶段失败，安装步骤见「宿主机依赖」 |
+| `CONFIG_URL` / `REFRESH_CONFIG` / `SKIP_*` | 没有对应开关，配置来源与跳过项要自己控制 |
+
+### 仅挂载 feed 的最小示例
+
+验证 feed 能否被 OpenWrt 扫描到，几行命令即可（**不含** `.config` 快照、三处现场补丁与编译）：
 
 ```bash
 git clone https://github.com/openwrt/openwrt.git && cd openwrt
 echo 'src-git suite https://github.com/NetForgeCN/openwrt-suite.git' | cat - feeds.conf.default > t && mv t feeds.conf.default
 ./scripts/feeds update -a && ./scripts/feeds install -a
-make menuconfig
+make defconfig && make menuconfig
 ```
 
-`src-git suite` 必须在**第一条**（官方 feed 之前），否则官方同名包会抢先。
-
-### 方式二：接入已有构建
-
-`./scripts/feeds` 只存在于 OpenWrt 源码树里，所以整段要在源码树内执行；三个 `diy/` 脚本用绝对路径调用，第一个参数仍是源码树目录：
-
-```bash
-OW=$HOME/openwrt
-SUITE=$HOME/openwrt-suite
-
-cd "$OW"
-bash "$SUITE/diy/00-feeds-order.sh" "$OW"   # 在 feeds update 之前
-./scripts/feeds update -a
-./scripts/feeds install -a
-bash "$SUITE/diy/01-feed-patches.sh" "$OW"
-# .config 直接用 "$SUITE/config/dot.config"
-bash "$SUITE/diy/02-kernel-config.sh" "$OW"
-```
+`src-git` 拉的是远端 main 而非本地快照；包会出现在菜单里但默认未选中。要真正编译固件请用方式一或方式二。
 
 ## 收录的包
 
@@ -69,13 +112,11 @@ bash "$SUITE/diy/02-kernel-config.sh" "$OW"
 
 LuCI 包不写 `CATEGORY` / `SUBMENU` 时由 `luci.mk` 按 `LUCI_TYPE` 归类：`app` → `LuCI / 3. Applications`，`theme` → `LuCI / 4. Themes`。
 
-自己的配置改动只留在本地 `.config`，不会被覆盖；想强制回到仓库快照版本时用 `REFRESH_CONFIG=1`（旧配置会自动备份）。想临时试另一份配置，用 `CONFIG_URL=<url>` 指定，仅当次生效、不改变快照。
-
 <a id="build"></a>
 
 ## 编译固件
 
-NetForgeCN 提供三套 OpenWrt x86-64 固件构建仓库，编译入口不同，产物都是固件 Release。三份 `.config` 由使用者自行维护，构建脚本不会改写它。
+NetForgeCN 提供三套 OpenWrt x86-64 固件构建仓库，编译入口不同，产物都是固件 Release。三份 `.config` 由使用者自行维护；构建脚本不会改写仓库里的 `config/dot.config` 快照，只在本地构建树生成并展开 `.config`。
 
 | 仓库 | 编译方式 | 编译入口 |
 |---|---|---|
@@ -88,12 +129,13 @@ NetForgeCN 提供三套 OpenWrt x86-64 固件构建仓库，编译入口不同�
 ### 本仓库：一键构建
 
 ```bash
-bash openwrt-suite/build/compile.sh
+cd openwrt-suite
+SUITE_DIR="$PWD" bash build/compile.sh
 ```
 
-脚本自动完成：克隆/更新 OpenWrt → 克隆 suite → 配置 feeds → `feeds update/install` → 打官方 feed 补丁 → 写入 `.config` → 打内核补丁 → 下载 → 编译。
+脚本自动完成：克隆/更新 OpenWrt → 配置 feeds → `feeds update/install` → 打官方 feed 补丁 → 写入 `.config` → 打内核补丁 → 下载 → 编译。`SUITE_DIR="$PWD"` 让它使用本次 clone（含本地修改）；不指定时脚本会自行克隆到 `$WORKDIR/suite`。
 
-`--help` 查看全部可配置项，`--jobs N` 指定并行任务数，`--menuconfig` 只准备到可配置状态并打开 menuconfig。常用环境变量：`WORKDIR`（默认 `~/openwrt`）、`SUITE_DIR`、`CONFIG_URL`、`JOBS`、`SKIP_UPDATE=1`、`SKIP_DOWNLOAD=1`、`SKIP_BUILD=1`（只准备不编译）、`REFRESH_CONFIG=1`、`GO_AMD64_LEVEL`、`HONK_TOOLCHAIN_AUTO`。
+`--help` 查看全部可配置项，`--jobs N` 指定并行任务数，`--menuconfig` 只准备到可配置状态并打开 menuconfig。常用环境变量：`WORKDIR`（OpenWrt 源码树，默认 `~/openwrt`）、`SUITE_DIR`（本仓库本地 clone，默认 `$WORKDIR/suite`）、`CONFIG_URL`、`JOBS`、`SKIP_UPDATE=1`、`SKIP_DOWNLOAD=1`、`SKIP_BUILD=1`（只准备不编译）、`REFRESH_CONFIG=1`、`GO_AMD64_LEVEL`、`HONK_TOOLCHAIN_AUTO`。
 
 ### 本仓库：每日固件构建（GitHub Actions）
 
@@ -130,7 +172,7 @@ git clone 本仓库  ──►  一个标准 OpenWrt feed（顶层 packages/ 里
 
 ### feeds 顺序与包名冲突
 
-OpenWrt 的 `feeds install -a` 对同名包按 feeds.conf 中的**出现顺序**取先到者。官方 packages feed 也有 `nqptp`、`v2ray-geodata`、`ddns-go`、`dae` 等同名包，`diy/00-feeds-order.sh` 把 suite 行插到所有官方 feed 之前，因此这些包始终使用本仓库版本。手工接入已有构建（没设置 `SUITE_DIR`）时写入的是 `src-git suite <URL>`；由 `compile.sh` 调用时 `SUITE_DIR` 指向本地仓库，会改写为 `src-link suite <构建树/feeds/.suite-local>`：脚本建一个只含 `packages` 软链的干净目录（指向 `SUITE_DIR/packages`），`feeds update -a` 会 `ln -s` 该目录并照常生成 index。`compile.sh` 的同名包校验以 `feeds/suite/packages` 的真实路径为基准，两种接入方式行为一致。
+OpenWrt 的 `feeds install -a` 对同名包按 feeds.conf 中的**出现顺序**取先到者。官方 packages feed 也有 `nqptp`、`v2ray-geodata`、`ddns-go`、`dae` 等同名包，`diy/00-feeds-order.sh` 把 suite 行插到所有官方 feed 之前，因此这些包始终使用本仓库版本。没设置 `SUITE_DIR` 时写入的是 `src-git suite <URL>`；设置了 `SUITE_DIR` 指向本地 suite 仓库时（由 `compile.sh` 调用或手工调用均可），会改写为 `src-link suite <构建树/feeds/.suite-local>`：脚本建一个只含 `packages` 软链的干净目录（指向 `SUITE_DIR/packages`），`feeds update -a` 会 `ln -s` 该目录并照常生成 index。`compile.sh` 的同名包校验以 `feeds/suite/packages` 的真实路径为基准，两种接入方式行为一致。
 
 `compile.sh` 在每个包安装后还会逐包解析 `package/feeds/*/` 链接的真实指向：凡是指向非 `feeds/suite` 的（包括悬空链接），一律清掉并从 suite 重装，最后复核一遍，不一致直接报错退出。
 
@@ -195,7 +237,7 @@ Zig 与 bpf-linker 都按**构建机架构**发布，两个架构的资产名和
 
 Zig 下载地址：`https://ziglang.org/download/0.14.1/zig-<ARCH>-linux-0.14.1.tar.xz`。
 
-Debian / Ubuntu 宿主机可直接粘这一段：
+Debian / Ubuntu 宿主机可用下面这段一次装好（含 `exit` 分支，请保存为脚本执行）：
 
 ```bash
 # 0) 先确定宿主机架构（x86_64 / aarch64 都支持）
@@ -203,7 +245,7 @@ ARCH=$(uname -m); case "$ARCH" in amd64) ARCH=x86_64 ;; arm64) ARCH=aarch64 ;; e
 case "$ARCH" in
   x86_64)  SHA=10f62ba9ab7e544d538370552660efcb4f1a19153d5752bbf0f6b51f3bada450 ;;
   aarch64) SHA=d09ddd83303e9ab1443f51e0e284680154009646a3ce141c63d838ee61b73eb9 ;;
-  *) echo "unsupported arch: $ARCH"; return 1 ;;
+  *) echo "unsupported arch: $ARCH" >&2; exit 1 ;;
 esac
 
 # 1) 编译 honk-core 需要的系统依赖（bindgen / eBPF / 解压用）
