@@ -115,27 +115,76 @@ run_pass() {
 
 	export PREWARM_SERVER="$SERVER" PREWARM_PORT="$PORT" PREWARM_PROTOCOL="$PROTOCOL"
 	export PREWARM_QUERY_TIMEOUT="$PREWARM_QUERY_TIMEOUT" PREWARM_RETRIES="$PREWARM_RETRIES"
-	xargs -P "$PREWARM_CONCURRENCY" -n 2 sh -c '
+
+	# BusyBox's xargs lacks a parallel flag. Spawn background jobs in bounded
+	# batches and wait for each batch, so concurrency works on stock OpenWrt
+	# without GNU findutils. Each job writes a result marker for an exact count.
+	if command -v dig >/dev/null 2>&1; then
+		QUERY_TOOL=dig
+	elif command -v nslookup >/dev/null 2>&1; then
+		QUERY_TOOL=nslookup
+	else
+		log "no dig or nslookup available"
+		rm -f "$JOBS_FILE"
+		return 1
+	fi
+	export QUERY_TOOL
+
+	RESULT_DIR="$PREWARM_TMP_DIR/oxidns-prewarm.results.$$"
+	mkdir -p "$RESULT_DIR" 2>/dev/null || RESULT_DIR=""
+	OK_COUNT=0
+	FAILED_COUNT=0
+
+	run_query_job() {
 		qtype="$1"
 		name="$2"
-		tcp_flag=""
-		[ "$PREWARM_PROTOCOL" = "tcp" ] && tcp_flag="+tcp"
-		if command -v dig >/dev/null 2>&1; then
+		if [ "$QUERY_TOOL" = "dig" ]; then
+			tcp_flag=""
+			[ "$PREWARM_PROTOCOL" = "tcp" ] && tcp_flag="+tcp"
 			dig +time="$PREWARM_QUERY_TIMEOUT" +tries="$PREWARM_RETRIES" \
 				@"$PREWARM_SERVER" -p "$PREWARM_PORT" $tcp_flag "$qtype" "$name" \
-				>/dev/null 2>&1 || \
-				logger -t oxidns-prewarm "query failed: $qtype $name"
-		elif command -v nslookup >/dev/null 2>&1; then
-			nslookup -type="$qtype" -port="$PREWARM_PORT" "$name" "$PREWARM_SERVER" \
-				>/dev/null 2>&1 || \
-				logger -t oxidns-prewarm "query failed: $qtype $name"
+				>/dev/null 2>&1
 		else
-			logger -t oxidns-prewarm "no dig or nslookup available"
-			exit 1
+			nslookup -type="$qtype" -port="$PREWARM_PORT" "$name" "$PREWARM_SERVER" \
+				>/dev/null 2>&1
 		fi
-	' sh < "$JOBS_FILE" || true
+	}
+
+	run_one_job() {
+		id="$1"
+		qtype="$2"
+		name="$3"
+		if run_query_job "$qtype" "$name"; then
+			logger -t oxidns-prewarm "query ok: $qtype $name"
+		else
+			logger -t oxidns-prewarm "query failed: $qtype $name"
+			[ -n "$RESULT_DIR" ] && : > "$RESULT_DIR/failed.$id"
+		fi
+	}
+
+	pending=0
+	job_id=0
+	while read -r qtype name; do
+		[ -n "$qtype" ] && [ -n "$name" ] || continue
+		job_id=$((job_id + 1))
+		run_one_job "$job_id" "$qtype" "$name" &
+		pending=$((pending + 1))
+		if [ "$pending" -ge "$PREWARM_CONCURRENCY" ]; then
+			wait
+			pending=0
+		fi
+	done < "$JOBS_FILE"
+	[ "$pending" -gt 0 ] && wait
+
+	if [ -n "$RESULT_DIR" ]; then
+		FAILED_COUNT="$(find "$RESULT_DIR" -type f 2>/dev/null | wc -l | tr -d ' ')"
+		rm -rf "$RESULT_DIR"
+	fi
+	OK_COUNT=$((JOB_COUNT - FAILED_COUNT))
+	[ "$OK_COUNT" -lt 0 ] && OK_COUNT=0
+
 	rm -f "$JOBS_FILE"
-	log "refreshed $JOB_COUNT queries via $PROTOCOL $SERVER:$PORT"
+	log "refreshed $OK_COUNT/$JOB_COUNT queries via $PROTOCOL $SERVER:$PORT (failed=$FAILED_COUNT)"
 	return 0
 }
 

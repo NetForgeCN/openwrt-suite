@@ -110,6 +110,14 @@ fi
 test -s root/usr/share/oxidns/prewarm.default.txt
 test -x root/usr/libexec/oxidns-prewarm
 sh -n root/usr/libexec/oxidns-prewarm
+# BusyBox xargs has no -P; the prewarmer must use shell background jobs.
+# `xargs -P ... || true` used to fail silently on stock OpenWrt and warm zero
+# domains while still logging "refreshed N queries".
+if grep -q 'xargs .*-P' root/usr/libexec/oxidns-prewarm; then
+	echo "prewarmer must not use xargs -P (unavailable in BusyBox)" >&2
+	exit 1
+fi
+grep -q 'wait' root/usr/libexec/oxidns-prewarm
 sh -n scripts/build-luci-package.sh
 sh -n scripts/integration-check.sh
 sh -n scripts/service-check.sh
