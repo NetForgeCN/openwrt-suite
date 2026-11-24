@@ -1,0 +1,4 @@
+{
+  "config": "hev-socks5-server",
+  "init": "hevsocks5-sync"
+}

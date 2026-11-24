@@ -1,0 +1,22 @@
+#!/bin/sh /etc/rc.common
+# Regenerate hev-socks5-server YAML whenever UCI config changes.
+# This init script has a unique name so it never conflicts with the
+# upstream package's /etc/init.d/hev-socks5-server.
+
+START=99
+
+start() {
+	/usr/bin/hevsocks5-ctl generate || return 1
+
+	if [ "$(uci -q get hev-socks5-server.config.enabled)" = "1" ]; then
+		/etc/init.d/hev-socks5-server enable >/dev/null 2>&1 || :
+		/etc/init.d/hev-socks5-server restart >/dev/null 2>&1 || :
+	else
+		/etc/init.d/hev-socks5-server disable >/dev/null 2>&1 || :
+		/etc/init.d/hev-socks5-server stop >/dev/null 2>&1 || :
+	fi
+}
+
+reload() {
+	start
+}

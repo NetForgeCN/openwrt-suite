@@ -1,0 +1,17 @@
+{
+  "luci-app-hevsocks5": {
+    "description": "Grant UCI and service access for luci-app-hevsocks5",
+    "read": {
+      "ubus": {
+        "service": [ "list" ]
+      },
+      "uci": [ "hev-socks5-server" ]
+    },
+    "write": {
+      "file": {
+        "/usr/bin/hevsocks5-ctl": [ "exec" ]
+      },
+      "uci": [ "hev-socks5-server" ]
+    }
+  }
+}

@@ -1,0 +1,64 @@
+#!/bin/sh
+# Initial UCI defaults for luci-app-hevsocks5.
+# Keeps the upstream enabled/conffile options intact and fills in every
+# option exposed by the LuCI page.
+
+CONF='hev-socks5-server'
+
+uci -q get "$CONF.config" >/dev/null 2>&1 || uci set "$CONF.config=hev-socks5-server"
+
+set_default() {
+	uci -q get "$CONF.config.$1" >/dev/null 2>&1 || uci set "$CONF.config.$1=$2"
+}
+
+set_default enabled 0
+set_default conffile /etc/hev-socks5-server/main.yml
+
+set_default workers 4
+set_default port 1080
+set_default listen-address '::'
+set_default udp-port ''
+set_default udp-listen-address ''
+set_default udp-public-address-v4 ''
+set_default udp-public-address-v6 ''
+set_default listen-ipv6-only 0
+set_default bind-address ''
+set_default bind-address-v4 ''
+set_default bind-address-v6 ''
+set_default bind-interface ''
+set_default domain-address-type unspec
+set_default mark 0
+set_default tcp-fastopen 0
+
+set_default auth_file ''
+set_default allow-no-auth 0
+set_default username ''
+set_default password ''
+
+set_default task-stack-size 8192
+set_default udp-recv-buffer-size 524288
+set_default udp-copy-buffer-nums 10
+set_default connect-timeout 10000
+set_default tcp-read-write-timeout 300000
+set_default udp-read-write-timeout 60000
+set_default read-write-timeout ''
+set_default log-file ''
+set_default log-level warn
+set_default pid-file ''
+set_default limit-nofile 1000000
+
+# Generate one random credential pair on first install. Without it the
+# server would start as an open proxy, which is never a safe default.
+if [ -z "$(uci -q get "$CONF.config.username")" ] &&
+	[ -z "$(uci -q get "$CONF.config.password")" ] &&
+	[ "$(uci -q get "$CONF.config.allow-no-auth")" != "1" ]; then
+	u="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-16)"
+	p="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-24)"
+	uci set "$CONF.config.username=$u"
+	uci set "$CONF.config.password=$p"
+fi
+
+uci commit "$CONF" >/dev/null 2>&1
+/usr/bin/hevsocks5-ctl generate >/dev/null 2>&1 || :
+
+exit 0

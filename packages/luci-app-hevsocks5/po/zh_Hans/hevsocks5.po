@@ -1,0 +1,297 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: luci-app-hevsocks5 1.0.0\n"
+"Language: zh_Hans\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgid "Command failed: %s"
+msgstr "命令失败：%s"
+
+msgid "Generate a random value"
+msgstr "生成随机值"
+
+msgid "Generate"
+msgstr "生成"
+
+msgid "Show password"
+msgstr "显示密码"
+
+msgid "Hide password"
+msgstr "隐藏密码"
+
+msgid "Operation failed"
+msgstr "操作失败"
+
+msgid "Close"
+msgstr "关闭"
+
+msgid "HEV SOCKS5 Server"
+msgstr "HEV SOCKS5 服务端"
+
+msgid "Manage hev-socks5-server with procd, random credentials and the complete YAML option set."
+msgstr "通过 procd 管理 hev-socks5-server，支持随机凭据和完整 YAML 配置项。"
+
+msgid "Running"
+msgstr "运行中"
+
+msgid "Not running"
+msgstr "未运行"
+
+msgid "Service status"
+msgstr "服务状态"
+
+msgid "Status"
+msgstr "状态"
+
+msgid "Collecting data..."
+msgstr "正在获取状态..."
+
+msgid "Start"
+msgstr "启动"
+
+msgid "Stop"
+msgstr "停止"
+
+msgid "Restart"
+msgstr "重启"
+
+msgid "Regenerate config and apply"
+msgstr "重新生成配置并应用"
+
+msgid "Configuration"
+msgstr "配置"
+
+msgid "Basic"
+msgstr "基础"
+
+msgid "Advanced - Listen"
+msgstr "高级 - 监听"
+
+msgid "Advanced - Routing"
+msgstr "高级 - 路由"
+
+msgid "Advanced - Authentication"
+msgstr "高级 - 认证"
+
+msgid "Advanced - Tuning and logs"
+msgstr "高级 - 调优与日志"
+
+msgid "Enabled / start on boot"
+msgstr "启用 / 开机自启动"
+
+msgid "Controls both the running instance and the procd boot link. Disable it to stop the server and remove autostart."
+msgstr "同时控制当前实例和 procd 开机链接；关闭后会停止服务并取消自启动。"
+
+msgid "Username"
+msgstr "用户名"
+
+msgid "Single inline SOCKS5 user. Up to 255 characters. Ignored when an authentication file is configured. A random value is generated on first install."
+msgstr "内联的单个 SOCKS5 用户，最多 255 个字符。配置认证文件后此项失效。首次安装时会自动生成随机值。"
+
+msgid "Password"
+msgstr "密码"
+
+msgid "Up to 255 characters. Stored in plain text in UCI and in the generated YAML, so restrict file permissions accordingly."
+msgstr "最多 255 个字符。明文保存在 UCI 和生成的 YAML 中，请注意限制文件权限。"
+
+msgid "Worker threads"
+msgstr "工作线程数"
+
+msgid "Number of worker threads handling SOCKS5 sessions. Each thread owns its own task system. On a small router 1-4 is usually enough."
+msgstr "处理 SOCKS5 会话的线程数，每个线程有独立的任务系统。小路由上通常 1-4 个足够。"
+
+msgid "Worker threads must be at least 1"
+msgstr "工作线程数至少为 1"
+
+msgid "TCP listen port"
+msgstr "TCP 监听端口"
+
+msgid "Port for the SOCKS5 CONNECT service. Remember to open it in the firewall."
+msgstr "SOCKS5 CONNECT 服务端口，记得在防火墙中放行。"
+
+msgid "Listen address"
+msgstr "监听地址"
+
+msgid "IPv4 or IPv6 address to bind. The default :: accepts IPv4-mapped connections as well; use 0.0.0.0 for IPv4 only."
+msgstr "监听的 IPv4 或 IPv6 地址。默认 :: 也接受 IPv4 映射连接；仅 IPv4 可填 0.0.0.0。"
+
+msgid "UDP listen port"
+msgstr "UDP 监听端口"
+
+msgid "Leave empty or use 0 for one ephemeral UDP port per session. A fixed port uses the same port for every session; a-b picks a port from the range in round-robin order. Open the chosen port or range in the firewall."
+msgstr "留空或填 0 表示每个会话使用随机 UDP 端口；填固定端口则所有会话共用；填 a-b 则在该范围内轮询。记得在防火墙放行相应端口或范围。"
+
+msgid "Use a port, a range like 10000-20000, or leave empty"
+msgstr "请填写端口、10000-20000 这样的范围，或留空"
+
+msgid "UDP listen address"
+msgstr "UDP 监听地址"
+
+msgid "Address used by UDP ASSOCIATE. When empty, the local address of the clients TCP connection is reused."
+msgstr "UDP ASSOCIATE 使用的监听地址。留空时复用客户端 TCP 连接对应的本地地址。"
+
+msgid "UDP public address (IPv4)"
+msgstr "UDP 公网地址（IPv4）"
+
+msgid "IPv4 address reported to clients in the UDP ASSOCIATE reply. Set this when the server is behind NAT and the advertised address must differ from the bound address."
+msgstr "UDP ASSOCIATE 回复中通告给客户端的 IPv4 地址。服务器位于 NAT 后且通告地址与绑定地址不同时需要填写。"
+
+msgid "UDP public address (IPv6)"
+msgstr "UDP 公网地址（IPv6）"
+
+msgid "Same as above for IPv6 clients."
+msgstr "与上面相同，用于 IPv6 客户端。"
+
+msgid "Listen IPv6 only"
+msgstr "仅监听 IPv6"
+
+msgid "Sets IPV6_V6ONLY on the listening socket. Enable it to reject IPv4-mapped connections."
+msgstr "在监听套接字上设置 IPV6_V6ONLY，开启后拒绝 IPv4 映射连接。"
+
+msgid "TCP fast open"
+msgstr "TCP Fast Open"
+
+msgid "Enable TCP Fast Open on the listening socket. Requires kernel and client support; leave off unless you know both sides support it."
+msgstr "在监听套接字上启用 TCP Fast Open，需要内核和客户端都支持；不确定时请保持关闭。"
+
+msgid "Bind source address"
+msgstr "绑定源地址"
+
+msgid "Source address for outbound connections, for both address families. Can be overridden by the IPv4/IPv6 specific settings below."
+msgstr "出站连接使用的源地址，对两个地址族生效；会被下面的 IPv4/IPv6 专用设置覆盖。"
+
+msgid "Bind source address (IPv4)"
+msgstr "绑定源地址（IPv4）"
+
+msgid "Source IPv4 address for outbound connections. Useful with multiple WAN addresses or policy routing."
+msgstr "出站连接使用的源 IPv4 地址，适用于多 WAN 地址或策略路由。"
+
+msgid "Bind source address (IPv6)"
+msgstr "绑定源地址（IPv6）"
+
+msgid "Source IPv6 address for outbound connections."
+msgstr "出站连接使用的源 IPv6 地址。"
+
+msgid "Bind source interface"
+msgstr "绑定出站接口"
+
+msgid "Forces outbound sessions to a network interface via SO_BINDTODEVICE, for example eth2 or wwan0. Leave empty to use the routing table."
+msgstr "通过 SO_BINDTODEVICE 强制出站会话走指定网卡，例如 eth2 或 wwan0；留空则由路由表决定。"
+
+msgid "Domain address type"
+msgstr "域名地址类型"
+
+msgid "Address family used when replying to domain name requests. unspec keeps the behaviour chosen by the resolver; ipv4 or ipv6 force one family."
+msgstr "回复域名请求时使用的地址族。unspec 沿用解析结果；ipv4 或 ipv6 强制单一地址族。"
+
+msgid "Unspecified"
+msgstr "不限定"
+
+msgid "IPv4"
+msgstr "IPv4"
+
+msgid "IPv6"
+msgstr "IPv6"
+
+msgid "Socket mark"
+msgstr "套接字标记"
+
+msgid "SO_MARK applied to outbound sessions. Accepts decimal, hexadecimal (0x1a) or octal (01) notation. Can be used with iptables connlimit or policy routing. A MARK column in the authentication file overrides this value for that user."
+msgstr "应用到出站会话的 SO_MARK。支持十进制、十六进制（0x1a）或八进制（01）。可配合 iptables connlimit 或策略路由；认证文件中的 MARK 列会覆盖此值。"
+
+msgid "Use decimal, 0x hexadecimal or octal notation"
+msgstr "请填写十进制、0x 开头的十六进制或八进制数值"
+
+msgid "Authentication file"
+msgstr "认证文件"
+
+msgid "Path to an authentication file with one \"USER PASS [MARK]\" entry per line. When set, this file takes precedence over the username and password on the Basic tab. Send SIGUSR1 to reload it without restarting."
+msgstr "认证文件路径，每行一条「用户名 密码 [MARK]」。设置后优先于基础页的用户名/密码；发送 SIGUSR1 可在不重启的情况下重新加载。"
+
+msgid "Allow unauthenticated access"
+msgstr "允许无认证访问"
+
+msgid "Danger: with no username, password or authentication file the server would be an open proxy. This flag is required to permit that state. Leave it off for normal use."
+msgstr "危险：用户名、密码和认证文件都为空时，服务端将成为开放代理。只有打开此开关才允许这种状态，正常使用请保持关闭。"
+
+msgid "Task stack size (bytes)"
+msgstr "任务栈大小（字节）"
+
+msgid "Stack size for each per-session coroutine. The upstream default is 8192 bytes. Lower values save memory but may overflow with complex requests."
+msgstr "每个会话协程的栈大小，上游默认 8192 字节。调小可省内存，但复杂请求可能栈溢出。"
+
+msgid "UDP receive buffer (bytes)"
+msgstr "UDP 接收缓冲区（字节）"
+
+msgid "SO_RCVBUF for UDP relay sockets. The upstream default is 524288 bytes. Increase for high bandwidth UDP traffic."
+msgstr "UDP 中继套接字的 SO_RCVBUF，上游默认 524288 字节。高带宽 UDP 场景可调大。"
+
+msgid "UDP copy buffers"
+msgstr "UDP 拷贝缓冲区数量"
+
+msgid "Number of 1500-byte buffers used by the UDP splice path. The upstream default is 10."
+msgstr "UDP 转发路径使用的 1500 字节缓冲区数量，上游默认 10 个。"
+
+msgid "TCP connect timeout (ms)"
+msgstr "TCP 连接超时（毫秒）"
+
+msgid "Maximum time to wait for an outbound TCP connection. The upstream default is 10000 ms."
+msgstr "等待出站 TCP 连接的最长时间，上游默认 10000 毫秒。"
+
+msgid "TCP read/write timeout (ms)"
+msgstr "TCP 读写超时（毫秒）"
+
+msgid "Idle timeout for established TCP sessions. The upstream default is 300000 ms."
+msgstr "已建立 TCP 会话的空闲超时，上游默认 300000 毫秒。"
+
+msgid "UDP read/write timeout (ms)"
+msgstr "UDP 读写超时（毫秒）"
+
+msgid "Idle timeout for UDP relay sessions. The upstream default is 60000 ms."
+msgstr "UDP 中继会话的空闲超时，上游默认 60000 毫秒。"
+
+msgid "Legacy read/write timeout (ms)"
+msgstr "旧版读写超时（毫秒）"
+
+msgid "Compatibility option from older upstream versions. When set, the TCP and UDP specific timeouts below are not written to YAML and this value applies to both. Usually leave it empty."
+msgstr "旧版上游配置的兼容项。设置后，下方 TCP/UDP 专用超时不会写入 YAML，该值会同时应用到两者。通常留空即可。"
+
+msgid "Log file"
+msgstr "日志文件"
+
+msgid "Leave empty for null, which sends logs to stdout/stderr where procd forwards them to the system log. Set an absolute path to write to a file; note that log rotation is not handled by this package."
+msgstr "留空即 null，日志走 stdout/stderr 并由 procd 转入系统日志。填写绝对路径可写入文件，但本包不负责日志轮转。"
+
+msgid "Log level"
+msgstr "日志级别"
+
+msgid "debug is verbose, error is minimal. warn is the upstream default."
+msgstr "debug 最详细，error 最少；warn 是上游默认值。"
+
+msgid "Debug"
+msgstr "调试"
+
+msgid "Info"
+msgstr "信息"
+
+msgid "Warning"
+msgstr "警告"
+
+msgid "Error"
+msgstr "错误"
+
+msgid "File descriptor limit"
+msgstr "文件描述符上限"
+
+msgid "The binary calls setrlimit() with this value at startup. The upstream init script already asks procd for 1000000 descriptors, so keep this value aligned."
+msgstr "程序启动时会按此值调用 setrlimit()。上游 init 脚本已经向 procd 申请 1000000 个描述符，请保持一致。"
+
+msgid "PID file (ignored on OpenWrt)"
+msgstr "PID 文件（OpenWrt 下忽略）"
+
+msgid "Upstream supports a pid-file that makes the process daemonize itself. This package never generates it under procd, because detaching would break process supervision. Displayed here for completeness only."
+msgstr "上游支持 pid-file，会使进程自行后台化。本包在 procd 下从不生成它，因为脱壳会破坏进程监管；此处仅作完整展示。"
+

@@ -1,0 +1,14 @@
+{
+  "admin/services/hevsocks5": {
+    "title": "HEV SOCKS5 Server",
+    "order": 40,
+    "action": {
+      "type": "view",
+      "path": "hevsocks5"
+    },
+    "depends": {
+      "acl": [ "luci-app-hevsocks5" ],
+      "uci": { "hev-socks5-server": true }
+    }
+  }
+}

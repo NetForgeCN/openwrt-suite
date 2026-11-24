@@ -1,0 +1,297 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: luci-app-hevsocks5 1.0.0\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgid "Command failed: %s"
+msgstr ""
+
+msgid "Generate a random value"
+msgstr ""
+
+msgid "Generate"
+msgstr ""
+
+msgid "Show password"
+msgstr ""
+
+msgid "Hide password"
+msgstr ""
+
+msgid "Operation failed"
+msgstr ""
+
+msgid "Close"
+msgstr ""
+
+msgid "HEV SOCKS5 Server"
+msgstr ""
+
+msgid "Manage hev-socks5-server with procd, random credentials and the complete YAML option set."
+msgstr ""
+
+msgid "Running"
+msgstr ""
+
+msgid "Not running"
+msgstr ""
+
+msgid "Service status"
+msgstr ""
+
+msgid "Status"
+msgstr ""
+
+msgid "Collecting data..."
+msgstr ""
+
+msgid "Start"
+msgstr ""
+
+msgid "Stop"
+msgstr ""
+
+msgid "Restart"
+msgstr ""
+
+msgid "Regenerate config and apply"
+msgstr ""
+
+msgid "Configuration"
+msgstr ""
+
+msgid "Basic"
+msgstr ""
+
+msgid "Advanced - Listen"
+msgstr ""
+
+msgid "Advanced - Routing"
+msgstr ""
+
+msgid "Advanced - Authentication"
+msgstr ""
+
+msgid "Advanced - Tuning and logs"
+msgstr ""
+
+msgid "Enabled / start on boot"
+msgstr ""
+
+msgid "Controls both the running instance and the procd boot link. Disable it to stop the server and remove autostart."
+msgstr ""
+
+msgid "Username"
+msgstr ""
+
+msgid "Single inline SOCKS5 user. Up to 255 characters. Ignored when an authentication file is configured. A random value is generated on first install."
+msgstr ""
+
+msgid "Password"
+msgstr ""
+
+msgid "Up to 255 characters. Stored in plain text in UCI and in the generated YAML, so restrict file permissions accordingly."
+msgstr ""
+
+msgid "Worker threads"
+msgstr ""
+
+msgid "Number of worker threads handling SOCKS5 sessions. Each thread owns its own task system. On a small router 1-4 is usually enough."
+msgstr ""
+
+msgid "Worker threads must be at least 1"
+msgstr ""
+
+msgid "TCP listen port"
+msgstr ""
+
+msgid "Port for the SOCKS5 CONNECT service. Remember to open it in the firewall."
+msgstr ""
+
+msgid "Listen address"
+msgstr ""
+
+msgid "IPv4 or IPv6 address to bind. The default :: accepts IPv4-mapped connections as well; use 0.0.0.0 for IPv4 only."
+msgstr ""
+
+msgid "UDP listen port"
+msgstr ""
+
+msgid "Leave empty or use 0 for one ephemeral UDP port per session. A fixed port uses the same port for every session; a-b picks a port from the range in round-robin order. Open the chosen port or range in the firewall."
+msgstr ""
+
+msgid "Use a port, a range like 10000-20000, or leave empty"
+msgstr ""
+
+msgid "UDP listen address"
+msgstr ""
+
+msgid "Address used by UDP ASSOCIATE. When empty, the local address of the clients TCP connection is reused."
+msgstr ""
+
+msgid "UDP public address (IPv4)"
+msgstr ""
+
+msgid "IPv4 address reported to clients in the UDP ASSOCIATE reply. Set this when the server is behind NAT and the advertised address must differ from the bound address."
+msgstr ""
+
+msgid "UDP public address (IPv6)"
+msgstr ""
+
+msgid "Same as above for IPv6 clients."
+msgstr ""
+
+msgid "Listen IPv6 only"
+msgstr ""
+
+msgid "Sets IPV6_V6ONLY on the listening socket. Enable it to reject IPv4-mapped connections."
+msgstr ""
+
+msgid "TCP fast open"
+msgstr ""
+
+msgid "Enable TCP Fast Open on the listening socket. Requires kernel and client support; leave off unless you know both sides support it."
+msgstr ""
+
+msgid "Bind source address"
+msgstr ""
+
+msgid "Source address for outbound connections, for both address families. Can be overridden by the IPv4/IPv6 specific settings below."
+msgstr ""
+
+msgid "Bind source address (IPv4)"
+msgstr ""
+
+msgid "Source IPv4 address for outbound connections. Useful with multiple WAN addresses or policy routing."
+msgstr ""
+
+msgid "Bind source address (IPv6)"
+msgstr ""
+
+msgid "Source IPv6 address for outbound connections."
+msgstr ""
+
+msgid "Bind source interface"
+msgstr ""
+
+msgid "Forces outbound sessions to a network interface via SO_BINDTODEVICE, for example eth2 or wwan0. Leave empty to use the routing table."
+msgstr ""
+
+msgid "Domain address type"
+msgstr ""
+
+msgid "Address family used when replying to domain name requests. unspec keeps the behaviour chosen by the resolver; ipv4 or ipv6 force one family."
+msgstr ""
+
+msgid "Unspecified"
+msgstr ""
+
+msgid "IPv4"
+msgstr ""
+
+msgid "IPv6"
+msgstr ""
+
+msgid "Socket mark"
+msgstr ""
+
+msgid "SO_MARK applied to outbound sessions. Accepts decimal, hexadecimal (0x1a) or octal (01) notation. Can be used with iptables connlimit or policy routing. A MARK column in the authentication file overrides this value for that user."
+msgstr ""
+
+msgid "Use decimal, 0x hexadecimal or octal notation"
+msgstr ""
+
+msgid "Authentication file"
+msgstr ""
+
+msgid "Path to an authentication file with one \"USER PASS [MARK]\" entry per line. When set, this file takes precedence over the username and password on the Basic tab. Send SIGUSR1 to reload it without restarting."
+msgstr ""
+
+msgid "Allow unauthenticated access"
+msgstr ""
+
+msgid "Danger: with no username, password or authentication file the server would be an open proxy. This flag is required to permit that state. Leave it off for normal use."
+msgstr ""
+
+msgid "Task stack size (bytes)"
+msgstr ""
+
+msgid "Stack size for each per-session coroutine. The upstream default is 8192 bytes. Lower values save memory but may overflow with complex requests."
+msgstr ""
+
+msgid "UDP receive buffer (bytes)"
+msgstr ""
+
+msgid "SO_RCVBUF for UDP relay sockets. The upstream default is 524288 bytes. Increase for high bandwidth UDP traffic."
+msgstr ""
+
+msgid "UDP copy buffers"
+msgstr ""
+
+msgid "Number of 1500-byte buffers used by the UDP splice path. The upstream default is 10."
+msgstr ""
+
+msgid "TCP connect timeout (ms)"
+msgstr ""
+
+msgid "Maximum time to wait for an outbound TCP connection. The upstream default is 10000 ms."
+msgstr ""
+
+msgid "TCP read/write timeout (ms)"
+msgstr ""
+
+msgid "Idle timeout for established TCP sessions. The upstream default is 300000 ms."
+msgstr ""
+
+msgid "UDP read/write timeout (ms)"
+msgstr ""
+
+msgid "Idle timeout for UDP relay sessions. The upstream default is 60000 ms."
+msgstr ""
+
+msgid "Legacy read/write timeout (ms)"
+msgstr ""
+
+msgid "Compatibility option from older upstream versions. When set, the TCP and UDP specific timeouts below are not written to YAML and this value applies to both. Usually leave it empty."
+msgstr ""
+
+msgid "Log file"
+msgstr ""
+
+msgid "Leave empty for null, which sends logs to stdout/stderr where procd forwards them to the system log. Set an absolute path to write to a file; note that log rotation is not handled by this package."
+msgstr ""
+
+msgid "Log level"
+msgstr ""
+
+msgid "debug is verbose, error is minimal. warn is the upstream default."
+msgstr ""
+
+msgid "Debug"
+msgstr ""
+
+msgid "Info"
+msgstr ""
+
+msgid "Warning"
+msgstr ""
+
+msgid "Error"
+msgstr ""
+
+msgid "File descriptor limit"
+msgstr ""
+
+msgid "The binary calls setrlimit() with this value at startup. The upstream init script already asks procd for 1000000 descriptors, so keep this value aligned."
+msgstr ""
+
+msgid "PID file (ignored on OpenWrt)"
+msgstr ""
+
+msgid "Upstream supports a pid-file that makes the process daemonize itself. This package never generates it under procd, because detaching would break process supervision. Displayed here for completeness only."
+msgstr ""
+

@@ -1,6 +1,6 @@
 # openwrt-suite
 
-OpenWrt 第三方组件**单一聚合 feed 仓库**：把 35 个第三方包（39 个包源目录）与一份固件 `.config` 统一收进本仓库，每日由 GitHub Actions 从各上游同步（纯快照方式）。使用时把本仓库挂成一个 feed，第三方包就会出现在 `make menuconfig` 里；`build/compile.sh` 克隆后直接运行即可完成从准备到编译的全过程，本地修改原样生效。
+OpenWrt 第三方组件**单一聚合 feed 仓库**：把 36 个第三方包（40 个包源目录）与一份固件 `.config` 统一收进本仓库，每日由 GitHub Actions 从各上游同步（纯快照方式）。使用时把本仓库挂成一个 feed，第三方包就会出现在 `make menuconfig` 里；`build/compile.sh` 克隆后直接运行即可完成从准备到编译的全过程，本地修改原样生效。
 
 ## 使用方法
 
@@ -99,7 +99,7 @@ make defconfig && make menuconfig
 
 | 菜单路径 | 包 |
 |---|---|
-| LuCI → 3. Applications | luci-app-airplay2、luci-app-argon-config、luci-app-atomdns、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-honk、luci-app-kixdns、luci-app-lucky、luci-app-mosdns、luci-app-nikki、luci-app-oaf、luci-app-open_nexttrace、luci-app-oxidns、luci-app-photondns、luci-app-photondns-compat、luci-app-pulse、luci-app-temp-status |
+| LuCI → 3. Applications | luci-app-airplay2、luci-app-argon-config、luci-app-atomdns、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-hevsocks5、luci-app-honk、luci-app-kixdns、luci-app-lucky、luci-app-mosdns、luci-app-nikki、luci-app-oaf、luci-app-open_nexttrace、luci-app-oxidns、luci-app-photondns、luci-app-photondns-compat、luci-app-pulse、luci-app-temp-status |
 | LuCI → 4. Themes | luci-theme-argon |
 | Network → IP Addresses and Names | ddns-go、kixdns、mosdns（Go DNS 转发器）、photondns（Rust DNS 转发器）、v2ray-geodata（虚包，实际产出 v2ray-geoip / v2ray-geosite） |
 | Network → Web Servers/Proxies | dae、honk（eBPF 核心，仅 x86_64 / aarch64_generic） |
@@ -379,6 +379,19 @@ file -L "$(command -v zig)" 2>/dev/null; file -L "$(command -v bpf-linker)" 2>/d
 | 菜单 | LuCI → 3. Applications → `luci-app-atomdns`，页面在 服务 → AtomDNS |
 
 `LUCI_DEPENDS` 只有 `+ca-certificates`（DoH / 订阅需要证书），`LUCI_PKGARCH` 留空走目标架构。编译宿主机需要 `unzip` 解压 `config_rust.zip`，三套构建库的 CI 依赖清单都已包含。包内 `root/lib/upgrade/keep.d/luci-app-atomdns` 把运行时数据目录 `/etc/atomdns` 列入 sysupgrade 保留清单，与 conffiles 的 `/etc/config/atomdns` 互补。上游根 `LICENSE`（GPL-3.0 全文）由 `sync.sh` 收进 `meta/atomdns/`。
+
+### hevsocks5
+
+`hevsocks5` 源指向自有仓库 [NetForgeCN/luci-app-hevsocks5](https://github.com/NetForgeCN/luci-app-hevsocks5)，给官方 `hev-socks5-server` 补一个 LuCI 控制页。仓库根就是包目录（`Makefile` 在根），因此 `mode=all` 整仓拷成 `packages/luci-app-hevsocks5/`，MIT 许可证随快照留在包目录内。
+
+| 项目 | 说明 |
+|---|---|
+| 依赖不重复 | `LUCI_DEPENDS:=+hev-socks5-server +luci-base`，服务端本体由官方 packages feed 的 `net/hev-socks5-server` 提供；三份 `.config` 已有 `CONFIG_PACKAGE_hev-socks5-server=y`，suite 不再聚合一份同名包 |
+| 配置链路 | LuCI 写 UCI `hev-socks5-server.config` → ucitrack 触发 `/etc/init.d/hevsocks5-sync` → `/usr/bin/hevsocks5-ctl generate` 以临时文件 + `mv` 原子替换 `/etc/hev-socks5-server/main.yml`（0600）→ procd 重启服务 |
+| 与上游不冲突 | 自带 `hevsocks5-sync` 钩子脚本，不覆盖官方的 `/etc/init.d/hev-socks5-server`，opkg 文件互不占用 |
+| 菜单与语言 | LuCI → 3. Applications → `luci-app-hevsocks5`；`po/zh_Hans/` 产出 `luci-i18n-hevsocks5-zh-cn` |
+
+`LUCI_PKGARCH:=all`，界面与 UCI→YAML 渲染脚本与架构无关；首次安装由 `root/etc/uci-defaults/luci-hevsocks5` 写默认值并生成一组随机凭据。是否编进固件由 `.config` 里的 `CONFIG_PACKAGE_luci-app-hevsocks5`（及可选的中文语言包 `luci-i18n-hevsocks5-zh-cn`）决定，配置由使用者自行维护。
 
 ## 手动触发同步
 
