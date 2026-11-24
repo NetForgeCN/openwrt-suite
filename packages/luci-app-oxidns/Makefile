@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-oxidns
 PKG_VERSION:=0.2.0
-PKG_RELEASE:=16
+PKG_RELEASE:=17
 
 PKG_LICENSE:=GPL-3.0-or-later
 PKG_MAINTAINER:=NetForgeCN
@@ -44,6 +44,25 @@ if [ -d /www/luci-static/resources/view/oxidns ]; then
 fi
 if [ -x /etc/init.d/rpcd ]; then
 	/etc/init.d/rpcd restart >/dev/null 2>&1 || true
+fi
+# fw4 treats a redirect without `family` as IPv4 unless `family any` is set
+# explicitly. Old hijack sections written without it hijacked IPv4 :53 only.
+# Patch only our own tagged sections and only when family is empty; a user-
+# chosen value is left alone. Idempotent.
+if command -v uci >/dev/null 2>&1; then
+	hijack_changed=0
+	for hijack_sect in oxidns_hijack oxidns_hijack_udp oxidns_hijack_tcp; do
+		[ "$$(uci -q get "firewall.$$hijack_sect.name" 2>/dev/null || true)" = "oxidns-dns-hijack" ] || continue
+		[ -n "$$(uci -q get "firewall.$$hijack_sect.family" 2>/dev/null || true)" ] && continue
+		if uci -q set "firewall.$$hijack_sect.family=any"; then
+			hijack_changed=1
+		fi
+	done
+	if [ "$$hijack_changed" = "1" ] && uci -q commit firewall; then
+		if [ -x /etc/init.d/firewall ]; then
+			/etc/init.d/firewall reload >/dev/null 2>&1 || true
+		fi
+	fi
 fi
 exit 0
 endef

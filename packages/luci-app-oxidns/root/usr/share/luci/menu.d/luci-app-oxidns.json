@@ -31,12 +31,34 @@
 			"acl": [ "luci-app-oxidns" ]
 		}
 	},
+	"admin/services/oxidns/hijack": {
+		"title": "DNS Hijack",
+		"order": 22,
+		"action": {
+			"type": "view",
+			"path": "oxidns/hijack"
+		},
+		"depends": {
+			"acl": [ "luci-app-oxidns" ]
+		}
+	},
 	"admin/services/oxidns/rules": {
 		"title": "Rules",
 		"order": 25,
 		"action": {
 			"type": "view",
 			"path": "oxidns/rules"
+		},
+		"depends": {
+			"acl": [ "luci-app-oxidns" ]
+		}
+	},
+	"admin/services/oxidns/geo": {
+		"title": "Geo Data",
+		"order": 26,
+		"action": {
+			"type": "view",
+			"path": "oxidns/geo"
 		},
 		"depends": {
 			"acl": [ "luci-app-oxidns" ]

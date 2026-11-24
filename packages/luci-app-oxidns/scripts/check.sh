@@ -2,7 +2,7 @@
 
 set -eu
 
-node -e "for (const f of ['htdocs/luci-static/resources/view/oxidns/overview.js','htdocs/luci-static/resources/view/oxidns/core.js','htdocs/luci-static/resources/view/oxidns/config.js','htdocs/luci-static/resources/view/oxidns/logs.js','htdocs/luci-static/resources/view/oxidns/settings.js','htdocs/luci-static/resources/view/oxidns/rules.js','htdocs/luci-static/resources/view/oxidns/prewarm.js']) new Function(require('fs').readFileSync(f,'utf8'));"
+node -e "for (const f of ['htdocs/luci-static/resources/view/oxidns/overview.js','htdocs/luci-static/resources/view/oxidns/core.js','htdocs/luci-static/resources/view/oxidns/config.js','htdocs/luci-static/resources/view/oxidns/logs.js','htdocs/luci-static/resources/view/oxidns/settings.js','htdocs/luci-static/resources/view/oxidns/rules.js','htdocs/luci-static/resources/view/oxidns/prewarm.js','htdocs/luci-static/resources/view/oxidns/hijack.js','htdocs/luci-static/resources/view/oxidns/geo.js','htdocs/luci-static/resources/view/oxidns/cmeditor.js']) new Function(require('fs').readFileSync(f,'utf8'));"
 node -e "for (const f of ['root/usr/share/luci/menu.d/luci-app-oxidns.json','root/usr/share/rpcd/acl.d/luci-app-oxidns.json','root/usr/share/oxidns/targets.json']) JSON.parse(require('fs').readFileSync(f,'utf8'));"
 node <<'NODE'
 const fs = require('fs');
@@ -16,6 +16,8 @@ for (const file of [
 	'htdocs/luci-static/resources/view/oxidns/settings.js',
 	'htdocs/luci-static/resources/view/oxidns/rules.js',
 	'htdocs/luci-static/resources/view/oxidns/prewarm.js',
+	'htdocs/luci-static/resources/view/oxidns/hijack.js',
+	'htdocs/luci-static/resources/view/oxidns/geo.js',
 ]) {
 	const source = fs.readFileSync(file, 'utf8');
 	const re = /_\(\s*(['"])((?:\\.|[^\\])*?)\1\s*\)/g;
@@ -72,6 +74,15 @@ if command -v msgfmt >/dev/null 2>&1; then
 fi
 sh -n root/usr/libexec/rpcd/luci.oxidns
 sh -n root/etc/init.d/oxidns
+# [CodeMirror] config.js must use the cmeditor wrapper and the assets must ship.
+grep -q 'view.oxidns.cmeditor' htdocs/luci-static/resources/view/oxidns/config.js
+grep -q 'cmeditor.defer' htdocs/luci-static/resources/view/oxidns/config.js
+test -s htdocs/luci-static/resources/view/oxidns/cmeditor.js
+test -s htdocs/luci-static/resources/oxidns-codemirror/codemirror.min.js
+test -s htdocs/luci-static/resources/oxidns-codemirror/yaml.min.js
+test -s htdocs/luci-static/resources/oxidns-codemirror/codemirror.min.css
+test -s htdocs/luci-static/resources/oxidns-codemirror/cmtheme.css
+
 # [API password] Both callers of `oxidns check/start` must inject OXIDNS_API_PASS:
 # init.d covers the procd service, rpcd covers config validate/save and core
 # install. A gap here makes any ${OXIDNS_API_PASS} config fail only in the UI.
@@ -178,5 +189,24 @@ fi
 # overlay; there is no longer a local files/rules overlay to install.
 if grep -q './files/rules' oxidns-rules-baseline/Makefile; then
 	echo "baseline Makefile still installs a local files/rules overlay" >&2
+	exit 1
+fi
+
+# [r17] DNS hijack, CodeMirror editor and Geo data page must stay wired:
+# menu entry + ACL methods + rpcd emitters + frontend view. A missing piece
+# leaves a dead tab or a page whose buttons all fail.
+grep -q 'oxidns/hijack' root/usr/share/luci/menu.d/luci-app-oxidns.json
+grep -q 'oxidns/geo' root/usr/share/luci/menu.d/luci-app-oxidns.json
+for method in hijack_get hijack_save geo_get geo_save geo_reset geo_download geo_progress; do
+	grep -q "\"$method\"" root/usr/share/rpcd/acl.d/luci-app-oxidns.json
+	grep -q "$method)" root/usr/libexec/rpcd/luci.oxidns
+done
+for view in hijack geo; do
+	test -s "htdocs/luci-static/resources/view/oxidns/$view.js"
+done
+# Geo defaults must stay on the self-maintained rules source, not upstream's.
+grep -q 'NetForgeCN/v2ray-rules-dat' root/usr/libexec/rpcd/luci.oxidns
+if grep -q 'Loyalsoldier/v2ray-rules-dat@release' root/usr/libexec/rpcd/luci.oxidns; then
+	echo "geo default must not fall back to upstream Loyalsoldier release" >&2
 	exit 1
 fi

@@ -2,6 +2,7 @@
 'require view';
 'require rpc';
 'require ui';
+'require view.oxidns.cmeditor as cmeditor';
 
 var callConfigRead = rpc.declare({
 	object: 'luci.oxidns',
@@ -71,6 +72,17 @@ function configTextarea(content) {
 
 	textarea.defaultValue = value;
 	textarea.value = value;
+
+	// Upgrade the plain textarea to a CodeMirror YAML editor with line numbers
+	// and an internal scroll viewport. cmeditor defers attachment until the
+	// node is in the DOM; it mirrors edits back into textarea.value, so all the
+	// existing validate/save calls keep reading the value unchanged. Falls
+	// back to the plain textarea if the assets are missing.
+	cmeditor.load().then(function(ok) {
+		if (ok)
+			cmeditor.defer(textarea, { mode: 'text/x-yaml' });
+	});
+
 	return textarea;
 }
 

@@ -16,6 +16,9 @@
 | 域名预热 | `Prewarm` 页按 A / AAAA 提前查询并写入缓存 | 常用域名首次访问直接使用缓存，减少等待 |
 | 内核在线升级 | `Core` 页 `Check Update` | 不用重新编译固件即可升级内核 |
 | 日志筛选 | 关键词 + `plugin` / `qtype` / `rcode` 过滤，实时行数 | 快速定位某类查询，日志再多也能看 |
+| DNS 劫持 | `DNS Hijack` 页一键把 LAN 53 端口重定向到本机 OxiDNS，IPv4/IPv6 全覆盖 | 局域网设备无需改 DNS 即可走 OxiDNS，能看到真实客户端 IP |
+| CodeMirror 编辑器 | 配置页用 YAML 语法高亮编辑器，带行号、内部滚动 | 编辑长配置不跳屏，改配置更直观 |
+| Geo 数据管理 | `Geo Data` 页在线下载/更新 geoip.dat 与 geosite.dat，地址可改可还原 | 数据更新不用重新编译固件，默认走自建规则源 |
 | API 密码托管 | 密码存 UCI，脚本自动注入 `${OXIDNS_API_PASS}` | 配置里不放明文，服务与网页校验都能正常工作 |
 | 升级自愈 | 内核、WebUI、配置和规则在 sysupgrade 后自动恢复 | 保留配置升级固件后，重装一次插件即可恢复服务 |
 
@@ -25,10 +28,12 @@
 |---|---|
 | `Overview` | 内核 / 服务状态、WebUI 入口、配置路径、日志状态 |
 | `Core` | 安装、上传、升级、修复或移除内核 |
-| `Configuration` | 查看、校验、保存 `config.yaml` |
+| `DNS Hijack` | LAN 53 端口重定向开关、目标端口来源、防火墙段状态 |
+| `Configuration` | CodeMirror 高亮编辑、校验、保存 `config.yaml` |
 | `Logs` | 过滤和刷新 OxiDNS 日志 |
 | `Settings` | 仓库、bundle、代理、路径、日志与 API 密码 |
 | `Rules` | 规则基线状态、检查更新、一键更新 |
+| `Geo Data` | geoip.dat / geosite.dat 状态、下载地址、目录、在线更新 |
 | `Prewarm` | 预热开关、域名清单、目标地址与周期、手动执行 |
 
 ## 快速开始
@@ -88,6 +93,31 @@ dig @127.0.0.1 -p 5333 youtube.com A   # 验证监听口在应答
 | `adguard-hostlist.txt` | AdGuard HostlistsRegistry 规则 |
 
 `cn-domains.txt` 由 dnsmasq-china-list 在构建机上转换生成，原始 conf 不随包分发。规则更新由 `Rules` 页统一处理，先校验再替换；校验不通过时自动保留上一版。
+
+## DNS 劫持（DNS Hijack）
+
+开启后会把局域网发往 53 端口的 DNS 请求（TCP + UDP、IPv4 + IPv6）用 fw4 redirect 重定向到本机 OxiDNS 监听地址，局域网设备无需单独改 DNS。目标端口默认从 `config.yaml` 的 `udp_server` / `tcp_server` 自动读取，也可在页面手动指定。
+
+- 状态以 `/etc/config/firewall` 里的 `oxidns_hijack*` 段为准；只改这些带 `oxidns-dns-hijack` 标记的段，不动其它防火墙规则。
+- 显式写入 `family=any`——fw4 对未指定 family 的 redirect 按 IPv4 兜底，不写会漏掉 IPv6 的 53 查询。安装时也会幂等修复旧版留下的段。
+- 关闭时只删除受管段并重载防火墙，不影响其它规则。
+- 劫持后来自局域网设备的查询会带真实客户端 IP，日志与统计不再全是 `127.0.0.1`。
+
+注意：劫持的端口必须和 OxiDNS 的实际监听一致；若 `config.yaml` 用了非标准端口或经过端口映射，请切到手动模式填写真实端口。
+
+## Geo 数据（Geo Data）
+
+`Geo Data` 页管理 OxiDNS 的 `geosite.dat` 与 `geoip.dat`（供配置里的 `geosite_cn` / `geoip_cn` 等 provider 使用，落点 `/usr/share/v2ray`）。
+
+默认下载地址指向自建的 **`NetForgeCN/v2ray-rules-dat`** release 资产：以 Loyalsoldier 全集为基础，额外合并 `netforge-antiad` / `netforge-adrules` / `netforge-neodev` / `netforge-ads` 广告标签（都并入 `category-ads-all`），每 2 小时跟随上游构建。使用稳定的 `releases/latest/download` 路径，始终取最新版本，无需手工改版本号。
+
+| 项目 | 默认值 |
+|---|---|
+| GeoIP 地址 | `https://github.com/NetForgeCN/v2ray-rules-dat/releases/latest/download/geoip.dat` |
+| GeoSite 地址 | `https://github.com/NetForgeCN/v2ray-rules-dat/releases/latest/download/geosite.dat` |
+| 存储目录 | `/usr/share/v2ray` |
+
+下载地址与存储目录都可在页面修改并一键恢复默认；下载先写临时文件再原子替换，失败时保留现有文件，勾选「下载后重启」可在成功后让新数据立即生效。
 
 ## 构建与安装
 

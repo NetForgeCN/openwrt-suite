@@ -604,3 +604,132 @@ msgstr ""
 
 msgid "Warming up..."
 msgstr ""
+
+msgid "%s, %s"
+msgstr ""
+
+msgid "Active firewall sections"
+msgstr ""
+
+msgid "Apply"
+msgstr ""
+
+msgid "Applying DNS hijack..."
+msgstr ""
+
+msgid "DNS Hijack"
+msgstr ""
+
+msgid "DNS hijack disabled."
+msgstr ""
+
+msgid "DNS hijack enabled. LAN port 53 requests are redirected to OxiDNS."
+msgstr ""
+
+msgid "Download / Update"
+msgstr ""
+
+msgid "Download and update the geoip.dat / geosite.dat used by OxiDNS. Defaults fetch the self-maintained NetForgeCN rules (Loyalsoldier full set plus extra ad tags); URLs and the storage directory can be customized and restored to defaults."
+msgstr ""
+
+msgid "Download finished."
+msgstr ""
+
+msgid "Download started."
+msgstr ""
+
+msgid "Enable DNS hijack"
+msgstr ""
+
+msgid "Enter a port number between 1 and 65535."
+msgstr ""
+
+msgid "Failed to apply DNS hijack"
+msgstr ""
+
+msgid "Failed to restore defaults"
+msgstr ""
+
+msgid "Failed to save geo settings"
+msgstr ""
+
+msgid "Failed to start the download"
+msgstr ""
+
+msgid "Geo Data"
+msgstr ""
+
+msgid "Geo settings restored to defaults."
+msgstr ""
+
+msgid "Geo settings saved."
+msgstr ""
+
+msgid "GeoIP download URL"
+msgstr ""
+
+msgid "GeoSite download URL"
+msgstr ""
+
+msgid "Install the OxiDNS core before DNS hijack can redirect to a local listener."
+msgstr ""
+
+msgid "Modified"
+msgstr ""
+
+msgid "No target port available (source: %s)."
+msgstr ""
+
+msgid "Read the port from config.yaml automatically"
+msgstr ""
+
+msgid "Redirect LAN DNS requests on port 53 (TCP and UDP, IPv4 and IPv6) to the local OxiDNS DNS listener."
+msgstr ""
+
+msgid "Restart OxiDNS after the download"
+msgstr ""
+
+msgid "Restore defaults"
+msgstr ""
+
+msgid "Restoring defaults..."
+msgstr ""
+
+msgid "Rules were written, but the firewall reload failed. The rules take effect on the next firewall reload or reboot."
+msgstr ""
+
+msgid "SHA-256"
+msgstr ""
+
+msgid "Saving geo settings..."
+msgstr ""
+
+msgid "Starting download..."
+msgstr ""
+
+msgid "Status"
+msgstr ""
+
+msgid "Storage directory"
+msgstr ""
+
+msgid "Target ports"
+msgstr ""
+
+msgid "UDP port %s, TCP port %s"
+msgstr ""
+
+msgid "Use a manual port"
+msgstr ""
+
+msgid "from config.yaml"
+msgstr ""
+
+msgid "manual"
+msgstr ""
+
+msgid "not present"
+msgstr ""
+
+msgid "port %s (TCP/UDP)"
+msgstr ""

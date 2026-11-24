@@ -48,20 +48,6 @@ ssl.gstatic.com
 googleusercontent.com
 lh3.googleusercontent.com
 lh4.googleusercontent.com
-www.google-analytics.com
-ssl.google-analytics.com
-googletagmanager.com
-www.googletagmanager.com
-googleadservices.com
-www.googleadservices.com
-doubleclick.net
-googleads.g.doubleclick.net
-static.doubleclick.net
-pubads.g.doubleclick.net
-securepubads.g.doubleclick.net
-googlesyndication.com
-pagead2.googlesyndication.com
-tpc.googlesyndication.com
 safebrowsing.googleapis.com
 update.googleapis.com
 
@@ -100,3 +86,34 @@ oaistatic.com
 persistent.oaistatic.com
 oaiusercontent.com
 files.oaiusercontent.com
+
+# =============================================================================
+# 排除清单 / Excluded domains （以下均为注释，不会被预热）
+#
+# 这些域名默认列表曾收录，实测会被广告规则（anti-AD / AdRules / neodevhost /
+# AdGuard / geosite:ads）命中而进入 black_hole，无法写入缓存，预热无意义。
+# 另注：权威 DNS 把这些域名解析到 0.0.0.0（A）、无 AAAA，属于 Google 主动黑洞。
+# 保留在此作为样本，新增域名前请先对照，避免把广告/统计域名加入预热。
+#
+# 格式: 域名 [A 记录 / AAAA 记录]，采样自 8.8.8.8 / 1.1.1.1 / 223.5.5.5
+#
+# ---- Google Analytics 统计 ----
+# www.google-analytics.com           [A 0.0.0.0 / AAAA none]
+# ssl.google-analytics.com           [A 0.0.0.0 / AAAA none]
+# ---- Google Tag Manager 统计 ----
+# googletagmanager.com               [A 0.0.0.0 / AAAA none]
+# www.googletagmanager.com           [A 0.0.0.0 / AAAA none]
+# ---- Google AdServices 广告 ----
+# googleadservices.com               [A 0.0.0.0 / AAAA none]
+# www.googleadservices.com           [A 0.0.0.0 / AAAA none]
+# ---- DoubleClick 广告 ----
+# doubleclick.net                    [A 0.0.0.0 / AAAA none]
+# googleads.g.doubleclick.net        [A 0.0.0.0 / AAAA none]
+# static.doubleclick.net             [A 0.0.0.0 / AAAA none]
+# pubads.g.doubleclick.net           [A 0.0.0.0 / AAAA none]
+# securepubads.g.doubleclick.net     [A 0.0.0.0 / AAAA none]
+# ---- Google AdSense 广告 ----
+# googlesyndication.com              [A 0.0.0.0 / AAAA none]
+# pagead2.googlesyndication.com      [A 0.0.0.0 / AAAA none]
+# tpc.googlesyndication.com          [A 0.0.0.0 / AAAA none]
+# =============================================================================

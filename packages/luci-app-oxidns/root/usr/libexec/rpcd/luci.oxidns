@@ -45,6 +45,28 @@ PREWARM_BIN="${PREWARM_BIN:-/usr/libexec/oxidns-prewarm}"
 PREWARM_MAX_BYTES=65536
 PREWARM_MAX_LINES=1000
 
+# Geo data (geoip.dat / geosite.dat). Defaults point at the self-maintained
+# NetForgeCN/v2ray-rules-dat release assets: Loyalsoldier full set plus the
+# extra netforge-* ad tags used by the config's geosite_ads / cn_all providers.
+# The stable /releases/latest/download/ path always resolves to the newest
+# build, so no version pinning is needed here. Landing dir matches the config
+# providers (/usr/share/v2ray) and the v2ray-geodata package.
+DEFAULT_GEOIP_URL="${OXIDNS_GEOIP_URL:-https://github.com/NetForgeCN/v2ray-rules-dat/releases/latest/download/geoip.dat}"
+DEFAULT_GEOSITE_URL="${OXIDNS_GEOSITE_URL:-https://github.com/NetForgeCN/v2ray-rules-dat/releases/latest/download/geosite.dat}"
+DEFAULT_GEO_DIR="${OXIDNS_GEO_DIR:-/usr/share/v2ray}"
+GEO_PROGRESS_LOG="$CORE_PROGRESS_DIR/geo-progress.log"
+GEO_RUNNING_FILE="$CORE_PROGRESS_DIR/geo.running"
+
+# DNS hijack: the source of truth is the oxidns_hijack* redirect sections in
+# /etc/config/firewall (present = enabled). fw4 renders a DNAT redirect with
+# no dest_ip as "redirect to :<dest_port>". family=any must be explicit —
+# fw4 otherwise defaults to IPv4, which silently leaves IPv6 :53 unhijacked.
+FIREWALL_INIT="${OXIDNS_FIREWALL_INIT:-/etc/init.d/firewall}"
+HIJACK_SECT_BOTH="oxidns_hijack"
+HIJACK_SECT_UDP="oxidns_hijack_udp"
+HIJACK_SECT_TCP="oxidns_hijack_tcp"
+HIJACK_MARK="oxidns-dns-hijack"
+
 CONFIG_PATH="$DEFAULT_CONFIG_PATH"
 WORKING_DIR="$DEFAULT_WORKING_DIR"
 SERVICE_NAME="$DEFAULT_SERVICE_NAME"
@@ -352,6 +374,14 @@ load_settings() {
 	esac
 	DOWNLOAD_PROXY="$(uci_get download_proxy '')"
 	GITHUB_TOKEN="$(uci_get github_token '')"
+	# DNS hijack target port source: auto reads udp_server/tcp_server listen
+	# from config.yaml; manual uses the hijack_port value set in the page.
+	HIJACK_PORT_MODE="$(uci_get hijack_port_mode auto)"
+	HIJACK_PORT="$(uci_get hijack_port '')"
+	# Geo data: empty means use DEFAULT_GEOIP_URL / DEFAULT_GEOSITE_URL.
+	GEOIP_URL="$(uci_get geoip_url '')"
+	GEOSITE_URL="$(uci_get geosite_url '')"
+	GEO_DIR="$(uci_get geo_dir '')"
 	# [API password] init script only injects this variable into the procd
 	# service process. rpcd is a separate daemon, so its children (notably
 	# `oxidns check` spawned by validate_config_file / core install) do NOT
@@ -408,7 +438,81 @@ yaml_scalar_clean() {
 	sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/^"//; s/"$//; s/^'\''//; s/'\''$//'
 }
 
+# ===== DNS hijack helpers: parse listen ports from config.yaml =====
+# Extract "udp_server <listen>" / "tcp_server <listen>" lines from the
+# plugins section. awk matches the first line and exits (no sed|head pipe,
+# which can deadlock). Same YAML shape as the upstream svenshi config.
+config_dns_listen() {
+	[ -r "$CONFIG_PATH" ] || return 1
+	awk '
+		/^[^[:space:]#][^:]*:/ {
+			top = $0;
+			sub(/:.*/, "", top);
+		}
+		top != "plugins" { next }
+		/^[[:space:]]*-[[:space:]]/ {
+			item_type = "";
+			in_args = 0;
+			got = 0;
+		}
+		!got && /^[[:space:]]+type:[[:space:]]*[^[:space:]#]/ {
+			t = $0;
+			sub(/^[[:space:]]+type:[[:space:]]*/, "", t);
+			sub(/[[:space:]].*$/, "", t);
+			if (t == "udp_server" || t == "tcp_server")
+				item_type = t;
+		}
+		/^[[:space:]]+args:/ { in_args = 1 }
+		item_type != "" && in_args && !got && /^[[:space:]]+listen:[[:space:]]*[^[:space:]#]/ {
+			l = $0;
+			sub(/^[[:space:]]+listen:[[:space:]]*/, "", l);
+			sub(/[[:space:]]*(#.*)?$/, "", l);
+			gsub(/"/, "", l);
+			print item_type " " l;
+			got = 1;
+		}
+	' "$CONFIG_PATH"
+}
 
+# ":53" / "0.0.0.0:53" / "[::]:53" -> 53
+hijack_port_of_listen() {
+	[ -n "$1" ] || return 1
+	L="$(printf '%s' "$1" | yaml_scalar_clean)"
+	case "$L" in
+		*:*) PORT="${L##*:}" ;;
+		*) PORT="$L" ;;
+	esac
+	case "$PORT" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+		return 1
+	fi
+	printf '%s' "$PORT"
+}
+
+# Resolve effective DNS ports into DNS_UDP_PORT / DNS_TCP_PORT.
+resolve_dns_ports() {
+	DNS_UDP_PORT=""
+	DNS_TCP_PORT=""
+	if [ "${HIJACK_PORT_MODE:-auto}" = "manual" ]; then
+		MANUAL_PORT="$(hijack_port_of_listen "${HIJACK_PORT:-}" || true)"
+		[ -n "$MANUAL_PORT" ] || return 1
+		DNS_UDP_PORT="$MANUAL_PORT"
+		DNS_TCP_PORT="$MANUAL_PORT"
+		return 0
+	fi
+	[ -r "$CONFIG_PATH" ] || return 1
+	RAW="$(config_dns_listen || true)"
+	UDP_LISTEN="$(printf '%s\n' "$RAW" | awk '/^udp_server /{sub(/^udp_server /,"");print;exit}')"
+	TCP_LISTEN="$(printf '%s\n' "$RAW" | awk '/^tcp_server /{sub(/^tcp_server /,"");print;exit}')"
+	DNS_UDP_PORT="$(hijack_port_of_listen "$UDP_LISTEN" || true)"
+	DNS_TCP_PORT="$(hijack_port_of_listen "$TCP_LISTEN" || true)"
+	if [ -z "$DNS_UDP_PORT" ] && [ -z "$DNS_TCP_PORT" ]; then
+		return 1
+	fi
+	return 0
+}
 
 
 
@@ -2996,6 +3100,381 @@ emit_prewarm_run() {
 	printf '{"ok":true}\n'
 }
 
+
+# ===== DNS hijack (fw4 redirect: LAN :53 -> local OxiDNS listener) =====
+# Source of truth is the oxidns_hijack* sections in /etc/config/firewall.
+
+hijack_managed_sections() {
+	for SECT in "$HIJACK_SECT_BOTH" "$HIJACK_SECT_UDP" "$HIJACK_SECT_TCP"; do
+		if uci -q get "firewall.$SECT" >/dev/null 2>&1; then
+			printf '%s\n' "$SECT"
+		fi
+	done
+}
+
+# fw4 treats a redirect without family as IPv4 unless explicitly "any".
+hijack_family_covers_ipv6() {
+	case "$(uci -q get "firewall.$1.family" 2>/dev/null || true)" in
+		any | all | '*') return 0 ;;
+		*4*) return 1 ;;
+		*6*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+hijack_add_section() {
+	SECT="$1"; PROTO="$2"; PORT="$3"
+	uci -q set "firewall.$SECT=redirect" || return 1
+	uci -q set "firewall.$SECT.name=$HIJACK_MARK" || return 1
+	uci -q set "firewall.$SECT.src=lan" || return 1
+	uci -q set "firewall.$SECT.proto=$PROTO" || return 1
+	uci -q set "firewall.$SECT.family=any" || return 1
+	uci -q set "firewall.$SECT.src_dport=53" || return 1
+	uci -q set "firewall.$SECT.dest_port=$PORT" || return 1
+	uci -q set "firewall.$SECT.target=DNAT" || return 1
+}
+
+hijack_firewall_reload() {
+	if [ -x "$FIREWALL_INIT" ]; then
+		"$FIREWALL_INIT" reload >/dev/null 2>&1
+		return $?
+	fi
+	return 1
+}
+
+# Emit the status fields (caller wraps in {"ok":true,...}).
+emit_hijack_status() {
+	RELOADED="${1:-}"
+	SECT_JSON=""; ENABLED=0; IPV6=0
+	for SECT in $(hijack_managed_sections); do
+		SECT_JSON="$SECT_JSON\"$SECT\","
+		ENABLED=1
+	done
+	if [ "$ENABLED" = "1" ]; then
+		IPV6=1
+		for SECT in $(hijack_managed_sections); do
+			if ! hijack_family_covers_ipv6 "$SECT"; then
+				IPV6=0
+				break
+			fi
+		done
+	fi
+	SECT_JSON="${SECT_JSON%,}"
+	UDP_JSON="null"; [ -n "$DNS_UDP_PORT" ] && UDP_JSON="$DNS_UDP_PORT"
+	TCP_JSON="null"; [ -n "$DNS_TCP_PORT" ] && TCP_JSON="$DNS_TCP_PORT"
+	WARN_JSON="null"; [ "$RELOADED" = "0" ] && WARN_JSON='"firewall_reload_failed"'
+	case "${HIJACK_PORT_MODE:-auto}" in
+		manual) MODE_JSON='"manual"' ;;
+		*) MODE_JSON='"auto"' ;;
+	esac
+	MANUAL_JSON="null"
+	if [ "$MODE_JSON" = '"manual"' ]; then
+		MP="$(hijack_port_of_listen "${HIJACK_PORT:-}" || true)"
+		[ -n "$MP" ] && MANUAL_JSON="$MP"
+	fi
+	printf '"enabled":%s,"udp_port":%s,"tcp_port":%s,"port_mode":%s,"manual_port":%s,"ipv6":%s,"sections":[%s],"reloaded":%s,"warn":%s}' \
+		"$ENABLED" "$UDP_JSON" "$TCP_JSON" "$MODE_JSON" "$MANUAL_JSON" "$IPV6" "$SECT_JSON" "${RELOADED:-null}" "$WARN_JSON"
+}
+
+emit_hijack_get() {
+	if ! command -v uci >/dev/null 2>&1; then
+		json_error "uci_unavailable" "uci command not found"
+		return 1
+	fi
+	load_settings
+	resolve_dns_ports || true
+	printf '{"ok":true,'
+	emit_hijack_status
+	printf '\n'
+}
+
+emit_hijack_save() {
+	INPUT="$(cat)"
+	if ! command -v uci >/dev/null 2>&1; then
+		json_error "uci_unavailable" "uci command not found"
+		return 1
+	fi
+	load_settings
+	ENABLED="$(input_bool enabled "$INPUT")"
+
+	PORT_MODE="$(input_value port_mode "$INPUT")"
+	PORT_INPUT="$(input_value port "$INPUT")"
+	case "$PORT_MODE" in
+		manual) ;;
+		auto | '') PORT_MODE="auto" ;;
+		*)
+			json_error "invalid_port_mode" "port_mode must be auto or manual"
+			return 1
+			;;
+	esac
+	MANUAL_PORT=""
+	if [ "$PORT_MODE" = "manual" ]; then
+		MANUAL_PORT="$(hijack_port_of_listen "$PORT_INPUT" || true)"
+		if [ -z "$MANUAL_PORT" ]; then
+			json_error "invalid_hijack_port" "hijack port must be a number between 1 and 65535"
+			return 1
+		fi
+		uci -q set "oxidns.main.hijack_port_mode=manual" || {
+			json_error "hijack_save_failed" "failed to save the port mode"; return 1; }
+		uci -q set "oxidns.main.hijack_port=$MANUAL_PORT" || {
+			json_error "hijack_save_failed" "failed to save the hijack port"; return 1; }
+	else
+		uci -q delete oxidns.main.hijack_port_mode >/dev/null 2>&1 || true
+		uci -q delete oxidns.main.hijack_port >/dev/null 2>&1 || true
+	fi
+	if ! uci -q commit oxidns; then
+		json_error "hijack_save_failed" "failed to commit the oxidns settings"
+		return 1
+	fi
+
+	DNS_UDP_PORT=""; DNS_TCP_PORT=""
+	if [ "$HIJACK_PORT_MODE" = "manual" ] || [ -r "$CONFIG_PATH" ]; then
+		resolve_dns_ports || true
+	fi
+	if [ "$ENABLED" = "1" ] && [ -z "$DNS_UDP_PORT" ] && [ -z "$DNS_TCP_PORT" ]; then
+		if [ "$HIJACK_PORT_MODE" = "manual" ]; then
+			json_error "no_dns_listen" "manual hijack port is unusable"
+		else
+			json_error "no_dns_listen" "could not resolve a udp_server/tcp_server listen port from config.yaml"
+		fi
+		return 1
+	fi
+	for SECT in $(hijack_managed_sections); do
+		uci -q delete "firewall.$SECT" >/dev/null 2>&1 || true
+	done
+	if [ "$ENABLED" = "1" ]; then
+		if [ -n "$DNS_UDP_PORT" ] && [ "$DNS_UDP_PORT" = "$DNS_TCP_PORT" ]; then
+			hijack_add_section "$HIJACK_SECT_BOTH" "tcp udp" "$DNS_UDP_PORT" || {
+				json_error "hijack_write_failed" "failed to add the firewall redirect section"; return 1; }
+		else
+			if [ -n "$DNS_UDP_PORT" ]; then
+				hijack_add_section "$HIJACK_SECT_UDP" "udp" "$DNS_UDP_PORT" || {
+					json_error "hijack_write_failed" "failed to add the UDP redirect section"; return 1; }
+			fi
+			if [ -n "$DNS_TCP_PORT" ]; then
+				hijack_add_section "$HIJACK_SECT_TCP" "tcp" "$DNS_TCP_PORT" || {
+					json_error "hijack_write_failed" "failed to add the TCP redirect section"; return 1; }
+			fi
+		fi
+	fi
+	if ! uci -q commit firewall; then
+		json_error "hijack_save_failed" "failed to commit firewall changes"
+		return 1
+	fi
+	RELOADED=1
+	hijack_firewall_reload || RELOADED=0
+	printf '{"ok":true,'
+	emit_hijack_status "$RELOADED"
+	printf '\n'
+}
+
+# ===== Geo data (geoip.dat / geosite.dat download + atomic replace) =====
+
+geo_running() {
+	[ -f "$GEO_RUNNING_FILE" ] || return 1
+	GEO_PID="$(sed -n '1p' "$GEO_RUNNING_FILE" 2>/dev/null || true)"
+	if pid_is_running "$GEO_PID"; then
+		return 0
+	fi
+	rm -f "$GEO_RUNNING_FILE" 2>/dev/null || true
+	return 1
+}
+
+valid_geo_url() {
+	case "$1" in
+		http://* | https://*) ;;
+		*) return 1 ;;
+	esac
+	case "$1" in
+		*[[:space:]]* | *"'"* | *'"'* | *\\*) return 1 ;;
+	esac
+	return 0
+}
+
+valid_geo_dir() {
+	case "$1" in
+		/*) ;;
+		*) return 1 ;;
+	esac
+	case "$1" in
+		*..* | *'*'* | *"?"*) return 1 ;;
+	esac
+	return 0
+}
+
+geo_file_json() { # <logical name> <path>
+	GEO_JSON_NAME="$1"; GEO_JSON_PATH="$2"
+	GEO_EXISTS=0; GEO_SIZE=0; GEO_MTIME=""; GEO_SHA=""
+	if [ -f "$GEO_JSON_PATH" ] && [ ! -L "$GEO_JSON_PATH" ]; then
+		GEO_EXISTS=1
+		GEO_SIZE="$(file_size_bytes "$GEO_JSON_PATH")"
+		GEO_MTIME="$(stat_mtime "$GEO_JSON_PATH")"
+		GEO_SHA="$(sha256_file "$GEO_JSON_PATH")"
+	fi
+	printf '"%s":{"exists":' "$GEO_JSON_NAME"
+	json_bool "$GEO_EXISTS"
+	printf ',"size":%s,"mtime":' "$GEO_SIZE"
+	json_string "$GEO_MTIME"
+	printf ',"sha256":'
+	json_string "$GEO_SHA"
+	printf '}'
+}
+
+emit_geo_get() {
+	load_settings
+	EFF_IP="${GEOIP_URL:-$DEFAULT_GEOIP_URL}"
+	EFF_SITE="${GEOSITE_URL:-$DEFAULT_GEOSITE_URL}"
+	EFF_DIR="${GEO_DIR:-$DEFAULT_GEO_DIR}"
+	RUNNING=0
+	geo_running && RUNNING=1
+	printf '{"ok":true'
+	printf ',"geoip_url":'; json_string "$EFF_IP"
+	printf ',"geosite_url":'; json_string "$EFF_SITE"
+	printf ',"geo_dir":'; json_string "$EFF_DIR"
+	printf ',"geoip_url_default":'; json_string "$DEFAULT_GEOIP_URL"
+	printf ',"geosite_url_default":'; json_string "$DEFAULT_GEOSITE_URL"
+	printf ',"geo_dir_default":'; json_string "$DEFAULT_GEO_DIR"
+	printf ',"geoip_url_custom":'; if [ -n "$GEOIP_URL" ]; then json_bool 1; else json_bool 0; fi
+	printf ',"geosite_url_custom":'; if [ -n "$GEOSITE_URL" ]; then json_bool 1; else json_bool 0; fi
+	printf ',"geo_dir_custom":'; if [ -n "$GEO_DIR" ]; then json_bool 1; else json_bool 0; fi
+	# geo_file_json emits its own key ("geoip":{...}); only the comma is added here.
+	printf ','; geo_file_json geoip "$EFF_DIR/geoip.dat"
+	printf ','; geo_file_json geosite "$EFF_DIR/geosite.dat"
+	printf ',"running":'; json_bool "$RUNNING"
+	printf '}\n'
+}
+
+emit_geo_save() {
+	INPUT="$(cat)"
+	load_settings
+	IP_IN="$(input_value geoip_url "$INPUT")"
+	SITE_IN="$(input_value geosite_url "$INPUT")"
+	DIR_IN="$(input_value geo_dir "$INPUT")"
+	IP_IN="${IP_IN:-$DEFAULT_GEOIP_URL}"
+	SITE_IN="${SITE_IN:-$DEFAULT_GEOSITE_URL}"
+	DIR_IN="${DIR_IN:-$DEFAULT_GEO_DIR}"
+	if ! valid_geo_url "$IP_IN" || ! valid_geo_url "$SITE_IN" || ! valid_geo_dir "$DIR_IN"; then
+		json_error "invalid_geo_settings" "configured geo url or directory is invalid"
+		return 1
+	fi
+	uci -q delete oxidns.main.geoip_url >/dev/null 2>&1 || true
+	uci -q delete oxidns.main.geosite_url >/dev/null 2>&1 || true
+	uci -q delete oxidns.main.geo_dir >/dev/null 2>&1 || true
+	if [ "$IP_IN" != "$DEFAULT_GEOIP_URL" ]; then
+		uci -q set "oxidns.main.geoip_url=$IP_IN" || { json_error "geo_save_failed" "cannot save geoip_url"; return 1; }
+	fi
+	if [ "$SITE_IN" != "$DEFAULT_GEOSITE_URL" ]; then
+		uci -q set "oxidns.main.geosite_url=$SITE_IN" || { json_error "geo_save_failed" "cannot save geosite_url"; return 1; }
+	fi
+	if [ "$DIR_IN" != "$DEFAULT_GEO_DIR" ]; then
+		uci -q set "oxidns.main.geo_dir=$DIR_IN" || { json_error "geo_save_failed" "cannot save geo_dir"; return 1; }
+	fi
+	uci -q commit oxidns || { json_error "geo_save_failed" "cannot commit geo settings"; return 1; }
+	emit_geo_get
+}
+
+emit_geo_reset() {
+	load_settings
+	for GEO_KEY in geoip_url geosite_url geo_dir; do
+		uci -q delete "oxidns.main.$GEO_KEY" >/dev/null 2>&1 || true
+	done
+	uci -q commit oxidns || { json_error "geo_reset_failed" "cannot reset geo settings"; return 1; }
+	emit_geo_get
+}
+
+run_geo_download_job() {
+	GEO_JOB_DIR="$1"; GEO_JOB_IP_URL="$2"; GEO_JOB_SITE_URL="$3"; GEO_JOB_RESTART="$4"
+	set +e
+	core_progress_log "info" "geo data update started (dir=$GEO_JOB_DIR)"
+	GEOIP_TMP="$GEO_JOB_DIR/.geoip.dat.new.$$"
+	GEOSITE_TMP="$GEO_JOB_DIR/.geosite.dat.new.$$"
+	rm -f "$GEOIP_TMP" "$GEOSITE_TMP"
+	GEO_FAILED=0
+	core_progress_command "download geoip.dat <- $GEO_JOB_IP_URL"
+	download_file "$GEO_JOB_IP_URL" "$GEOIP_TMP" || GEO_FAILED=1
+	if [ "$GEO_FAILED" = "0" ]; then
+		core_progress_command "download geosite.dat <- $GEO_JOB_SITE_URL"
+		download_file "$GEO_JOB_SITE_URL" "$GEOSITE_TMP" || GEO_FAILED=1
+	fi
+	if [ "$GEO_FAILED" = "0" ]; then
+		GEO_IP_SIZE="$(file_size_bytes "$GEOIP_TMP")"
+		GEO_SITE_SIZE="$(file_size_bytes "$GEOSITE_TMP")"
+		if [ "$GEO_IP_SIZE" -le 0 ] || [ "$GEO_SITE_SIZE" -le 0 ]; then
+			GEO_FAILED=1
+			core_progress_log "error" "downloaded file is empty (geoip=$GEO_IP_SIZE geosite=$GEO_SITE_SIZE)"
+		fi
+	fi
+	if [ "$GEO_FAILED" = "0" ]; then
+		core_progress_command "install into $GEO_JOB_DIR (atomic mv)"
+		chmod 644 "$GEOIP_TMP" "$GEOSITE_TMP" 2>/dev/null || true
+		if mv -f "$GEOIP_TMP" "$GEO_JOB_DIR/geoip.dat" && mv -f "$GEOSITE_TMP" "$GEO_JOB_DIR/geosite.dat"; then
+			core_progress_log "success" "installed: geoip.dat=$GEO_IP_SIZE bytes, geosite.dat=$GEO_SITE_SIZE bytes"
+		else
+			GEO_FAILED=1
+			core_progress_log "error" "failed to move downloaded files into $GEO_JOB_DIR"
+		fi
+	fi
+	if [ "$GEO_FAILED" != "0" ]; then
+		rm -f "$GEOIP_TMP" "$GEOSITE_TMP"
+		core_progress_log "error" "geo data update failed (existing files are unchanged)"
+	else
+		if [ "$GEO_JOB_RESTART" = "1" ] && service_running; then
+			GEO_INIT="$(init_script)"
+			core_progress_command "$GEO_INIT restart"
+			"$GEO_INIT" restart >/dev/null 2>&1
+			core_progress_log "info" "oxidns restarted to pick up the new geo data"
+		fi
+		core_progress_log "success" "geo data update finished"
+	fi
+}
+
+emit_geo_download() {
+	INPUT="$(cat)"
+	load_settings
+	if geo_running; then
+		json_error "geo_download_busy" "another geo download is already running"
+		return 1
+	fi
+	EFF_IP="${GEOIP_URL:-$DEFAULT_GEOIP_URL}"
+	EFF_SITE="${GEOSITE_URL:-$DEFAULT_GEOSITE_URL}"
+	EFF_DIR="${GEO_DIR:-$DEFAULT_GEO_DIR}"
+	if ! valid_geo_url "$EFF_IP" || ! valid_geo_url "$EFF_SITE" || ! valid_geo_dir "$EFF_DIR"; then
+		json_error "invalid_geo_settings" "configured geo url or directory is invalid"
+		return 1
+	fi
+	RESTART="$(input_bool restart "$INPUT")"
+	if ! mkdir -p "$EFF_DIR" 2>/dev/null; then
+		json_error "geo_dir_create_failed" "cannot create directory $EFF_DIR"
+		return 1
+	fi
+	require_download_transport || return 1
+	PROGRESS_LOG_FILE="$GEO_PROGRESS_LOG"
+	prepare_core_progress_file 1 || true
+	core_progress_log "info" "geo data update requested"
+	(
+		PROGRESS_LOG_FILE="$GEO_PROGRESS_LOG"
+		run_geo_download_job "$EFF_DIR" "$EFF_IP" "$EFF_SITE" "$RESTART"
+		rm -f "$GEO_RUNNING_FILE"
+	) >/dev/null 2>&1 </dev/null &
+	GEO_CHILD_PID="$!"
+	printf '%s\n' "$GEO_CHILD_PID" > "$GEO_RUNNING_FILE" 2>/dev/null || true
+	chmod 600 "$GEO_RUNNING_FILE" 2>/dev/null || true
+	printf '{"ok":true,"started":true,"running":true}\n'
+}
+
+emit_geo_progress() {
+	PROGRESS_LOG_FILE="$GEO_PROGRESS_LOG"
+	if ! prepare_core_progress_file 0; then
+		printf '{"ok":true,"text":""}\n'
+		return 0
+	fi
+	printf '{"ok":true,"running":'
+	geo_running && json_bool 1 || json_bool 0
+	printf ',"text":'
+	json_file_string "$GEO_PROGRESS_LOG"
+	printf '}\n'
+}
+
 case "${1:-}" in
 	list)
 		printf '{'
@@ -3025,6 +3504,13 @@ case "${1:-}" in
 		printf '"settings_read":{},'
 		printf '"settings_save":{"core_repository":"string","core_bundle":"string","config_path":"string","working_dir":"string","download_proxy":"string","github_token":"string","clear_download_proxy":"boolean","clear_github_token":"boolean","log_syslog":"string","persist_core":"string"},'
 		printf '"settings_save":{"core_repository":"string","core_bundle":"string","config_path":"string","working_dir":"string","download_proxy":"string","github_token":"string","clear_download_proxy":"boolean","clear_github_token":"boolean","log_syslog":"string","persist_core":"string"},'
+		printf '"hijack_get":{},'
+		printf '"hijack_save":{"enabled":"boolean","port_mode":"string","port":"number"},'
+		printf '"geo_get":{},'
+		printf '"geo_save":{"geoip_url":"string","geosite_url":"string","geo_dir":"string"},'
+		printf '"geo_reset":{},'
+		printf '"geo_download":{"restart":"boolean"},'
+		printf '"geo_progress":{},'
 		printf '"logs_recent":{"limit":"number"}'
 		printf '}\n'
 		;;
@@ -3104,6 +3590,27 @@ case "${1:-}" in
 				;;
 			settings_save)
 				emit_settings_save
+				;;
+			hijack_get)
+				emit_hijack_get
+				;;
+			hijack_save)
+				emit_hijack_save
+				;;
+			geo_get)
+				emit_geo_get
+				;;
+			geo_save)
+				emit_geo_save
+				;;
+			geo_reset)
+				emit_geo_reset
+				;;
+			geo_download)
+				emit_geo_download
+				;;
+			geo_progress)
+				emit_geo_progress
 				;;
 			logs_recent)
 				emit_logs_recent

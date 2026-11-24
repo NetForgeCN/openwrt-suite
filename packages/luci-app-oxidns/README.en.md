@@ -16,6 +16,9 @@ Built on the [svenshi/luci-app-oxidns](https://github.com/svenshi/luci-app-oxidn
 | DNS prewarming | `Prewarm` page queries A / AAAA records ahead of time and fills the cache | First visit to common domains is served from cache |
 | Core upgrades | `Core -> Check Update` | Upgrade the core without rebuilding firmware |
 | Log filtering | Keyword plus `plugin` / `qtype` / `rcode` filters and a live line count | Find the queries you care about, even in large logs |
+| DNS hijack | `DNS Hijack` page redirects LAN port 53 to the local OxiDNS listener, IPv4 and IPv6 | LAN clients use OxiDNS without changing their DNS setting, with real client IPs visible |
+| CodeMirror editor | Configuration page uses a YAML syntax-highlighting editor with line numbers and an internal scroll viewport | Editing long configs no longer jumps the page |
+| Geo data management | `Geo Data` page downloads/updates geoip.dat and geosite.dat; URLs are editable and restorable | Refresh geo data without rebuilding firmware; defaults use the self-maintained rule source |
 | API password handling | Password lives in UCI and is injected into both the service and rpcd | No plaintext password in YAML; config validation and service stay in sync |
 | Upgrade self-healing | Core, WebUI, config and rules recover after sysupgrade | Keep settings, reinstall the app once, and the service is back |
 
@@ -25,10 +28,12 @@ Built on the [svenshi/luci-app-oxidns](https://github.com/svenshi/luci-app-oxidn
 |---|---|
 | `Overview` | Core / service status, WebUI entry, config path, log status |
 | `Core` | Install, upload, upgrade, repair or remove the core |
-| `Configuration` | View, validate and save `config.yaml` |
+| `DNS Hijack` | LAN port 53 redirect switch, target port source, firewall section status |
+| `Configuration` | CodeMirror highlighting, validate and save `config.yaml` |
 | `Logs` | Filter and refresh OxiDNS logs |
 | `Settings` | Repository, bundle, proxy, paths, logging and API password |
 | `Rules` | Baseline status, check for updates, apply updates |
+| `Geo Data` | geoip.dat / geosite.dat status, download URLs, directory, online update |
 | `Prewarm` | Enable switch, domain list, target endpoint, interval and manual run |
 
 ## Quick start

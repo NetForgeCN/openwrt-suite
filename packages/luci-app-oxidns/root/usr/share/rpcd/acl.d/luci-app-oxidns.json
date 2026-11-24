@@ -12,7 +12,10 @@
 					"logs_recent",
 					"rules_status",
 					"rules_check",
-					"prewarm_read"
+					"prewarm_read",
+					"hijack_get",
+					"geo_get",
+					"geo_progress"
 				]
 			}
 		},
@@ -39,7 +42,11 @@
 					"rules_update",
 					"rules_restore",
 					"prewarm_save",
-					"prewarm_run"
+					"prewarm_run",
+					"hijack_save",
+					"geo_save",
+					"geo_reset",
+					"geo_download"
 				]
 			}
 		}

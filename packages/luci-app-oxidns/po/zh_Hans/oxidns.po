@@ -609,3 +609,132 @@ msgstr "UDP"
 
 msgid "Warming up..."
 msgstr "正在预热..."
+
+msgid "%s, %s"
+msgstr "%s，%s"
+
+msgid "Active firewall sections"
+msgstr "生效的防火墙规则段"
+
+msgid "Apply"
+msgstr "应用"
+
+msgid "Applying DNS hijack..."
+msgstr "正在应用 DNS 劫持..."
+
+msgid "DNS Hijack"
+msgstr "DNS 劫持"
+
+msgid "DNS hijack disabled."
+msgstr "DNS 劫持已关闭。"
+
+msgid "DNS hijack enabled. LAN port 53 requests are redirected to OxiDNS."
+msgstr "DNS 劫持已开启。局域网 53 端口的请求会被重定向到 OxiDNS。"
+
+msgid "Download / Update"
+msgstr "下载 / 更新"
+
+msgid "Download and update the geoip.dat / geosite.dat used by OxiDNS. Defaults fetch the self-maintained NetForgeCN rules (Loyalsoldier full set plus extra ad tags); URLs and the storage directory can be customized and restored to defaults."
+msgstr "下载并更新 OxiDNS 使用的 geoip.dat / geosite.dat。默认使用自建的 NetForgeCN 规则（Loyalsoldier 全集加额外广告标签）；下载地址和存储目录可自定义并可恢复默认。"
+
+msgid "Download finished."
+msgstr "下载完成。"
+
+msgid "Download started."
+msgstr "下载已开始。"
+
+msgid "Enable DNS hijack"
+msgstr "启用 DNS 劫持"
+
+msgid "Enter a port number between 1 and 65535."
+msgstr "请输入 1 到 65535 之间的端口号。"
+
+msgid "Failed to apply DNS hijack"
+msgstr "应用 DNS 劫持失败"
+
+msgid "Failed to restore defaults"
+msgstr "恢复默认失败"
+
+msgid "Failed to save geo settings"
+msgstr "保存 Geo 设置失败"
+
+msgid "Failed to start the download"
+msgstr "启动下载失败"
+
+msgid "Geo Data"
+msgstr "Geo 数据"
+
+msgid "Geo settings restored to defaults."
+msgstr "Geo 设置已恢复默认。"
+
+msgid "Geo settings saved."
+msgstr "Geo 设置已保存。"
+
+msgid "GeoIP download URL"
+msgstr "GeoIP 下载地址"
+
+msgid "GeoSite download URL"
+msgstr "GeoSite 下载地址"
+
+msgid "Install the OxiDNS core before DNS hijack can redirect to a local listener."
+msgstr "启用 DNS 劫持前请先安装 OxiDNS 内核。"
+
+msgid "Modified"
+msgstr "修改时间"
+
+msgid "No target port available (source: %s)."
+msgstr "没有可用的目标端口（来源：%s）。"
+
+msgid "Read the port from config.yaml automatically"
+msgstr "自动从 config.yaml 读取端口"
+
+msgid "Redirect LAN DNS requests on port 53 (TCP and UDP, IPv4 and IPv6) to the local OxiDNS DNS listener."
+msgstr "将局域网 53 端口的 DNS 请求（TCP 和 UDP、IPv4 和 IPv6）重定向到本机 OxiDNS 监听地址。"
+
+msgid "Restart OxiDNS after the download"
+msgstr "下载完成后重启 OxiDNS"
+
+msgid "Restore defaults"
+msgstr "恢复默认"
+
+msgid "Restoring defaults..."
+msgstr "正在恢复默认..."
+
+msgid "Rules were written, but the firewall reload failed. The rules take effect on the next firewall reload or reboot."
+msgstr "规则已写入，但防火墙重载失败。规则会在下次重载防火墙或重启后生效。"
+
+msgid "SHA-256"
+msgstr "SHA-256"
+
+msgid "Saving geo settings..."
+msgstr "正在保存 Geo 设置..."
+
+msgid "Starting download..."
+msgstr "正在开始下载..."
+
+msgid "Status"
+msgstr "状态"
+
+msgid "Storage directory"
+msgstr "存储目录"
+
+msgid "Target ports"
+msgstr "目标端口"
+
+msgid "UDP port %s, TCP port %s"
+msgstr "UDP 端口 %s，TCP 端口 %s"
+
+msgid "Use a manual port"
+msgstr "手动指定端口"
+
+msgid "from config.yaml"
+msgstr "来自 config.yaml"
+
+msgid "manual"
+msgstr "手动"
+
+msgid "not present"
+msgstr "不存在"
+
+msgid "port %s (TCP/UDP)"
+msgstr "端口 %s（TCP/UDP）"
