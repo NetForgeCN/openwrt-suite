@@ -3226,6 +3226,13 @@ emit_hijack_save() {
 		json_error "hijack_save_failed" "failed to commit the oxidns settings"
 		return 1
 	fi
+	# Re-read what we just committed. resolve_dns_ports() and emit_hijack_status()
+	# both key off HIJACK_PORT_MODE / HIJACK_PORT, which load_settings() captured
+	# before this call overwrote them. Without the reload, switching auto<->manual
+	# or changing the manual port writes the firewall redirect with the OLD port
+	# and returns stale state; the UI self-corrected on the next 5s poll while
+	# the firewall rule stayed wrong.
+	load_settings
 
 	DNS_UDP_PORT=""; DNS_TCP_PORT=""
 	if [ "$HIJACK_PORT_MODE" = "manual" ] || [ -r "$CONFIG_PATH" ]; then
