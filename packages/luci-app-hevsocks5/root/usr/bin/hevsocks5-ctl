@@ -68,6 +68,22 @@ yaml_str() {
 	printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"
 }
 
+# Generate an alphanumeric credential from the kernel CSPRNG. The browser
+# Web Crypto API can be unavailable or mocked in some WebViews, so the LuCI
+# page asks the server to generate random values instead.
+rand() {
+	local len="$1"
+
+	is_uint "$len" || die 'length must be an integer'
+	[ "$len" -ge 1 ] 2>/dev/null && [ "$len" -le 255 ] 2>/dev/null ||
+		die 'length must be between 1 and 255'
+
+	(
+		export LC_ALL=C
+		head -c 4096 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c "$len"
+	)
+}
+
 generate() {
 	local conffile tmpdir tmp
 	local workers port listen_address udp_port udp_listen_address
@@ -224,11 +240,12 @@ apply_config() {
 case "$1" in
 	generate) generate ;;
 	apply) apply_config ;;
+	rand) rand "${2:-16}" ;;
 	start|stop|restart|enable|disable|status)
 		exec "$INIT" "$1"
 		;;
 	*)
-		echo "Usage: $0 {generate|apply|start|stop|restart|enable|disable|status}" >&2
+		echo "Usage: $0 {generate|apply|rand <length>|start|stop|restart|enable|disable|status}" >&2
 		exit 1
 		;;
 esac

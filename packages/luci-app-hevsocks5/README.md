@@ -10,7 +10,8 @@ LuCI 控制页面，用于管理 OpenWrt 上的 [hev-socks5-server](https://gith
 
 - 服务状态轮询，启动 / 停止 / 重启 / 重新生成配置并应用
 - 开机自启动开关（同时操作 procd 启动链接和 UCI `enabled`）
-- 基础页：用户名和密码，各带随机生成按钮；密码默认掩码，右侧小眼睛可切换明文方便复制；首次安装自动生成一组随机凭据
+- 基础页：用户名和密码，各带随机生成按钮；随机值由服务端 `/dev/urandom` 生成（浏览器 Web Crypto 在部分 WebView 中不可用或被 mock 成全 0，故不依赖它）；密码默认掩码，右侧小眼睛可切换明文方便复制；首次安装自动生成一组随机凭据
+- 每个操作按钮都有忙碌态和结果提示（成功/失败），避免点击后没有任何可见反馈
 - 高级页：以标签页形式展开上游全部 YAML 配置项，每项都有作用说明、默认值和填写示例
 - 生成脚本做原子替换（`tmp` + `mv`），避免 procd 在写入中途读到半个 YAML
 - 不覆盖上游的 `/etc/init.d/hev-socks5-server`，不会与 opkg 文件冲突
@@ -46,7 +47,7 @@ LuCI 页面 (UCI)  ->  ucitrack 触发 /etc/init.d/hevsocks5-sync
 
 | 路径 | 作用 |
 |---|---|
-| `/usr/bin/hevsocks5-ctl` | UCI → YAML 渲染器及服务控制入口 |
+| `/usr/bin/hevsocks5-ctl` | UCI → YAML 渲染器、服务控制及 `rand` 随机值生成入口 |
 | `/etc/init.d/hevsocks5-sync` | UCI 改动时的同步钩子 |
 | `/etc/uci-defaults/luci-hevsocks5` | 首次安装写入默认值与随机凭据 |
 | `/usr/share/luci/menu.d/luci-app-hevsocks5.json` | 菜单项 |

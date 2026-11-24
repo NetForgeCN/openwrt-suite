@@ -10,6 +10,9 @@ msgstr ""
 msgid "Command failed: %s"
 msgstr ""
 
+msgid "Random generator returned an invalid value"
+msgstr ""
+
 msgid "Generate a random value"
 msgstr ""
 
@@ -28,6 +31,9 @@ msgstr ""
 msgid "Close"
 msgstr ""
 
+msgid "Working..."
+msgstr ""
+
 msgid "HEV SOCKS5 Server"
 msgstr ""
 
@@ -38,6 +44,12 @@ msgid "Running"
 msgstr ""
 
 msgid "Not running"
+msgstr ""
+
+msgid "%s succeeded"
+msgstr ""
+
+msgid "%s failed"
 msgstr ""
 
 msgid "Service status"

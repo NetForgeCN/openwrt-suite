@@ -10,6 +10,9 @@ msgstr ""
 msgid "Command failed: %s"
 msgstr "命令失败：%s"
 
+msgid "Random generator returned an invalid value"
+msgstr "随机生成器返回了无效值"
+
 msgid "Generate a random value"
 msgstr "生成随机值"
 
@@ -28,6 +31,9 @@ msgstr "操作失败"
 msgid "Close"
 msgstr "关闭"
 
+msgid "Working..."
+msgstr "正在执行..."
+
 msgid "HEV SOCKS5 Server"
 msgstr "HEV SOCKS5 服务端"
 
@@ -39,6 +45,12 @@ msgstr "运行中"
 
 msgid "Not running"
 msgstr "未运行"
+
+msgid "%s succeeded"
+msgstr "%s 成功"
+
+msgid "%s failed"
+msgstr "%s 失败"
 
 msgid "Service status"
 msgstr "服务状态"

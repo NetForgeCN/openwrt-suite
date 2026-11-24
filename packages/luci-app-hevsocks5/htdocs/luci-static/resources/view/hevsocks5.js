@@ -17,8 +17,8 @@ var callServiceList = rpc.declare({
 	expect: { '': {} }
 });
 
-function callCtl(cmd) {
-	return fs.exec(CTL, [ cmd ]).then(function(res) {
+function callCtl(cmd, args) {
+	return fs.exec(CTL, [ cmd ].concat(args || [])).then(function(res) {
 		if (res && res.code !== 0)
 			throw new Error(res.stderr || _('Command failed: %s').format(cmd));
 		return res;
@@ -40,25 +40,23 @@ function getStatus() {
 	});
 }
 
-function randomString(len) {
-	var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-	var buf = new Uint8Array(len * 2);
-	var limit = 256 - (256 % chars.length);
-	var out = '';
-	var used = 0;
+var RAND_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
-	while (out.length < len) {
-		if (used >= buf.length) {
-			crypto.getRandomValues(buf);
-			used = 0;
-		}
-
-		var b = buf[used++];
-		if (b < limit)
-			out += chars.charAt(b % chars.length);
-	}
-
-	return out;
+// Web Crypto may be missing or mocked to all-zero bytes in some embedded
+// WebViews (that produced "AAAA..." credentials). Ask the server to generate
+// the value from /dev/urandom and fall back to Math.random in the browser.
+function randomString(len, btn) {
+	return callCtl('rand', [ String(len) ]).then(function(res) {
+		var value = String(res && res.stdout || '').trim();
+		if (value.length !== len)
+			throw new Error(_('Random generator returned an invalid value'));
+		return value;
+	}).catch(function() {
+		var out = '';
+		for (var i = 0; i < len; i++)
+			out += RAND_CHARS.charAt(Math.floor(Math.random() * RAND_CHARS.length));
+		return out;
+	});
 }
 
 // 把父类 render() 的结果统一收敛成单个 DOM 节点。LuCI 各版本的
@@ -92,12 +90,17 @@ var RandomValue = form.Value.extend({
 						'class': 'btn',
 						'type': 'button',
 						'title': _('Generate a random value'),
-						'click': function(ev) {
-							ev.preventDefault();
-							input.value = randomString(self.randLen);
+					'click': function(ev) {
+						ev.preventDefault();
+						var trigger = ev.currentTarget;
+						setButtonBusy(trigger, true);
+						return randomString(self.randLen, trigger).then(function(value) {
+							input.value = value;
 							input.dispatchEvent(new Event('change', { bubbles: true }));
-						}
-					}, _('Generate'));
+							setButtonBusy(trigger, false);
+						});
+					}
+				}, _('Generate'));
 
 					var field = node.querySelector('.cbi-value-field') || node;
 					field.appendChild(btn);
@@ -153,6 +156,36 @@ function showError(e) {
 	]);
 }
 
+// Visible feedback for every button: a busy label plus a result line, so a
+// click is never silent even when the underlying action produces no output.
+function setButtonBusy(btn, busy) {
+	if (!btn)
+		return;
+
+	if (busy) {
+		if (btn.dataset.hevsocks5Label == null)
+			btn.dataset.hevsocks5Label = btn.textContent;
+		btn.textContent = _('Working...');
+		btn.disabled = true;
+	}
+	else {
+		if (btn.dataset.hevsocks5Label != null) {
+			btn.textContent = btn.dataset.hevsocks5Label;
+			delete btn.dataset.hevsocks5Label;
+		}
+		btn.disabled = false;
+	}
+}
+
+function notify(text, type) {
+	var line = document.getElementById('hevsocks5-result');
+	if (!line)
+		return;
+
+	line.textContent = text;
+	line.className = (type === 'error') ? 'alert-danger' : 'alert-success';
+}
+
 return view.extend({
 	render: function() {
 		var m = new form.Map(CONF, _('HEV SOCKS5 Server'),
@@ -171,46 +204,64 @@ return view.extend({
 					label.className = running ? 'alert-success' : 'alert-danger';
 				}
 
-				if (start) start.disabled = !!running;
-				if (stop) stop.disabled = !running;
+				// 忙碌中的按钮由 setButtonBusy 控制，状态轮询不要覆盖它
+				if (start && start.dataset.hevsocks5Label == null)
+					start.disabled = !!running;
+				if (stop && stop.dataset.hevsocks5Label == null)
+					stop.disabled = !running;
 			}
 
-			function action(cmd) {
-				return callCtl(cmd).then(getStatus).then(update).catch(showError);
-			}
+		function action(cmd, label, btn) {
+			setButtonBusy(btn, true);
+			notify(_('Working...'), 'ok');
 
-			poll.add(function() {
-				return getStatus().then(update);
+			return callCtl(cmd).then(function(res) {
+				return getStatus().then(function(running) {
+					update(running);
+					setButtonBusy(btn, false);
+					notify(_('%s succeeded').format(label), 'ok');
+					return res;
+				});
+			}).catch(function(e) {
+				setButtonBusy(btn, false);
+				notify(_('%s failed').format(label), 'error');
+				showError(e);
 			});
+		}
 
-			return E('div', { 'class': 'cbi-section', 'id': 'hevsocks5-status-section' }, [
-				E('h3', {}, _('Service status')),
-				E('p', {}, [
-					_('Status') + ': ',
-					E('span', { 'id': 'hevsocks5-status' }, _('Collecting data...'))
-				]),
-				E('div', { 'class': 'cbi-section-actions' }, [
-					E('button', {
-						'class': 'btn', 'id': 'hevsocks5-start',
-						'click': function() { return action('start'); }
-					}, _('Start')),
-					' ',
-					E('button', {
-						'class': 'btn', 'id': 'hevsocks5-stop',
-						'click': function() { return action('stop'); }
-					}, _('Stop')),
-					' ',
-					E('button', {
-						'class': 'btn',
-						'click': function() { return action('restart'); }
-					}, _('Restart')),
-					' ',
-					E('button', {
-						'class': 'btn',
-						'click': function() { return action('apply'); }
-					}, _('Regenerate config and apply'))
-				])
-			]);
+		poll.add(function() {
+			return getStatus().then(update);
+		});
+
+		return E('div', { 'class': 'cbi-section', 'id': 'hevsocks5-status-section' }, [
+			E('h3', {}, _('Service status')),
+			E('p', {}, [
+				_('Status') + ': ',
+				E('span', { 'id': 'hevsocks5-status' }, _('Collecting data...'))
+			]),
+			E('p', { 'id': 'hevsocks5-result', 'class': 'alert-success' }, ''),
+			E('div', { 'class': 'cbi-section-actions' }, [
+				E('button', {
+					'class': 'btn', 'id': 'hevsocks5-start',
+					'click': function(ev) { return action('start', _('Start'), ev.currentTarget); }
+				}, _('Start')),
+				' ',
+				E('button', {
+					'class': 'btn', 'id': 'hevsocks5-stop',
+					'click': function(ev) { return action('stop', _('Stop'), ev.currentTarget); }
+				}, _('Stop')),
+				' ',
+				E('button', {
+					'class': 'btn',
+					'click': function(ev) { return action('restart', _('Restart'), ev.currentTarget); }
+				}, _('Restart')),
+				' ',
+				E('button', {
+					'class': 'btn',
+					'click': function(ev) { return action('apply', _('Regenerate config and apply'), ev.currentTarget); }
+				}, _('Regenerate config and apply'))
+			])
+		]);
 		};
 
 		var s = m.section(form.NamedSection, 'config', CONF, _('Configuration'));
