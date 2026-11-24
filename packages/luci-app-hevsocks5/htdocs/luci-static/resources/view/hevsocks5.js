@@ -64,56 +64,66 @@ function randomString(len) {
 var RandomValue = form.Value.extend({
 	randLen: 16,
 
+	// form.Value.render() 在 LuCI 里返回 Promise<Node>（内部要等 cfgvalue()
+	// 与 widget 渲染完成），不是同步 DOM 节点；直接 querySelector 会抛
+	// "node.querySelector is not a function"。沿父类的 Promise 链做后置加工，
+	// 再把 Promise 交回 LuCI（renderChildren 用 Promise.all 收集各 option）。
+	// Promise.resolve 包一层，兼容返回同步节点的旧版 LuCI。
 	render: function(index, section_id, in_table) {
-		var node = form.Value.prototype.render.call(this, index, section_id, in_table);
-		var input = node.querySelector('input');
 		var self = this;
 
-		if (input) {
-			var btn = E('button', {
-				'class': 'btn',
-				'type': 'button',
-				'title': _('Generate a random value'),
-				'click': function(ev) {
-					ev.preventDefault();
-					input.value = randomString(self.randLen);
-					input.dispatchEvent(new Event('change', { bubbles: true }));
+		return Promise.resolve(form.Value.prototype.render.call(this, index, section_id, in_table))
+			.then(function(node) {
+				var input = node.querySelector('input');
+
+				if (input) {
+					var btn = E('button', {
+						'class': 'btn',
+						'type': 'button',
+						'title': _('Generate a random value'),
+						'click': function(ev) {
+							ev.preventDefault();
+							input.value = randomString(self.randLen);
+							input.dispatchEvent(new Event('change', { bubbles: true }));
+						}
+					}, _('Generate'));
+
+					var field = node.querySelector('.cbi-value-field') || node;
+					field.appendChild(btn);
 				}
-			}, _('Generate'));
 
-			var field = node.querySelector('.cbi-value-field') || node;
-			field.appendChild(btn);
-		}
-
-		return node;
+				return node;
+			});
 	}
 });
 
 var PasswordValue = RandomValue.extend({
 	render: function(index, section_id, in_table) {
-		var node = RandomValue.prototype.render.call(this, index, section_id, in_table);
-		var input = node.querySelector('input');
+		return Promise.resolve(RandomValue.prototype.render.call(this, index, section_id, in_table))
+			.then(function(node) {
+				var input = node.querySelector('input');
 
-		if (input) {
-			input.type = 'password';
+				if (input) {
+					input.type = 'password';
 
-			var btn = E('button', {
-				'class': 'btn',
-				'type': 'button',
-				'title': _('Show password'),
-				'click': function(ev) {
-					ev.preventDefault();
-					var visible = input.type === 'text';
-					input.type = visible ? 'password' : 'text';
-					btn.title = visible ? _('Show password') : _('Hide password');
+					var btn = E('button', {
+						'class': 'btn',
+						'type': 'button',
+						'title': _('Show password'),
+						'click': function(ev) {
+							ev.preventDefault();
+							var visible = input.type === 'text';
+							input.type = visible ? 'password' : 'text';
+							btn.title = visible ? _('Show password') : _('Hide password');
+						}
+					}, '👁');
+
+					var field = node.querySelector('.cbi-value-field') || node;
+					field.appendChild(btn);
 				}
-			}, '👁');
 
-			var field = node.querySelector('.cbi-value-field') || node;
-			field.appendChild(btn);
-		}
-
-		return node;
+				return node;
+			});
 	}
 });
 
