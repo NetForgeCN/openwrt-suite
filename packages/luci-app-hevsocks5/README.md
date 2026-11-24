@@ -56,24 +56,24 @@ LuCI 页面 (UCI)  ->  ucitrack 触发 /etc/init.d/hevsocks5-sync
 
 ## 配置项对应关系
 
-UCI 段为 `hev-socks5-server.config`，选项名与上游 YAML 键基本一致：
+UCI 段为 `hev-socks5-server.config`。UCI 选项名使用下划线（rpcd 的 `uci/set` 不接受连字符），渲染成 YAML 时会转回上游的连字符键名：
 
 | 页签 | 选项 |
 |---|---|
 | 基础 | `enabled`、`username`、`password` |
-| 高级 - 监听 | `workers`、`port`、`listen-address`、`udp-port`、`udp-listen-address`、`udp-public-address-v4/v6`、`listen-ipv6-only`、`tcp-fastopen` |
-| 高级 - 路由 | `bind-address`、`bind-address-v4/v6`、`bind-interface`、`domain-address-type`、`mark` |
-| 高级 - 认证 | `auth_file`、`allow-no-auth` |
-| 高级 - 调优与日志 | `task-stack-size`、`udp-recv-buffer-size`、`udp-copy-buffer-nums`、`connect-timeout`、`tcp-read-write-timeout`、`udp-read-write-timeout`、`read-write-timeout`、`log-file`、`log-level`、`limit-nofile`、`pid-file` |
+| 高级 - 监听 | `workers`、`port`、`listen_address`、`udp_port`、`udp_listen_address`、`udp-public-address-v4/v6`、`listen_ipv6_only`、`tcp_fastopen` |
+| 高级 - 路由 | `bind_address`、`bind-address-v4/v6`、`bind_interface`、`domain_address_type`、`mark` |
+| 高级 - 认证 | `auth_file`、`allow_no_auth` |
+| 高级 - 调优与日志 | `task_stack_size`、`udp_recv_buffer_size`、`udp_copy_buffer_nums`、`connect_timeout`、`tcp_read_write_timeout`、`udp_read_write_timeout`、`read_write_timeout`、`log_file`、`log_level`、`limit_nofile`、`pid_file` |
 
 两个特殊选项：
 
 - `auth_file` 对应 YAML 的 `auth.file`。设置后优先于内联的 `username/password`，认证文件内容格式为每行 `USER PASS [MARK]`，修改后可用 `SIGUSR1` 热重载。
-- `allow-no-auth` 是本应用增加的安全开关。凭据和认证文件都为空时只有打开它才会生成无认证配置，避免误操作把路由器变成开放代理。
-- `read-write-timeout` 是旧版兼容项：设置后渲染器不再写 TCP/UDP 专用超时，上游会把该值同时应用到两者；留空则使用下方的专用超时。
+- `allow_no_auth` 是本应用增加的安全开关。凭据和认证文件都为空时只有打开它才会生成无认证配置，避免误操作把路由器变成开放代理。
+- `read_write_timeout` 是旧版兼容项：设置后渲染器不再写 TCP/UDP 专用超时，上游会把该值同时应用到两者；留空则使用下方的专用超时。
 
-`pid-file` 仅作展示，生成 YAML 时会被忽略：上游在设置它后会调用 `daemon()` 自行脱壳，与 procd 监管冲突。
-`limit-nofile` 默认写 1000000，与上游 init 脚本向 procd 申请的值保持一致，否则程序启动时会把上限降回默认的 65535。
+`pid_file` 仅作展示，生成 YAML 时会被忽略：上游在设置它后会调用 `daemon()` 自行脱壳，与 procd 监管冲突。
+`limit_nofile` 默认写 1000000，与上游 init 脚本向 procd 申请的值保持一致，否则程序启动时会把上限降回默认的 65535。
 
 ## 安全提醒
 

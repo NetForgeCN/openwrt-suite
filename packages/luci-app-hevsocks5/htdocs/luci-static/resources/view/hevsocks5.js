@@ -61,19 +61,30 @@ function randomString(len) {
 	return out;
 }
 
+// 把父类 render() 的结果统一收敛成单个 DOM 节点。LuCI 各版本的
+// form.Value.render() 可能返回同步节点、Promise<Node>，个别实现还会返回
+// 节点数组；后续一律走 Promise，避免把 Promise/数组当成节点去调用
+// querySelector 而抛出 "node.querySelector is not a function"。
+function renderedNode(x) {
+	return Promise.resolve(x).then(function(node) {
+		if (node && !node.querySelector && node.length)
+			node = node[0];
+
+		return node;
+	});
+}
+
 var RandomValue = form.Value.extend({
 	randLen: 16,
 
-	// form.Value.render() 在 LuCI 里返回 Promise<Node>（内部要等 cfgvalue()
-	// 与 widget 渲染完成），不是同步 DOM 节点；直接 querySelector 会抛
-	// "node.querySelector is not a function"。沿父类的 Promise 链做后置加工，
-	// 再把 Promise 交回 LuCI（renderChildren 用 Promise.all 收集各 option）。
-	// Promise.resolve 包一层，兼容返回同步节点的旧版 LuCI。
 	render: function(index, section_id, in_table) {
 		var self = this;
 
-		return Promise.resolve(form.Value.prototype.render.call(this, index, section_id, in_table))
+		return renderedNode(form.Value.prototype.render.call(this, index, section_id, in_table))
 			.then(function(node) {
+				if (!node || typeof node.querySelector !== 'function')
+					return node;
+
 				var input = node.querySelector('input');
 
 				if (input) {
@@ -99,8 +110,11 @@ var RandomValue = form.Value.extend({
 
 var PasswordValue = RandomValue.extend({
 	render: function(index, section_id, in_table) {
-		return Promise.resolve(RandomValue.prototype.render.call(this, index, section_id, in_table))
+		return renderedNode(RandomValue.prototype.render.call(this, index, section_id, in_table))
 			.then(function(node) {
+				if (!node || typeof node.querySelector !== 'function')
+					return node;
+
 				var input = node.querySelector('input');
 
 				if (input) {
@@ -247,12 +261,12 @@ return view.extend({
 		o.datatype = 'port';
 		o.rmempty = false;
 
-		o = s.taboption('listen', form.Value, 'listen-address', _('Listen address'),
+		o = s.taboption('listen', form.Value, 'listen_address', _('Listen address'),
 			_('IPv4 or IPv6 address to bind. The default :: accepts IPv4-mapped connections as well; use 0.0.0.0 for IPv4 only.'));
 		o.default = '::';
 		o.rmempty = false;
 
-		o = s.taboption('listen', form.Value, 'udp-port', _('UDP listen port'),
+		o = s.taboption('listen', form.Value, 'udp_port', _('UDP listen port'),
 			_('Leave empty or use 0 for one ephemeral UDP port per session. A fixed port uses the same port for every session; a-b picks a port from the range in round-robin order. Open the chosen port or range in the firewall.'));
 		o.placeholder = '10000-20000';
 		o.validate = function(section_id, value) {
@@ -272,52 +286,52 @@ return view.extend({
 		};
 		o.rmempty = true;
 
-		o = s.taboption('listen', form.Value, 'udp-listen-address', _('UDP listen address'),
+		o = s.taboption('listen', form.Value, 'udp_listen_address', _('UDP listen address'),
 			_('Address used by UDP ASSOCIATE. When empty, the local address of the clients TCP connection is reused.'));
 		o.placeholder = '::1';
 		o.rmempty = true;
 
-		o = s.taboption('listen', form.Value, 'udp-public-address-v4', _('UDP public address (IPv4)'),
+		o = s.taboption('listen', form.Value, 'udp_public_address_v4', _('UDP public address (IPv4)'),
 			_('IPv4 address reported to clients in the UDP ASSOCIATE reply. Set this when the server is behind NAT and the advertised address must differ from the bound address.'));
 		o.placeholder = '203.0.113.1';
 		o.rmempty = true;
 
-		o = s.taboption('listen', form.Value, 'udp-public-address-v6', _('UDP public address (IPv6)'),
+		o = s.taboption('listen', form.Value, 'udp_public_address_v6', _('UDP public address (IPv6)'),
 			_('Same as above for IPv6 clients.'));
 		o.placeholder = '2001:db8::1';
 		o.rmempty = true;
 
-		o = s.taboption('listen', form.Flag, 'listen-ipv6-only', _('Listen IPv6 only'),
+		o = s.taboption('listen', form.Flag, 'listen_ipv6_only', _('Listen IPv6 only'),
 			_('Sets IPV6_V6ONLY on the listening socket. Enable it to reject IPv4-mapped connections.'));
 		o.default = '0';
 		o.rmempty = false;
 
-		o = s.taboption('listen', form.Flag, 'tcp-fastopen', _('TCP fast open'),
+		o = s.taboption('listen', form.Flag, 'tcp_fastopen', _('TCP fast open'),
 			_('Enable TCP Fast Open on the listening socket. Requires kernel and client support; leave off unless you know both sides support it.'));
 		o.default = '0';
 		o.rmempty = false;
 
-		o = s.taboption('route', form.Value, 'bind-address', _('Bind source address'),
+		o = s.taboption('route', form.Value, 'bind_address', _('Bind source address'),
 			_('Source address for outbound connections, for both address families. Can be overridden by the IPv4/IPv6 specific settings below.'));
 		o.placeholder = '192.168.1.2';
 		o.rmempty = true;
 
-		o = s.taboption('route', form.Value, 'bind-address-v4', _('Bind source address (IPv4)'),
+		o = s.taboption('route', form.Value, 'bind_address_v4', _('Bind source address (IPv4)'),
 			_('Source IPv4 address for outbound connections. Useful with multiple WAN addresses or policy routing.'));
 		o.placeholder = '192.168.1.2';
 		o.rmempty = true;
 
-		o = s.taboption('route', form.Value, 'bind-address-v6', _('Bind source address (IPv6)'),
+		o = s.taboption('route', form.Value, 'bind_address_v6', _('Bind source address (IPv6)'),
 			_('Source IPv6 address for outbound connections.'));
 		o.placeholder = '2001:db8::2';
 		o.rmempty = true;
 
-		o = s.taboption('route', form.Value, 'bind-interface', _('Bind source interface'),
+		o = s.taboption('route', form.Value, 'bind_interface', _('Bind source interface'),
 			_('Forces outbound sessions to a network interface via SO_BINDTODEVICE, for example eth2 or wwan0. Leave empty to use the routing table.'));
 		o.placeholder = 'eth2';
 		o.rmempty = true;
 
-		o = s.taboption('route', form.ListValue, 'domain-address-type', _('Domain address type'),
+		o = s.taboption('route', form.ListValue, 'domain_address_type', _('Domain address type'),
 			_('Address family used when replying to domain name requests. unspec keeps the behaviour chosen by the resolver; ipv4 or ipv6 force one family.'));
 		o.default = 'unspec';
 		o.value('unspec', _('Unspecified'));
@@ -341,59 +355,59 @@ return view.extend({
 		o.placeholder = '/etc/hev-socks5-server/auth.txt';
 		o.rmempty = true;
 
-		o = s.taboption('auth', form.Flag, 'allow-no-auth', _('Allow unauthenticated access'),
+		o = s.taboption('auth', form.Flag, 'allow_no_auth', _('Allow unauthenticated access'),
 			_('Danger: with no username, password or authentication file the server would be an open proxy. This flag is required to permit that state. Leave it off for normal use.'));
 		o.default = '0';
 		o.rmempty = false;
 
-		o = s.taboption('misc', form.Value, 'task-stack-size', _('Task stack size (bytes)'),
+		o = s.taboption('misc', form.Value, 'task_stack_size', _('Task stack size (bytes)'),
 			_('Stack size for each per-session coroutine. The upstream default is 8192 bytes. Lower values save memory but may overflow with complex requests.'));
 		o.default = '8192';
 		o.datatype = 'uinteger';
 		o.rmempty = false;
 
-		o = s.taboption('misc', form.Value, 'udp-recv-buffer-size', _('UDP receive buffer (bytes)'),
+		o = s.taboption('misc', form.Value, 'udp_recv_buffer_size', _('UDP receive buffer (bytes)'),
 			_('SO_RCVBUF for UDP relay sockets. The upstream default is 524288 bytes. Increase for high bandwidth UDP traffic.'));
 		o.default = '524288';
 		o.datatype = 'uinteger';
 		o.rmempty = false;
 
-		o = s.taboption('misc', form.Value, 'udp-copy-buffer-nums', _('UDP copy buffers'),
+		o = s.taboption('misc', form.Value, 'udp_copy_buffer_nums', _('UDP copy buffers'),
 			_('Number of 1500-byte buffers used by the UDP splice path. The upstream default is 10.'));
 		o.default = '10';
 		o.datatype = 'uinteger';
 		o.rmempty = false;
 
-		o = s.taboption('misc', form.Value, 'connect-timeout', _('TCP connect timeout (ms)'),
+		o = s.taboption('misc', form.Value, 'connect_timeout', _('TCP connect timeout (ms)'),
 			_('Maximum time to wait for an outbound TCP connection. The upstream default is 10000 ms.'));
 		o.default = '10000';
 		o.datatype = 'uinteger';
 		o.rmempty = false;
 
-		o = s.taboption('misc', form.Value, 'tcp-read-write-timeout', _('TCP read/write timeout (ms)'),
+		o = s.taboption('misc', form.Value, 'tcp_read_write_timeout', _('TCP read/write timeout (ms)'),
 			_('Idle timeout for established TCP sessions. The upstream default is 300000 ms.'));
 		o.default = '300000';
 		o.datatype = 'uinteger';
 		o.rmempty = false;
 
-		o = s.taboption('misc', form.Value, 'udp-read-write-timeout', _('UDP read/write timeout (ms)'),
+		o = s.taboption('misc', form.Value, 'udp_read_write_timeout', _('UDP read/write timeout (ms)'),
 			_('Idle timeout for UDP relay sessions. The upstream default is 60000 ms.'));
 		o.default = '60000';
 		o.datatype = 'uinteger';
 		o.rmempty = false;
 
-		o = s.taboption('misc', form.Value, 'read-write-timeout', _('Legacy read/write timeout (ms)'),
+		o = s.taboption('misc', form.Value, 'read_write_timeout', _('Legacy read/write timeout (ms)'),
 			_('Compatibility option from older upstream versions. When set, the TCP and UDP specific timeouts below are not written to YAML and this value applies to both. Usually leave it empty.'));
 		o.placeholder = '60000';
 		o.datatype = 'uinteger';
 		o.rmempty = true;
 
-		o = s.taboption('misc', form.Value, 'log-file', _('Log file'),
+		o = s.taboption('misc', form.Value, 'log_file', _('Log file'),
 			_('Leave empty for null, which sends logs to stdout/stderr where procd forwards them to the system log. Set an absolute path to write to a file; note that log rotation is not handled by this package.'));
 		o.placeholder = '/tmp/hev-socks5-server.log';
 		o.rmempty = true;
 
-		o = s.taboption('misc', form.ListValue, 'log-level', _('Log level'),
+		o = s.taboption('misc', form.ListValue, 'log_level', _('Log level'),
 			_('debug is verbose, error is minimal. warn is the upstream default.'));
 		o.default = 'warn';
 		o.value('debug', _('Debug'));
@@ -401,13 +415,13 @@ return view.extend({
 		o.value('warn', _('Warning'));
 		o.value('error', _('Error'));
 
-		o = s.taboption('misc', form.Value, 'limit-nofile', _('File descriptor limit'),
+		o = s.taboption('misc', form.Value, 'limit_nofile', _('File descriptor limit'),
 			_('The binary calls setrlimit() with this value at startup. The upstream init script already asks procd for 1000000 descriptors, so keep this value aligned.'));
 		o.default = '1000000';
 		o.datatype = 'uinteger';
 		o.rmempty = false;
 
-		o = s.taboption('misc', form.Value, 'pid-file', _('PID file (ignored on OpenWrt)'),
+		o = s.taboption('misc', form.Value, 'pid_file', _('PID file (ignored on OpenWrt)'),
 			_('Upstream supports a pid-file that makes the process daemonize itself. This package never generates it under procd, because detaching would break process supervision. Displayed here for completeness only.'));
 		o.placeholder = '/run/hev-socks5-server.pid';
 		o.rmempty = true;
