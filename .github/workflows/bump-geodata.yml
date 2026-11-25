@@ -1,0 +1,132 @@
+name: bump-geodata
+
+on:
+  schedule:
+    # UTC 18:15（北京 02:15），比 daily-sync(18:30) 和 daily build(18:45) 各早 15 分钟
+    - cron: "15 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bump-geodata
+  # 不允许中途取消：避免写了一半的 pin 被中断后误提交
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write   # 只有本 job 需要写 geodata.pin 并 push
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Resolve latest release and verify assets
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          export LC_ALL=C LANG=C
+
+          release_json="$(mktemp)"
+          sum_dir="$(mktemp -d)"
+          trap 'rm -f -- "$release_json"; rm -rf -- "$sum_dir"' EXIT
+          gh api repos/NetForgeCN/v2ray-rules-dat/releases/latest > "$release_json"
+
+          tag="$(jq -er '.tag_name | strings' "$release_json")"
+          [[ "$tag" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && "$tag" != *..* ]] ||
+            { echo "::error::latest release tag 不安全：$tag"; exit 1; }
+
+          # 四个资产必须各恰好一份；缺任何一个都 fail closed，不动旧 pin。
+          for required in geoip.dat geosite.dat geoip.dat.sha256sum geosite.dat.sha256sum; do
+            count="$(jq -er --arg name "$required" '[.assets[]? | select(.name == $name)] | length' "$release_json")"
+            [[ "$count" == 1 ]] ||
+              { echo "::error::latest release 资产 $required 数量为 $count（应为 1）"; exit 1; }
+          done
+
+          extract_hash() {
+            local asset="$1" filename="$2" hash
+            # 用同一个 tag 精确下载校验和资产（gh 会处理 redirect / token），
+            # 不跟 latest 漂移；下载失败即 fail closed。
+            gh release download "$tag" --repo NetForgeCN/v2ray-rules-dat \
+              --pattern "$asset" --dir "$sum_dir" --clobber
+            [[ -s "$sum_dir/$asset" ]] ||
+              { echo "::error::资产 $asset 下载为空"; return 1; }
+            hash="$(awk -v want="$filename" '
+              NF == 2 && ($2 == want || $2 == "./" want) { print $1; n++; next }
+              NF == 0 { next }
+              { bad = 1 }
+              END { if (n != 1 || bad) exit 1 }
+            ' "$sum_dir/$asset")" || { echo "::error::$asset 不是单行合法 sha256sum"; return 1; }
+            [[ "$hash" =~ ^[0-9a-f]{64}$ ]] ||
+              { echo "::error::$asset 哈希不是 64 位小写 hex：${hash:-<空>}"; return 1; }
+            printf '%s\n' "$hash"
+          }
+
+          geoip_sha="$(extract_hash geoip.dat.sha256sum geoip.dat)"
+          geosite_sha="$(extract_hash geosite.dat.sha256sum geosite.dat)"
+
+          printf 'tag=%s\ngeoip=%s\ngeosite=%s\n' "$tag" "$geoip_sha" "$geosite_sha" >> "$GITHUB_OUTPUT"
+          echo "校验通过：$tag / $geoip_sha / $geosite_sha"
+
+      - name: Update pin and patched Makefile
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          GEOIP_SHA256: ${{ steps.release.outputs.geoip }}
+          GEOSITE_SHA256: ${{ steps.release.outputs.geosite }}
+        run: |
+          set -Eeuo pipefail
+          export LC_ALL=C LANG=C
+
+          [[ -f geodata.pin ]] || { echo "::error::缺少 geodata.pin"; exit 1; }
+          [[ "$TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && "$TAG" != *..* ]] ||
+            { echo "::error::TAG 无效：$TAG"; exit 1; }
+          [[ "$GEOIP_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
+            { echo "::error::GEOIP_SHA256 无效：$GEOIP_SHA256"; exit 1; }
+          [[ "$GEOSITE_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
+            { echo "::error::GEOSITE_SHA256 无效：$GEOSITE_SHA256"; exit 1; }
+
+          old_tag="$(sed -n 's/^TAG=//p' geodata.pin)"
+          old_ip="$(sed -n 's/^GEOIP_SHA256=//p' geodata.pin)"
+          old_site="$(sed -n 's/^GEOSITE_SHA256=//p' geodata.pin)"
+          if [[ "$old_tag" == "$TAG" && "$old_ip" == "$GEOIP_SHA256" && "$old_site" == "$GEOSITE_SHA256" ]]; then
+            echo "geodata.pin 已是最新（$TAG），无需提交"
+            exit 0
+          fi
+
+          {
+            printf '# v2ray-geodata 规则数据的唯一真源。\n'
+            printf '# 由 .github/workflows/bump-geodata.yml 每日从 NetForgeCN/v2ray-rules-dat\n'
+            printf '# 的 latest release 校验后自动更新；patches/geodata.sh 从这里读取并注入 Makefile。\n'
+            printf 'TAG=%s\n' "$TAG"
+            printf 'GEOIP_SHA256=%s\n' "$GEOIP_SHA256"
+            printf 'GEOSITE_SHA256=%s\n' "$GEOSITE_SHA256"
+          } > geodata.pin.next
+          mv -f -- geodata.pin.next geodata.pin
+
+          # 同一份 pin 立即注入 Makefile（幂等），保证仓库里的包与新 pin 一致
+          bash patches/geodata.sh packages/v2ray-geodata
+
+      - name: Commit and push
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # 与 daily-sync 可能同时提交：先对齐 main，再按最终 pin 重打 Makefile
+          git pull --rebase origin main
+          bash patches/geodata.sh packages/v2ray-geodata
+          git add -- geodata.pin packages/v2ray-geodata/Makefile
+          if git diff --cached --quiet; then
+            echo "pin 与 Makefile 均无变化，无需提交"
+            exit 0
+          fi
+          git commit -m "chore(geodata): 自动更新规则数据到 $TAG"
+          git push origin HEAD:main
+          echo "已提交并推送："
+          git log --stat -1 | head -n 20

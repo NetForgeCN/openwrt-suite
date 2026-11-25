@@ -83,6 +83,9 @@ command -v tar  >/dev/null 2>&1 || die "缺少 tar"
 command -v mktemp >/dev/null 2>&1 || die "缺少 mktemp"
 [[ -f "$CONF" ]] || die "找不到映射表：$CONF"
 [[ -f "$LOCK" ]] || die "找不到 sources.lock（默认模式以 lock 中的 commit pin 为准）"
+# geodata 的 release tag 与两个 SHA256 只在 geodata.pin 里维护；应用
+# patches/geodata.sh 前先确认唯一真源存在，补丁会从它读取并注入 Makefile。
+[[ -f "$ROOT/geodata.pin" ]] || die "找不到 geodata.pin（v2ray-geodata 规则数据的唯一真源）"
 
 NOW="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 ONLY="${SUITE_SYNC_ONLY:-}"

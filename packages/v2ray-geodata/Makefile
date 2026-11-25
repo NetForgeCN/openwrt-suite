@@ -8,7 +8,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=v2ray-geodata
 PKG_VERSION:=$(shell if [ -n "$$SOURCE_DATE_EPOCH" ]; then date -u -d "@$$SOURCE_DATE_EPOCH" +%Y.%m.%d; else date -u +%Y.%m.%d; fi)
-# 版本跟随可复现构建时间戳；规则数据由下方固定 tag + SHA256 决定
+# 版本跟随可复现构建时间戳；规则数据由仓库根 geodata.pin 注入（勿手改）
 PKG_RELEASE:=1
 
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)
@@ -39,6 +39,7 @@ define Package/v2ray-geosite
 endef
 
 # 不用 latest：latest 可能指向只含备份资产的 release导致 404；哈希也不再从同源现取
+# 以下五项由 patches/geodata.sh 从仓库根 geodata.pin 注入，请勿在此手动修改
 GEODATA_TAG:=202611250113
 GEOIP_SHA256:=d4ec4c5e5d5a38c1399964ea9fd8c94288426a3b31b483904b67819fc07f4466
 GEOSITE_SHA256:=67ccb3cda9fb1b118be77d4aeb954d16fe3a12c63a6006e72709ad12dee7aab2

@@ -1,0 +1,6 @@
+# v2ray-geodata 规则数据的唯一真源。
+# 由 .github/workflows/bump-geodata.yml 每日从 NetForgeCN/v2ray-rules-dat
+# 的 latest release 校验后自动更新；patches/geodata.sh 从这里读取并注入 Makefile。
+TAG=202611250113
+GEOIP_SHA256=d4ec4c5e5d5a38c1399964ea9fd8c94288426a3b31b483904b67819fc07f4466
+GEOSITE_SHA256=67ccb3cda9fb1b118be77d4aeb954d16fe3a12c63a6006e72709ad12dee7aab2
