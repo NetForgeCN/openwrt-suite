@@ -1,42 +1,12 @@
 'use strict';
 'require view';
 'require rpc';
+'require request';
 'require ui';
 
 var callStatus = rpc.declare({
 	object: 'luci.oxidns',
 	method: 'status',
-	expect: {}
-});
-
-var callCoreInstall = rpc.declare({
-	object: 'luci.oxidns',
-	method: 'core_install',
-	expect: {}
-});
-
-var callCoreReinstall = rpc.declare({
-	object: 'luci.oxidns',
-	method: 'core_reinstall',
-	expect: {}
-});
-
-var callCoreUpdateCheck = rpc.declare({
-	object: 'luci.oxidns',
-	method: 'core_update_check',
-	expect: {}
-});
-
-var callCoreUpdate = rpc.declare({
-	object: 'luci.oxidns',
-	method: 'core_update',
-	expect: {}
-});
-
-var callCoreUploadInstall = rpc.declare({
-	object: 'luci.oxidns',
-	method: 'core_upload_install',
-	params: [ 'path' ],
 	expect: {}
 });
 
@@ -46,14 +16,150 @@ var callCoreProgress = rpc.declare({
 	expect: {}
 });
 
-var callCoreRemove = rpc.declare({
-	object: 'luci.oxidns',
-	method: 'core_remove',
-	params: [ 'remove_config', 'remove_workdir' ],
-	expect: {}
-});
+/*
+ * Long running operations used to temporarily assign L.env.rpctimeout, which
+ * races with every other RPC call on the page and leaks the changed value on
+ * synchronous throws. The declarations below are invoked through a direct
+ * JSON-RPC POST carrying its own timeout, so the global environment is never
+ * touched. Method names and parameter names are unchanged.
+ */
+var CORE_RPC = {
+	install: { object: 'luci.oxidns', method: 'core_install' },
+	reinstall: { object: 'luci.oxidns', method: 'core_reinstall' },
+	update_check: { object: 'luci.oxidns', method: 'core_update_check' },
+	update: { object: 'luci.oxidns', method: 'core_update' },
+	upload_install: { object: 'luci.oxidns', method: 'core_upload_install', params: [ 'path' ] },
+	remove: { object: 'luci.oxidns', method: 'core_remove', params: [ 'remove_config', 'remove_workdir' ] }
+};
+
+var BACKEND_ERRORS = {
+	core_download_failed: _('Failed to download the OxiDNS core archive.'),
+	core_install_failed: _('Failed to install the OxiDNS core.'),
+	core_update_failed: _('Failed to update the OxiDNS core.'),
+	core_remove_failed: _('Failed to remove the OxiDNS core.'),
+	core_upload_failed: _('Failed to install the uploaded core file.'),
+	rpc_unavailable: _('The LuCI backend is unavailable.'),
+	operation_cancelled: _('The operation was cancelled in the browser. The device may still be working; check the status before retrying.')
+};
 
 var statusState = {};
+var viewRoot = null;
+var viewObserver = null;
+var cleanupTasks = [];
+var retryTimer = null;
+var retryCount = 0;
+var progressState = { generation: 0, timer: null, failures: 0 };
+var activeOperation = null;
+
+function isAttached(node) {
+	return !!(node && document.body && typeof document.body.contains === 'function' && document.body.contains(node));
+}
+
+function addCleanup(fn) {
+	if (typeof fn === 'function' && cleanupTasks.indexOf(fn) < 0)
+		cleanupTasks.push(fn);
+}
+
+function runCleanup() {
+	var tasks = cleanupTasks.slice();
+	cleanupTasks = [];
+
+	for (var i = 0; i < tasks.length; i++) {
+		try { tasks[i](); } catch (e) {}
+	}
+}
+
+function watchView(root) {
+	viewRoot = root || null;
+
+	if (viewObserver) {
+		try { viewObserver.disconnect(); } catch (e) {}
+		viewObserver = null;
+	}
+
+	var vp = document.getElementById('view');
+	if (!vp || typeof MutationObserver !== 'function')
+		return;
+
+	viewObserver = new MutationObserver(function() {
+		if (viewRoot && !isAttached(viewRoot)) {
+			try { viewObserver.disconnect(); } catch (e) {}
+			viewObserver = null;
+			runCleanup();
+		}
+	});
+	viewObserver.observe(vp, { childList: true, subtree: false });
+}
+
+function cancelRetry() {
+	if (retryTimer !== null) {
+		window.clearTimeout(retryTimer);
+		retryTimer = null;
+	}
+	retryCount = 0;
+}
+
+function backendMessage(err, fallback) {
+	var code = err && err.code;
+
+	if (code && BACKEND_ERRORS[code])
+		return BACKEND_ERRORS[code];
+
+	return fallback || _('Operation failed');
+}
+
+function showRefreshError(message) {
+	var node = document.getElementById('oxidns-core-error');
+	if (!node)
+		return;
+	node.textContent = message || '';
+	node.style.display = message ? 'block' : 'none';
+}
+
+function focusModal() {
+	window.setTimeout(function() {
+		var modal = document.getElementById('modal') || document.querySelector('.modal');
+		if (!modal)
+			return;
+
+		var target = modal.querySelector('[autofocus], button:not([disabled]), input:not([disabled]), select, textarea');
+		if (target && typeof target.focus === 'function')
+			target.focus();
+	}, 0);
+}
+
+function callLongRpc(desc, args, seconds) {
+	var params = {};
+
+	if (Array.isArray(desc.params))
+		for (var i = 0; i < desc.params.length; i++)
+			params[desc.params[i]] = args && args[i];
+
+	return new Promise(function(resolve, reject) {
+		var msg = {
+			jsonrpc: '2.0',
+			id: 'oxidns-' + Date.now() + '-' + Math.floor(Math.random() * 1000000),
+			method: 'call',
+			params: [ rpc.getSessionID(), desc.object, desc.method, params ]
+		};
+		var req = {
+			object: desc.object,
+			method: desc.method,
+			expect: {},
+			resolve: resolve,
+			reject: reject
+		};
+
+		request.post(rpc.getBaseURL(), msg, {
+			timeout: seconds * 1000,
+			credentials: true
+		}).then(function(res) {
+			rpc.parseCallReply(req, res);
+		}, function(err) {
+			reject(err);
+		});
+	});
+}
 
 function valueOrDash(value) {
 	if (value === null || value === undefined || value === '')
@@ -80,53 +186,6 @@ function persistText(status) {
 	return persist.binary_saved ? _('Enabled') : _('Enabled (core not saved yet)');
 }
 
-function handleCheckUpdate() {
-	return L.resolveDefault(callCoreUpdateCheck(), null).then(function(result) {
-		if (!result || result.ok === false) {
-			ui.addNotification(null, renderCoreError(result || {}), 'danger');
-			return;
-		}
-
-		var rows = [
-			renderRow(_('Current version'), result.current_version),
-			renderRow(_('Latest version'), result.latest_version),
-			renderRow(_('Repository'), result.repository),
-			renderRow(_('Bundle'), result.bundle),
-			renderRow(_('Target'), result.target),
-			renderRow(_('Archive'), result.asset)
-		];
-		var buttons = [
-			E('button', {
-				'class': 'btn cbi-button cbi-button-neutral',
-				'click': function(ev) {
-					ev.preventDefault();
-					ui.hideModal();
-				}
-			}, _('Close'))
-		];
-
-		if (result.update_available) {
-			buttons.push(' ');
-			buttons.push(E('button', {
-				'class': 'btn cbi-button cbi-button-positive',
-				'click': function(ev) {
-					ev.preventDefault();
-					ui.hideModal();
-					return runCoreAction(_('Updating OxiDNS core...'), callCoreUpdate, 300);
-				}
-			}, _('Update to %s').format(result.latest_version)));
-		}
-
-		ui.showModal(_('OxiDNS Core Update'), [
-			E('p', {}, result.update_available
-				? _('A new OxiDNS core release is available.')
-				: _('The OxiDNS core is already up to date.')),
-			E('div', { 'class': 'table cbi-section-table' }, rows),
-			E('div', { 'class': 'right', 'style': 'margin-top: 1em;' }, buttons)
-		]);
-	});
-}
-
 function renderRow(label, value, id) {
 	var attrs = { 'class': 'td left' };
 	if (id)
@@ -138,17 +197,47 @@ function renderRow(label, value, id) {
 	]);
 }
 
+/* 只在内容变化时写 DOM，轮询刷新不会重建整张表 */
 function setText(id, value) {
 	var node = document.getElementById(id);
-	if (node)
-		node.textContent = valueOrDash(value);
+	if (!node)
+		return;
+
+	var text = valueOrDash(value);
+	if (node.textContent !== text)
+		node.textContent = text;
+}
+
+function scheduleStatusRetry() {
+	cancelRetry();
+	if (retryCount >= 4) {
+		showRefreshError(_('Could not refresh core status. Use Refresh to try again.'));
+		return;
+	}
+
+	retryCount++;
+	showRefreshError(_('Could not refresh core status. Retrying...'));
+	retryTimer = window.setTimeout(function() {
+		retryTimer = null;
+		if (isAttached(viewRoot))
+			refreshStatus();
+	}, Math.min(30000, 1000 * Math.pow(2, retryCount)));
 }
 
 function refreshStatus() {
-	return L.resolveDefault(callStatus(), {}).then(function(status) {
-		statusState = status || {};
-		var core = statusState.core || {};
+	if (!isAttached(viewRoot))
+		return Promise.resolve();
 
+	return Promise.resolve(callStatus()).then(function(status) {
+		if (!status || status.ok === false)
+			throw status || { code: 'rpc_unavailable' };
+
+		/* 失败时保留最后一次成功状态 */
+		statusState = status;
+		cancelRetry();
+		showRefreshError('');
+
+		var core = statusState.core || {};
 		setText('oxidns-core-installed', boolText(core.installed));
 		setText('oxidns-core-version', core.version);
 		setText('oxidns-core-bundle', core.bundle);
@@ -156,29 +245,12 @@ function refreshStatus() {
 		setText('oxidns-core-binary', core.binary_path);
 		setText('oxidns-core-persist', persistText(statusState));
 		setText('oxidns-core-service', serviceRunning(statusState) ? _('Running') : _('Stopped'));
-		refreshActionButtons();
-	});
-}
 
-function callWithRpcTimeout(call, seconds) {
-	if (!seconds)
-		return call();
-
-	var previousTimeout = L.env.rpctimeout;
-	L.env.rpctimeout = seconds;
-
-	return call().then(function(result) {
-		if (previousTimeout === undefined)
-			delete L.env.rpctimeout;
-		else
-			L.env.rpctimeout = previousTimeout;
-		return result;
-	}, function(err) {
-		if (previousTimeout === undefined)
-			delete L.env.rpctimeout;
-		else
-			L.env.rpctimeout = previousTimeout;
-		throw err;
+		if (isAttached(viewRoot))
+			refreshActionButtons();
+	}).catch(function(err) {
+		scheduleStatusRetry();
+		console.warn('oxidns core status refresh:', err);
 	});
 }
 
@@ -211,19 +283,29 @@ function errorDetailLine(label, value, extraClass) {
 }
 
 function renderCoreError(result) {
-	var message = (result && (result.message || result.error)) || _('Core operation failed');
+	/* 后端 English message 不直接显示：只显示本地化摘要 + 已本地化的阶段 */
+	var message = backendMessage(result, _('Core operation failed'));
 	var detail = result && (result.detail || result.details);
 	var children = [
-		E('p', {}, E('strong', {}, _('Core operation failed')))
+		E('p', {}, E('strong', {}, _('Core operation failed'))),
+		E('p', {}, message)
 	];
 
-	if (result && result.stage)
-		children.push(errorDetailLine(_('Stage'), coreErrorStageLabel(result.stage)));
-	children.push(errorDetailLine(_('Reason'), message));
-	if (detail)
-		children.push(errorDetailLine(_('Details'), detail, 'small'));
-	if (result && result.code)
-		children.push(errorDetailLine(_('Error code'), result.code, 'small'));
+	if (result && result.stage) {
+		var line = errorDetailLine(_('Stage'), coreErrorStageLabel(result.stage));
+		if (line)
+			children.push(line);
+	}
+	if (detail) {
+		var detailLine = errorDetailLine(_('Details'), detail, 'small');
+		if (detailLine)
+			children.push(detailLine);
+	}
+	if (result && result.code) {
+		var codeLine = errorDetailLine(_('Error code'), result.code, 'small');
+		if (codeLine)
+			children.push(codeLine);
+	}
 
 	return E('div', {}, children);
 }
@@ -249,14 +331,19 @@ function replaceContent(node, content) {
 }
 
 function scrollProgressLog(logNode) {
-	if (logNode)
+	if (logNode && isAttached(logNode))
 		logNode.scrollTop = logNode.scrollHeight;
 }
 
-function showCoreProgressModal(label) {
-	var statusNode = E('p', { 'id': 'oxidns-core-progress-status' }, label);
+function showCoreProgressModal(label, onCancel) {
+	var statusNode = E('p', {
+		'id': 'oxidns-core-progress-status',
+		'aria-live': 'polite'
+	}, label);
 	var logNode = E('pre', {
 		'id': 'oxidns-core-progress-log',
+		'aria-label': _('Command output'),
+		'role': 'log',
 		'style': [
 			'box-sizing: border-box',
 			'width: 100%',
@@ -273,8 +360,18 @@ function showCoreProgressModal(label) {
 			'line-height: 1.45'
 		].join(';')
 	}, _('Waiting for command output...'));
-	var resultNode = E('div', { 'id': 'oxidns-core-progress-result' });
+	var resultNode = E('div', { 'id': 'oxidns-core-progress-result', 'aria-live': 'polite' });
+	var cancelButton = E('button', {
+		'type': 'button',
+		'class': 'btn cbi-button cbi-button-negative',
+		'click': function(ev) {
+			ev.preventDefault();
+			if (onCancel)
+				onCancel();
+		}
+	}, _('Cancel'));
 	var closeButton = E('button', {
+		'type': 'button',
 		'class': 'btn cbi-button cbi-button-neutral',
 		'disabled': 'disabled',
 		'click': function(ev) {
@@ -288,13 +385,17 @@ function showCoreProgressModal(label) {
 		E('div', { 'class': 'cbi-value-title', 'style': 'margin-bottom: .35em;' }, _('Command output')),
 		logNode,
 		resultNode,
-		E('div', { 'class': 'right', 'style': 'margin-top: 1em;' }, closeButton)
+		E('div', { 'class': 'right', 'style': 'margin-top: 1em;' }, [
+			cancelButton, ' ', closeButton
+		])
 	]);
+	focusModal();
 
 	return {
 		status: statusNode,
 		log: logNode,
 		result: resultNode,
+		cancelButton: cancelButton,
 		closeButton: closeButton
 	};
 }
@@ -304,96 +405,214 @@ function setCoreProgressFinished(nodes, statusText, resultContent) {
 		nodes.status.textContent = statusText;
 	if (nodes && nodes.result)
 		replaceContent(nodes.result, resultContent);
+	if (nodes && nodes.cancelButton) {
+		nodes.cancelButton.disabled = true;
+		nodes.cancelButton.setAttribute('disabled', 'disabled');
+	}
 	if (nodes && nodes.closeButton) {
 		nodes.closeButton.disabled = false;
 		nodes.closeButton.removeAttribute('disabled');
 	}
 }
 
-function refreshCoreProgressLog(logNode) {
-	return L.resolveDefault(callCoreProgress(), null).then(function(result) {
+/*
+ * core_progress 是全局共享的日志缓冲，后端没有 operation id 可供过滤。这里用
+ * 客户端 token 丢弃属于上一次操作的回包，并只写仍挂载在文档里的节点；真正按
+ * 操作隔离进度需要后端增加 id 参数（见最终报告的残余风险）。
+ */
+function refreshCoreProgressLog(logNode, token) {
+	if (token !== progressState.generation || !isAttached(logNode))
+		return Promise.resolve();
+
+	return Promise.resolve(callCoreProgress()).then(function(result) {
+		if (token !== progressState.generation || !isAttached(logNode))
+			return;
+
+		progressState.failures = 0;
+
 		if (!result || result.ok === false)
 			return;
 
-		logNode.textContent = result.text || _('Waiting for command output...');
+		var text = result.text || _('Waiting for command output...');
+		if (logNode.textContent !== text)
+			logNode.textContent = text;
 		scrollProgressLog(logNode);
+	}).catch(function(err) {
+		if (token !== progressState.generation)
+			return;
+
+		progressState.failures++;
+		console.warn('oxidns core progress:', err);
 	});
 }
 
+function stopCoreProgressPolling() {
+	progressState.generation++;
+
+	if (progressState.timer !== null) {
+		window.clearTimeout(progressState.timer);
+		progressState.timer = null;
+	}
+	progressState.failures = 0;
+}
+
+function scheduleProgressTick(logNode, token) {
+	if (token !== progressState.generation)
+		return;
+
+	var delay = progressState.failures
+		? Math.min(10000, 1000 * Math.pow(2, progressState.failures))
+		: 1000;
+
+	progressState.timer = window.setTimeout(function() {
+		progressState.timer = null;
+		if (token !== progressState.generation)
+			return;
+
+		refreshCoreProgressLog(logNode, token).then(function() {
+			scheduleProgressTick(logNode, token);
+		});
+	}, delay);
+}
+
 function startCoreProgressPolling(logNode) {
-	var timer = null;
-	var stopped = false;
-
-	var tick = function() {
-		if (stopped)
-			return Promise.resolve();
-		return refreshCoreProgressLog(logNode);
-	};
-
-	timer = window.setInterval(tick, 1000);
-	window.setTimeout(tick, 500);
+	var token = ++progressState.generation;
+	scheduleProgressTick(logNode, token);
 
 	return {
-		stop: function() {
-			stopped = true;
-			if (timer !== null)
-				window.clearInterval(timer);
-		},
-		refresh: function() {
-			return refreshCoreProgressLog(logNode);
-		}
+		token: token,
+		stop: function() { stopCoreProgressPolling(); },
+		refresh: function() { return refreshCoreProgressLog(logNode, token); }
 	};
 }
 
-function runCoreAction(label, call, timeout) {
-	var nodes = showCoreProgressModal(label);
+function runCoreAction(label, desc, args, timeout) {
+	var cancelReject = null;
+	var cancelled = false;
+	var nodes = showCoreProgressModal(label, function() {
+		if (cancelled)
+			return;
+
+		cancelled = true;
+		stopCoreProgressPolling();
+		if (cancelReject)
+			cancelReject({ code: 'operation_cancelled' });
+		setCoreProgressFinished(nodes, _('Operation cancelled locally.'),
+			E('p', {}, backendMessage({ code: 'operation_cancelled' })));
+	});
 	var progress = startCoreProgressPolling(nodes.log);
+	activeOperation = progress.token;
 
-	return L.resolveDefault(callWithRpcTimeout(call, timeout), null).then(function(result) {
-		progress.stop();
-		if (!result || result.ok === false) {
-			return progress.refresh().then(function() {
-				setCoreProgressFinished(nodes, _('Core operation failed'), renderCoreError(result || {}));
-			});
-		}
+	var cancelPromise = new Promise(function(resolve, reject) {
+		cancelReject = reject;
+	});
 
+	var callPromise = callLongRpc(desc, args, timeout);
+
+	return Promise.race([ callPromise, cancelPromise ]).then(function(result) {
+		stopCoreProgressPolling();
 		return progress.refresh().then(function() {
-			return L.resolveDefault(refreshStatus(), null).then(function() {
-				setCoreProgressFinished(nodes, _('Core operation completed.'), E('p', {}, _('Core operation completed.')));
+			if (!result || result.ok === false) {
+				setCoreProgressFinished(nodes, _('Core operation failed'), renderCoreError(result || {}));
+				return false;
+			}
+
+			return refreshStatus().then(function() {
+				setCoreProgressFinished(nodes, _('Core operation completed.'),
+					E('p', {}, _('Core operation completed.')));
 				ui.addNotification(null, E('p', {}, _('Core operation completed.')), 'info');
+				return true;
 			});
 		});
 	}).catch(function(err) {
-		progress.stop();
+		stopCoreProgressPolling();
 		return progress.refresh().then(function() {
-			var errorResult = {
-				message: (err && err.message) || String(err)
-			};
-			ui.addNotification(null, renderCoreError(errorResult), 'danger');
+			var message = backendMessage(err, _('Core operation failed'));
+			var errorResult = err || {};
+
+			if (err instanceof Error || (err && err.message && !err.code))
+				errorResult = { code: err.code, detail: err.message };
+
+			ui.addNotification(null, E('p', {}, message), 'danger');
 			setCoreProgressFinished(nodes, _('Core operation failed'), renderCoreError(errorResult));
+			return false;
 		});
+	}).then(function(ok) {
+		if (activeOperation === progress.token)
+			activeOperation = null;
+		return ok;
+	});
+}
+
+function handleCheckUpdate() {
+	return Promise.resolve(callLongRpc(CORE_RPC.update_check, [], 120)).then(function(result) {
+		if (!result || result.ok === false) {
+			ui.addNotification(null, renderCoreError(result || {}), 'danger');
+			return;
+		}
+
+		var rows = [
+			renderRow(_('Current version'), result.current_version),
+			renderRow(_('Latest version'), result.latest_version),
+			renderRow(_('Repository'), result.repository),
+			renderRow(_('Bundle'), result.bundle),
+			renderRow(_('Target'), result.target),
+			renderRow(_('Archive'), result.asset)
+		];
+		var buttons = [
+			E('button', {
+				'type': 'button',
+				'class': 'btn cbi-button cbi-button-neutral',
+				'click': function(ev) {
+					ev.preventDefault();
+					ui.hideModal();
+				}
+			}, _('Close'))
+		];
+
+		if (result.update_available) {
+			buttons.push(' ');
+			buttons.push(E('button', {
+				'type': 'button',
+				'class': 'btn cbi-button cbi-button-positive',
+				'click': function(ev) {
+					ev.preventDefault();
+					ui.hideModal();
+					return runCoreAction(_('Updating OxiDNS core...'), CORE_RPC.update, [], 300);
+				}
+			}, _('Update to %s').format(result.latest_version)));
+		}
+
+		ui.showModal(_('OxiDNS Core Update'), [
+			E('p', {}, result.update_available
+				? _('A new OxiDNS core release is available.')
+				: _('The OxiDNS core is already up to date.')),
+			E('div', { 'class': 'table cbi-section-table' }, rows),
+			E('div', { 'class': 'right', 'style': 'margin-top: 1em;' }, buttons)
+		]);
+		focusModal();
+	}).catch(function(err) {
+		ui.addNotification(null, renderCoreError(err || {}), 'danger');
 	});
 }
 
 function handleInstall() {
-	return runCoreAction(_('Installing OxiDNS core...'), callCoreInstall, 300);
+	return runCoreAction(_('Installing OxiDNS core...'), CORE_RPC.install, [], 300);
 }
 
 function handleReinstall() {
-	return runCoreAction(_('Repair reinstalling OxiDNS core...'), callCoreReinstall, 300);
+	return runCoreAction(_('Repair reinstalling OxiDNS core...'), CORE_RPC.reinstall, [], 300);
 }
 
 function handleUploadInstall() {
 	var uploadPath = '/tmp/oxidns-core-upload-%d-%d'.format(Date.now(), Math.floor(Math.random() * 1000000));
 
 	return ui.uploadFile(uploadPath).then(function() {
-		return runCoreAction(_('Installing uploaded OxiDNS core...'), function() {
-			return callCoreUploadInstall(uploadPath);
-		}, 300);
+		return runCoreAction(_('Installing uploaded OxiDNS core...'), CORE_RPC.upload_install, [ uploadPath ], 300);
 	}).catch(function(err) {
 		if (err && err.message && err.message.indexOf(_('Upload has been cancelled')) >= 0)
 			return;
-		ui.addNotification(null, E('p', {}, (err && err.message) || String(err)), 'danger');
+		ui.addNotification(null, E('p', {}, backendMessage(err, _('Failed to install the uploaded core file.'))), 'danger');
 	});
 }
 
@@ -433,6 +652,7 @@ function handleRemove() {
 			]),
 			E('div', { 'class': 'right' }, [
 				E('button', {
+					'type': 'button',
 					'class': 'btn cbi-button cbi-button-neutral',
 					'click': function(ev) {
 						ev.preventDefault();
@@ -442,24 +662,26 @@ function handleRemove() {
 				}, _('Cancel')),
 				' ',
 				E('button', {
+					'type': 'button',
 					'class': 'btn cbi-button cbi-button-negative',
 					'click': function(ev) {
 						ev.preventDefault();
 						var removeConfig = checked('oxidns-remove-config');
 						var removeWorkdir = checked('oxidns-remove-workdir');
 						ui.hideModal();
-						resolve(runCoreAction(_('Removing OxiDNS core...'), function() {
-							return callCoreRemove(removeConfig, removeWorkdir);
-						}));
+						resolve(runCoreAction(_('Removing OxiDNS core...'), CORE_RPC.remove,
+							[ removeConfig, removeWorkdir ], 300));
 					}
 				}, _('Confirm'))
 			])
 		]);
+		focusModal();
 	});
 }
 
 function actionButton(label, handler, style) {
 	return E('button', {
+		'type': 'button',
 		'class': 'btn cbi-button cbi-button-%s'.format(style || 'neutral'),
 		'click': function(ev) {
 			ev.preventDefault();
@@ -467,6 +689,8 @@ function actionButton(label, handler, style) {
 		}
 	}, label);
 }
+
+var actionStateKey = null;
 
 function actionButtons(status) {
 	if (coreInstalled(status)) {
@@ -486,17 +710,32 @@ function actionButtons(status) {
 
 function refreshActionButtons() {
 	var node = document.getElementById('oxidns-core-actions');
-	if (node)
-		replaceContent(node, actionButtons(statusState));
+	if (!node)
+		return;
+
+	var key = coreInstalled(statusState) ? 'installed' : 'missing';
+	if (key === actionStateKey)
+		return;
+
+	actionStateKey = key;
+	replaceContent(node, actionButtons(statusState));
 }
 
 return view.extend({
 	load: function() {
-		return L.resolveDefault(callStatus(), {});
+		return Promise.resolve(callStatus()).catch(function(err) {
+			console.warn('oxidns core status load:', err);
+			return { ok: false, code: 'rpc_unavailable' };
+		});
 	},
 
 	render: function(status) {
 		statusState = status || {};
+		actionStateKey = coreInstalled(statusState) ? 'installed' : 'missing';
+
+		addCleanup(stopCoreProgressPolling);
+		addCleanup(cancelRetry);
+
 		var core = statusState.core || {};
 		var rows = [
 			renderRow(_('Installed'), boolText(core.installed), 'oxidns-core-installed'),
@@ -508,7 +747,7 @@ return view.extend({
 			renderRow(_('Service status'), serviceRunning(statusState) ? _('Running') : _('Stopped'), 'oxidns-core-service')
 		];
 
-		return E('div', { 'class': 'cbi-map' }, [
+		var map = E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, _('OxiDNS Core')),
 			E('div', { 'class': 'cbi-map-descr' },
 				_('Install, repair or update the OxiDNS core binary. With persistent storage enabled the core is kept across firmware upgrades.')),
@@ -524,9 +763,31 @@ return view.extend({
 					'id': 'oxidns-core-actions',
 					'class': 'cbi-button-row',
 					'style': 'display: flex; flex-wrap: wrap; gap: .5em;'
-				}, actionButtons(statusState))
-			])
+				}, actionButtons(statusState)),
+				E('button', {
+					'type': 'button',
+					'class': 'btn cbi-button cbi-button-neutral',
+					'style': 'margin-top: .5em;',
+					'click': function(ev) {
+						ev.preventDefault();
+						return refreshStatus();
+					}
+				}, _('Refresh'))
+			]),
+			E('div', {
+				'id': 'oxidns-core-error',
+				'class': 'alert-message error',
+				'aria-live': 'polite',
+				'style': 'margin-top: 1em; display: none;'
+			})
 		]);
+
+		watchView(map);
+
+		if (statusState.ok === false)
+			showRefreshError(backendMessage(statusState, _('Could not refresh core status.')));
+
+		return map;
 	},
 
 	handleSaveApply: null,

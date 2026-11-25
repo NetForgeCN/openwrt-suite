@@ -4,7 +4,10 @@ PKG_NAME:=luci-app-oxidns
 PKG_VERSION:=0.2.0
 PKG_RELEASE:=17
 
-PKG_LICENSE:=GPL-3.0-or-later
+# CodeMirror (htdocs/luci-static/resources/oxidns-codemirror) is MIT licensed;
+# both license texts are shipped in the package metadata.
+PKG_LICENSE:=GPL-3.0-or-later AND MIT
+PKG_LICENSE_FILES:=LICENSE htdocs/luci-static/resources/oxidns-codemirror/LICENSE
 PKG_MAINTAINER:=NetForgeCN
 
 LUCI_TITLE:=LuCI support for OxiDNS

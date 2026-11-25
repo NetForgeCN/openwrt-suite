@@ -16,8 +16,29 @@ msgstr "%d 行"
 msgid "%d of %d lines"
 msgstr "%d / %d 行"
 
+msgid "%s, %s"
+msgstr "%s，%s"
+
+msgid "0 = run once at service start."
+msgstr "0 = 仅在服务启动时预热一次。"
+
+msgid "127.0.0.1 (local listener)"
+msgstr "127.0.0.1（本机监听）"
+
+msgid "192.168.1.1 (LAN address)"
+msgstr "192.168.1.1（局域网地址）"
+
+msgid "5353"
+msgstr "5353"
+
+msgid "A geo data download is already running."
+msgstr "Geo 数据下载正在进行中。"
+
 msgid "A new OxiDNS core release is available."
 msgstr "有新的 OxiDNS 内核版本可用。"
+
+msgid "A proxy is currently configured. Enter a new value to replace it."
+msgstr "当前已配置代理。输入新值可替换现有代理。"
 
 msgid "A token is currently configured. Enter a new value to replace it."
 msgstr "当前已配置 Token。输入新值可替换现有 Token。"
@@ -25,8 +46,20 @@ msgstr "当前已配置 Token。输入新值可替换现有 Token。"
 msgid "Actions"
 msgstr "操作"
 
+msgid "Active firewall sections"
+msgstr "生效的防火墙规则段"
+
 msgid "All"
 msgstr "全部"
+
+msgid "Apply"
+msgstr "应用"
+
+msgid "Apply the %s service action?"
+msgstr "确定执行“%s”服务操作吗？"
+
+msgid "Applying DNS hijack..."
+msgstr "正在应用 DNS 劫持..."
 
 msgid "Applying service action..."
 msgstr "正在执行服务操作..."
@@ -79,11 +112,14 @@ msgstr "命令输出"
 msgid "Config path"
 msgstr "配置路径"
 
-msgid "Configuration"
-msgstr "配置"
-
 msgid "Configuration and working directory data are preserved unless selected below."
 msgstr "除非勾选下面的选项，否则配置和工作目录数据会保留。"
+
+msgid "Configuration changed"
+msgstr "配置已更改"
+
+msgid "Configuration reloaded from the device."
+msgstr "已从设备重新加载配置。"
 
 msgid "Configure OxiDNS core download sources, runtime paths, and optional download credentials."
 msgstr "配置 OxiDNS 内核下载源、运行路径和可选下载凭据。"
@@ -112,8 +148,68 @@ msgstr "内核操作失败"
 msgid "Core repository"
 msgstr "内核仓库"
 
+msgid "Could not refresh DNS hijack status."
+msgstr "无法刷新 DNS 劫持状态。"
+
+msgid "Could not refresh DNS hijack status. Retrying..."
+msgstr "无法刷新 DNS 劫持状态，正在重试..."
+
+msgid "Could not refresh DNS hijack status. Use Refresh to try again."
+msgstr "无法刷新 DNS 劫持状态，请点击“刷新”重试。"
+
+msgid "Could not refresh OxiDNS status."
+msgstr "无法刷新 OxiDNS 状态。"
+
+msgid "Could not refresh OxiDNS status. Retrying..."
+msgstr "无法刷新 OxiDNS 状态，正在重试..."
+
+msgid "Could not refresh OxiDNS status. Use Refresh to try again."
+msgstr "无法刷新 OxiDNS 状态，请点击“刷新”重试。"
+
+msgid "Could not refresh core status."
+msgstr "无法刷新内核状态。"
+
+msgid "Could not refresh core status. Retrying..."
+msgstr "无法刷新内核状态，正在重试..."
+
+msgid "Could not refresh core status. Use Refresh to try again."
+msgstr "无法刷新内核状态，请点击“刷新”重试。"
+
+msgid "Could not refresh geo data status. Retrying..."
+msgstr "无法刷新 Geo 数据状态，正在重试..."
+
+msgid "Could not refresh geo data status. Use Refresh to try again."
+msgstr "无法刷新 Geo 数据状态，请点击“刷新”重试。"
+
+msgid "Could not refresh logs."
+msgstr "无法刷新日志。"
+
+msgid "Could not refresh logs. Retrying..."
+msgstr "无法刷新日志，正在重试..."
+
+msgid "Could not refresh logs. Use Refresh to try again."
+msgstr "无法刷新日志，请点击“刷新”重试。"
+
+msgid "Could not refresh rule status."
+msgstr "无法刷新规则状态。"
+
+msgid "Could not refresh rule status. Retrying..."
+msgstr "无法刷新规则状态，正在重试..."
+
+msgid "Could not refresh rule status. Use Refresh to try again."
+msgstr "无法刷新规则状态，请点击“刷新”重试。"
+
 msgid "Current version"
 msgstr "当前版本"
+
+msgid "DNS Hijack"
+msgstr "DNS 劫持"
+
+msgid "DNS hijack disabled."
+msgstr "DNS 劫持已关闭。"
+
+msgid "DNS hijack enabled. LAN port 53 requests are redirected to OxiDNS."
+msgstr "DNS 劫持已开启。局域网 53 端口的请求会被重定向到 OxiDNS。"
 
 msgid "Delete configuration file"
 msgstr "删除配置文件"
@@ -133,8 +229,20 @@ msgstr "已禁用"
 msgid "Domain lists used for China/ad split and ad blocking. The working copy is seeded from the bundled baseline at boot and can be updated from a published release."
 msgstr "用于国内外分流与广告拦截的域名列表。工作副本在启动时由内置基线补齐，也可以通过已发布的版本更新。"
 
+msgid "Download / Update"
+msgstr "下载 / 更新"
+
+msgid "Download and install the latest rule subscription now?"
+msgstr "立即下载并安装最新的规则订阅？"
+
+msgid "Download and update the geoip.dat / geosite.dat used by OxiDNS. Defaults fetch the self-maintained NetForgeCN rules (Loyalsoldier full set plus extra ad tags); URLs and the storage directory can be customized and restored to defaults."
+msgstr "下载并更新 OxiDNS 使用的 geoip.dat / geosite.dat。默认使用自建的 NetForgeCN 规则（Loyalsoldier 全集加额外广告标签）；下载地址和存储目录可自定义并可恢复默认。"
+
 msgid "Download core archive"
 msgstr "下载内核压缩包"
+
+msgid "Download finished."
+msgstr "下载完成。"
 
 msgid "Download proxy"
 msgstr "下载代理"
@@ -142,17 +250,32 @@ msgstr "下载代理"
 msgid "Download release metadata"
 msgstr "下载 release 元数据"
 
+msgid "Download started."
+msgstr "下载已开始。"
+
 msgid "Edit, validate, and save the full OxiDNS YAML configuration file."
 msgstr "编辑、校验并保存完整的 OxiDNS YAML 配置文件。"
 
 msgid "Enable"
 msgstr "启用"
 
+msgid "Enable DNS hijack"
+msgstr "启用 DNS 劫持"
+
+msgid "Enable prewarming"
+msgstr "启用预热"
+
 msgid "Enabled"
 msgstr "已启用"
 
 msgid "Enabled (core not saved yet)"
 msgstr "已启用（内核尚未保存）"
+
+msgid "Enter a number between %d and %d."
+msgstr "请输入 %d 到 %d 之间的数字。"
+
+msgid "Enter a port number between 1 and 65535."
+msgstr "请输入 1 到 65535 之间的端口号。"
 
 msgid "Error"
 msgstr "错误"
@@ -163,14 +286,86 @@ msgstr "错误码"
 msgid "Example: http://127.0.0.1:7890"
 msgstr "示例：http://127.0.0.1:7890"
 
+msgid "Failed to apply DNS hijack"
+msgstr "应用 DNS 劫持失败"
+
+msgid "Failed to download the OxiDNS core archive."
+msgstr "下载 OxiDNS 内核压缩包失败。"
+
+msgid "Failed to download the rules archive."
+msgstr "下载规则压缩包失败。"
+
+msgid "Failed to install the OxiDNS core."
+msgstr "安装 OxiDNS 内核失败。"
+
+msgid "Failed to install the downloaded rules."
+msgstr "安装下载的规则失败。"
+
+msgid "Failed to install the uploaded core file."
+msgstr "安装上传的内核文件失败。"
+
+msgid "Failed to remove the OxiDNS core."
+msgstr "删除 OxiDNS 内核失败。"
+
+msgid "Failed to restore defaults"
+msgstr "恢复默认失败"
+
+msgid "Failed to restore the bundled rules."
+msgstr "恢复内置规则失败。"
+
+msgid "Failed to restore the default geo settings."
+msgstr "恢复 Geo 默认设置失败。"
+
+msgid "Failed to save geo settings"
+msgstr "保存 Geo 设置失败"
+
+msgid "Failed to save prewarm settings"
+msgstr "保存预热设置失败"
+
 msgid "Failed to save settings"
 msgstr "保存设置失败"
+
+msgid "Failed to save settings."
+msgstr "保存设置失败。"
+
+msgid "Failed to save the DNS hijack settings."
+msgstr "保存 DNS 劫持设置失败。"
+
+msgid "Failed to save the geo settings."
+msgstr "保存 Geo 设置失败。"
+
+msgid "Failed to start the download"
+msgstr "启动下载失败"
+
+msgid "Failed to update the OxiDNS core."
+msgstr "更新 OxiDNS 内核失败。"
+
+msgid "Failed to write the firewall redirect."
+msgstr "写入防火墙重定向规则失败。"
 
 msgid "File"
 msgstr "文件"
 
 msgid "Format: http://host:port, https://host:port, socks5://host:port, or socks5h://host:port. Use http://user:pass@host:port when authentication is required."
 msgstr "格式：http://主机:端口、https://主机:端口、socks5://主机:端口 或 socks5h://主机:端口。需要认证时使用 http://用户:密码@主机:端口。"
+
+msgid "Geo Data"
+msgstr "Geo 数据"
+
+msgid "Geo download progress"
+msgstr "Geo 下载进度"
+
+msgid "Geo settings restored to defaults."
+msgstr "Geo 设置已恢复默认。"
+
+msgid "Geo settings saved."
+msgstr "Geo 设置已保存。"
+
+msgid "GeoIP download URL"
+msgstr "GeoIP 下载地址"
+
+msgid "GeoSite download URL"
+msgstr "GeoSite 下载地址"
 
 msgid "GitHub token"
 msgstr "GitHub Token"
@@ -180,6 +375,9 @@ msgstr "安装内核"
 
 msgid "Install core files"
 msgstr "安装内核文件"
+
+msgid "Install the OxiDNS core before DNS hijack can redirect to a local listener."
+msgstr "启用 DNS 劫持前请先安装 OxiDNS 内核。"
 
 msgid "Install the OxiDNS core before editing the configuration."
 msgstr "请先安装 OxiDNS 内核，再编辑配置。"
@@ -202,6 +400,12 @@ msgstr "正在安装 OxiDNS 内核..."
 msgid "Installing uploaded OxiDNS core..."
 msgstr "正在安装上传的 OxiDNS 内核..."
 
+msgid "Interval (seconds)"
+msgstr "间隔（秒）"
+
+msgid "Keep popular domains resolved so the first visit is fast. A and AAAA records are queried through the selected OxiDNS listener."
+msgstr "保持热门域名处于已解析状态，让首次访问更快。A 和 AAAA 记录都会通过所选 OxiDNS 监听入口查询。"
+
 msgid "Keyword (qname, domain, text...)"
 msgstr "关键词（qname、域名、文本...）"
 
@@ -213,9 +417,6 @@ msgstr "行数"
 
 msgid "Local copy"
 msgstr "本地副本"
-
-msgid "Logs"
-msgstr "日志"
 
 msgid "LuCI backend"
 msgstr "LuCI 后端"
@@ -229,17 +430,32 @@ msgstr "在 LuCI 中管理 OxiDNS 运行时、服务、配置和日志。"
 msgid "Missing"
 msgstr "缺失"
 
+msgid "Modified"
+msgstr "修改时间"
+
 msgid "No"
 msgstr "否"
 
 msgid "No rule update available."
 msgstr "没有可用的规则更新。"
 
+msgid "No target port available (source: %s)."
+msgstr "没有可用的目标端口（来源：%s）。"
+
+msgid "No usable DNS listener port was found."
+msgstr "未找到可用的 DNS 监听端口。"
+
 msgid "Not installed"
 msgstr "未安装"
 
+msgid "One domain per line. Blank lines and lines starting with # are ignored. Changes apply on the next pass; use Run now to apply immediately."
+msgstr "每行一个域名；空行和以 # 开头的行会被忽略。修改后下一轮生效；点击“立即预热”可马上应用。"
+
 msgid "Open WebUI"
 msgstr "打开 WebUI"
+
+msgid "Operation cancelled locally."
+msgstr "已在浏览器中取消操作。"
 
 msgid "Operation completed."
 msgstr "操作已完成。"
@@ -283,6 +499,9 @@ msgstr "OxiDNS 已经在运行。"
 msgid "OxiDNS is already stopped."
 msgstr "OxiDNS 已经停止。"
 
+msgid "OxiDNS log output"
+msgstr "OxiDNS 日志输出"
+
 msgid "Path"
 msgstr "路径"
 
@@ -298,8 +517,29 @@ msgstr "持久化存储"
 msgid "Plugin"
 msgstr "插件"
 
+msgid "Port"
+msgstr "端口"
+
 msgid "Prepare download"
 msgstr "准备下载"
+
+msgid "Prewarm"
+msgstr "预热"
+
+msgid "Prewarm completed."
+msgstr "预热完成。"
+
+msgid "Prewarm failed"
+msgstr "预热失败"
+
+msgid "Prewarm list"
+msgstr "预热列表"
+
+msgid "Prewarm settings saved."
+msgstr "预热设置已保存。"
+
+msgid "Protocol"
+msgstr "协议"
 
 msgid "QType"
 msgstr "查询类型"
@@ -307,14 +547,23 @@ msgstr "查询类型"
 msgid "RCode"
 msgstr "响应码"
 
-msgid "Reason"
-msgstr "原因"
+msgid "Read the port from config.yaml automatically"
+msgstr "自动从 config.yaml 读取端口"
+
+msgid "Redirect LAN DNS requests on port 53 (TCP and UDP, IPv4 and IPv6) to the local OxiDNS DNS listener."
+msgstr "将局域网 53 端口的 DNS 请求（TCP 和 UDP、IPv4 和 IPv6）重定向到本机 OxiDNS 监听地址。"
 
 msgid "Refresh"
 msgstr "刷新"
 
 msgid "Release asset"
 msgstr "发布资源"
+
+msgid "Reload and retry"
+msgstr "重新加载并重试"
+
+msgid "Reload from device"
+msgstr "从设备重新加载"
 
 msgid "Remove Core"
 msgstr "删除内核"
@@ -324,9 +573,6 @@ msgstr "删除 OxiDNS 内核"
 
 msgid "Remove the OxiDNS core binary and Web UI files."
 msgstr "删除 OxiDNS 内核二进制和 Web UI 文件。"
-
-msgid "Remove the OxiDNS core binary? Configuration and runtime data will be preserved."
-msgstr "确定删除 OxiDNS 内核二进制？配置和运行时数据会保留。"
 
 msgid "Removing OxiDNS core..."
 msgstr "正在删除 OxiDNS 内核..."
@@ -346,11 +592,26 @@ msgstr "重置"
 msgid "Restart"
 msgstr "重启"
 
+msgid "Restart OxiDNS after saving"
+msgstr "保存后重启 OxiDNS"
+
+msgid "Restart OxiDNS after the download"
+msgstr "下载完成后重启 OxiDNS"
+
 msgid "Restart service"
 msgstr "重启服务"
 
 msgid "Restore baseline"
 msgstr "恢复内置基线"
+
+msgid "Restore defaults"
+msgstr "恢复默认"
+
+msgid "Restore the default GeoIP and GeoSite URLs and storage directory?"
+msgstr "恢复默认的 GeoIP / GeoSite 下载地址与存储目录？"
+
+msgid "Restoring defaults..."
+msgstr "正在恢复默认..."
 
 msgid "Restoring rules from the bundled baseline..."
 msgstr "正在从内置基线恢复规则..."
@@ -373,11 +634,17 @@ msgstr "规则操作失败"
 msgid "Rule update available."
 msgstr "有可用的规则更新。"
 
-msgid "Rules"
-msgstr "规则"
+msgid "Rules were written, but the firewall reload failed. The rules take effect on the next firewall reload or reboot."
+msgstr "规则已写入，但防火墙重载失败。规则会在下次重载防火墙或重启后生效。"
+
+msgid "Run now"
+msgstr "立即预热"
 
 msgid "Running"
 msgstr "运行中"
+
+msgid "SHA-256"
+msgstr "SHA-256"
 
 msgid "Save"
 msgstr "保存"
@@ -394,11 +661,20 @@ msgstr "正在保存并重启服务..."
 msgid "Saving configuration..."
 msgstr "正在保存配置..."
 
+msgid "Saving geo settings..."
+msgstr "正在保存 Geo 设置..."
+
+msgid "Saving prewarm settings..."
+msgstr "正在保存预热设置..."
+
 msgid "Saving settings..."
 msgstr "正在保存设置..."
 
 msgid "Select release archive"
 msgstr "选择 release 压缩包"
+
+msgid "Server IP"
+msgstr "服务器 IP"
 
 msgid "Service"
 msgstr "服务"
@@ -411,9 +687,6 @@ msgstr "服务操作失败"
 
 msgid "Service status"
 msgstr "服务状态"
-
-msgid "Settings"
-msgstr "设置"
 
 msgid "Settings saved."
 msgstr "设置已保存。"
@@ -433,7 +706,16 @@ msgstr "开机自启"
 msgid "Start the OxiDNS service before opening WebUI."
 msgstr "请先启动 OxiDNS 服务再打开 WebUI。"
 
+msgid "Start the geo data download now?"
+msgstr "立即开始下载 Geo 数据？"
+
+msgid "Starting download..."
+msgstr "正在开始下载..."
+
 msgid "State"
+msgstr "状态"
+
+msgid "Status"
 msgstr "状态"
 
 msgid "Stop"
@@ -442,17 +724,110 @@ msgstr "停止"
 msgid "Stopped"
 msgstr "已停止"
 
+msgid "Storage directory"
+msgstr "存储目录"
+
 msgid "Store the core binary and webui under /etc/oxidns/core, which is kept during firmware upgrades. Requires enough free space on the overlay partition."
 msgstr "把内核二进制和 WebUI 存放到 /etc/oxidns/core，固件升级时会保留。需要 overlay 分区有足够剩余空间。"
+
+msgid "TCP"
+msgstr "TCP"
 
 msgid "Target"
 msgstr "目标架构"
 
+msgid "Target ports"
+msgstr "目标端口"
+
+msgid "The LuCI backend is unavailable."
+msgstr "LuCI 后端不可用。"
+
 msgid "The OxiDNS core is already up to date."
 msgstr "OxiDNS 内核已是最新版本。"
 
+msgid "The UCI command is not available."
+msgstr "UCI 命令不可用。"
+
+msgid "The configuration could not be written."
+msgstr "配置无法写入。"
+
+msgid "The configuration file changed on the device since it was loaded."
+msgstr "配置自加载后已在设备上发生更改。"
+
+msgid "The configuration file changed on the device since it was loaded. Reloading discards local edits; reloading and retrying refreshes the base version and then saves the current editor content, overwriting the device changes."
+msgstr "配置自加载后已在设备上发生更改。重新加载会丢弃本地修改；重新加载并重试会先刷新基准版本，再用编辑器中的内容保存，覆盖设备上的更改。"
+
+msgid "The configuration file is too large to read."
+msgstr "配置文件过大，无法读取。"
+
+msgid "The configuration file was not found or is a symlink."
+msgstr "未找到配置文件，或该文件为符号链接。"
+
+msgid "The configuration is not valid."
+msgstr "配置内容无效。"
+
+msgid "The configuration path is invalid."
+msgstr "配置路径无效。"
+
+msgid "The configured GeoIP URL, GeoSite URL, directory or SHA-256 checksum is invalid."
+msgstr "配置的 GeoIP URL、GeoSite URL、目录或 SHA-256 校验值无效。"
+
+msgid "The core bundle must be full, standard or minimal."
+msgstr "内核类型必须为 full、standard 或 minimal。"
+
+msgid "The core repository must use the owner/repository format."
+msgstr "内核仓库必须使用“所有者/仓库名”格式。"
+
+msgid "The geo data directory could not be created."
+msgstr "无法创建 Geo 数据目录。"
+
+msgid "The hijack port must be a number between 1 and 65535."
+msgstr "劫持端口必须是 1 到 65535 之间的数字。"
+
+msgid "The init script is not available."
+msgstr "初始化脚本不可用。"
+
+msgid "The operation was cancelled in the browser. The device may still be working; check the status before retrying."
+msgstr "操作已在浏览器中取消，设备可能仍在执行；请先检查状态再重试。"
+
+msgid "The persistent storage setting is invalid."
+msgstr "持久化存储设置无效。"
+
+msgid "The port is read from config.yaml automatically."
+msgstr "端口自动从 config.yaml 读取。"
+
+msgid "The port mode must be automatic or manual."
+msgstr "端口模式必须为自动或手动。"
+
+msgid "The prewarm operation failed."
+msgstr "预热操作失败。"
+
+msgid "The prewarm port or interval is invalid."
+msgstr "预热端口或间隔无效。"
+
+msgid "The selected server must be an OxiDNS listener with cache enabled."
+msgstr "所选服务器必须是已启用缓存的 OxiDNS 监听入口。"
+
+msgid "The service action failed."
+msgstr "服务操作失败。"
+
+msgid "The system log could not be read."
+msgstr "无法读取系统日志。"
+
+msgid "The system log setting is invalid."
+msgstr "系统日志设置无效。"
+
+msgid "The working directory is invalid."
+msgstr "工作目录无效。"
+
 msgid "This overwrites every rule file in the working copy with the bundled baseline."
 msgstr "此操作会用内置基线覆盖工作副本中的全部规则文件。"
+
+msgid "UDP"
+msgstr "UDP"
+
+msgid "UDP port %s, TCP port %s"
+msgstr "UDP 端口 %s，TCP 端口 %s"
 
 msgid "Unable to load configuration."
 msgstr "无法加载配置。"
@@ -466,8 +841,14 @@ msgstr "不可用"
 msgid "Unpack core archive"
 msgstr "解压内核压缩包"
 
+msgid "Unsaved DNS hijack changes discarded."
+msgstr "已丢弃未保存的 DNS 劫持更改。"
+
 msgid "Update now"
 msgstr "立即更新"
+
+msgid "Update rules now"
+msgstr "立即更新规则"
 
 msgid "Update to %s"
 msgstr "更新到 %s"
@@ -486,6 +867,9 @@ msgstr "上传内核"
 
 msgid "Upload has been cancelled"
 msgstr "上传已取消"
+
+msgid "Use a manual port"
+msgstr "手动指定端口"
 
 msgid "Validate"
 msgstr "校验"
@@ -517,6 +901,9 @@ msgstr "查看 OpenWrt logread 中最近的 OxiDNS 条目。可使用过滤器�
 msgid "Waiting for command output..."
 msgstr "正在等待命令输出..."
 
+msgid "Warming up..."
+msgstr "正在预热..."
+
 msgid "WebUI"
 msgstr "WebUI"
 
@@ -544,197 +931,51 @@ msgstr "YAML"
 msgid "Yes"
 msgstr "是"
 
-msgid "0 = run once at service start."
-msgstr "0 = 仅在服务启动时预热一次。"
+msgid "You have local edits in the editor. Reloading from the device will discard them."
+msgstr "编辑器中有本地修改。从设备重新加载会丢弃这些修改。"
 
-msgid "127.0.0.1 (local listener)"
-msgstr "127.0.0.1（本机监听）"
-
-msgid "192.168.1.1 (LAN address)"
-msgstr "192.168.1.1（局域网地址）"
-
-msgid "Enable prewarming"
-msgstr "启用预热"
-
-msgid "Failed to save prewarm settings"
-msgstr "保存预热设置失败"
-
-msgid "Interval (seconds)"
-msgstr "间隔（秒）"
-
-msgid "Keep popular domains resolved so the first visit is fast. A and AAAA records are queried through the selected OxiDNS listener."
-msgstr "保持热门域名处于已解析状态，让首次访问更快。A 和 AAAA 记录都会通过所选 OxiDNS 监听入口查询。"
-
-msgid "One domain per line. Blank lines and lines starting with # are ignored. Changes apply on the next pass; use Run now to apply immediately."
-msgstr "每行一个域名；空行和以 # 开头的行会被忽略。修改后下一轮生效；点击“立即预热”可马上应用。"
-
-msgid "Port"
-msgstr "端口"
-
-msgid "Prewarm"
-msgstr "预热"
-
-msgid "Prewarm completed."
-msgstr "预热完成。"
-
-msgid "Prewarm failed"
-msgstr "预热失败"
-
-msgid "Prewarm list"
-msgstr "预热列表"
-
-msgid "Prewarm settings saved."
-msgstr "预热设置已保存。"
-
-msgid "Protocol"
-msgstr "协议"
-
-msgid "Run now"
-msgstr "立即预热"
-
-msgid "Saving prewarm settings..."
-msgstr "正在保存预热设置..."
-
-msgid "Server IP"
-msgstr "服务器 IP"
-
-msgid "TCP"
-msgstr "TCP"
-
-msgid "The selected server must be an OxiDNS listener with cache enabled."
-msgstr "所选服务器必须是已启用缓存的 OxiDNS 监听入口。"
-
-msgid "UDP"
-msgstr "UDP"
-
-msgid "Warming up..."
-msgstr "正在预热..."
-
-msgid "%s, %s"
-msgstr "%s，%s"
-
-msgid "Active firewall sections"
-msgstr "生效的防火墙规则段"
-
-msgid "Apply"
-msgstr "应用"
-
-msgid "Applying DNS hijack..."
-msgstr "正在应用 DNS 劫持..."
-
-msgid "DNS Hijack"
-msgstr "DNS 劫持"
-
-msgid "DNS hijack disabled."
-msgstr "DNS 劫持已关闭。"
-
-msgid "DNS hijack enabled. LAN port 53 requests are redirected to OxiDNS."
-msgstr "DNS 劫持已开启。局域网 53 端口的请求会被重定向到 OxiDNS。"
-
-msgid "Download / Update"
-msgstr "下载 / 更新"
-
-msgid "Download and update the geoip.dat / geosite.dat used by OxiDNS. Defaults fetch the self-maintained NetForgeCN rules (Loyalsoldier full set plus extra ad tags); URLs and the storage directory can be customized and restored to defaults."
-msgstr "下载并更新 OxiDNS 使用的 geoip.dat / geosite.dat。默认使用自建的 NetForgeCN 规则（Loyalsoldier 全集加额外广告标签）；下载地址和存储目录可自定义并可恢复默认。"
-
-msgid "Download finished."
-msgstr "下载完成。"
-
-msgid "Download started."
-msgstr "下载已开始。"
-
-msgid "Enable DNS hijack"
-msgstr "启用 DNS 劫持"
-
-msgid "Enter a port number between 1 and 65535."
-msgstr "请输入 1 到 65535 之间的端口号。"
-
-msgid "Failed to apply DNS hijack"
-msgstr "应用 DNS 劫持失败"
-
-msgid "Failed to restore defaults"
-msgstr "恢复默认失败"
-
-msgid "Failed to save geo settings"
-msgstr "保存 Geo 设置失败"
-
-msgid "Failed to start the download"
-msgstr "启动下载失败"
-
-msgid "Geo Data"
-msgstr "Geo 数据"
-
-msgid "Geo settings restored to defaults."
-msgstr "Geo 设置已恢复默认。"
-
-msgid "Geo settings saved."
-msgstr "Geo 设置已保存。"
-
-msgid "GeoIP download URL"
-msgstr "GeoIP 下载地址"
-
-msgid "GeoSite download URL"
-msgstr "GeoSite 下载地址"
-
-msgid "Install the OxiDNS core before DNS hijack can redirect to a local listener."
-msgstr "启用 DNS 劫持前请先安装 OxiDNS 内核。"
-
-msgid "Modified"
-msgstr "修改时间"
-
-msgid "No target port available (source: %s)."
-msgstr "没有可用的目标端口（来源：%s）。"
-
-msgid "Read the port from config.yaml automatically"
-msgstr "自动从 config.yaml 读取端口"
-
-msgid "Redirect LAN DNS requests on port 53 (TCP and UDP, IPv4 and IPv6) to the local OxiDNS DNS listener."
-msgstr "将局域网 53 端口的 DNS 请求（TCP 和 UDP、IPv4 和 IPv6）重定向到本机 OxiDNS 监听地址。"
-
-msgid "Restart OxiDNS after the download"
-msgstr "下载完成后重启 OxiDNS"
-
-msgid "Restore defaults"
-msgstr "恢复默认"
-
-msgid "Restoring defaults..."
-msgstr "正在恢复默认..."
-
-msgid "Rules were written, but the firewall reload failed. The rules take effect on the next firewall reload or reboot."
-msgstr "规则已写入，但防火墙重载失败。规则会在下次重载防火墙或重启后生效。"
-
-msgid "SHA-256"
-msgstr "SHA-256"
-
-msgid "Saving geo settings..."
-msgstr "正在保存 Geo 设置..."
-
-msgid "Starting download..."
-msgstr "正在开始下载..."
-
-msgid "Status"
-msgstr "状态"
-
-msgid "Storage directory"
-msgstr "存储目录"
-
-msgid "Target ports"
-msgstr "目标端口"
-
-msgid "UDP port %s, TCP port %s"
-msgstr "UDP 端口 %s，TCP 端口 %s"
-
-msgid "Use a manual port"
-msgstr "手动指定端口"
+msgid "You have unsaved changes. Remote updates are paused until you Apply or Cancel."
+msgstr "存在未保存的更改。点击“应用”或“取消”之前，暂停接收远程更新。"
 
 msgid "from config.yaml"
 msgstr "来自 config.yaml"
 
+msgid "full"
+msgstr "完整"
+
+msgid "logread"
+msgstr "logread"
+
 msgid "manual"
 msgstr "手动"
+
+msgid "minimal"
+msgstr "精简"
 
 msgid "not present"
 msgstr "不存在"
 
 msgid "port %s (TCP/UDP)"
 msgstr "端口 %s（TCP/UDP）"
+
+msgid "standard"
+msgstr "标准"
+
+msgid "Allow manually uploaded cores"
+msgstr "允许手动上传内核"
+
+msgid "Disabled by default. Enabling it permits installing an uploaded core archive; the upload permission is also controlled by the separate luci-app-oxidns-core-upload ACL group. Only enable it for trusted administrators."
+msgstr "默认关闭。开启后允许安装上传的内核归档；上传权限还受独立的 luci-app-oxidns-core-upload ACL 组控制。请仅为可信管理员开启。"
+
+msgid "GeoIP SHA-256 pin"
+msgstr "GeoIP SHA-256 校验值"
+
+msgid "GeoSite SHA-256 pin"
+msgstr "GeoSite SHA-256 校验值"
+
+msgid "Optional 64-hex SHA-256 pins. When set, downloads are verified before they are published; a mismatch aborts the update and keeps the current data."
+msgstr "可选的 64 位十六进制 SHA-256 校验值。设置后，下载内容在发布前会被校验；校验失败会中止更新并保留现有数据。"
+
+msgid "The core upload setting is invalid."
+msgstr "内核上传设置无效。"
+

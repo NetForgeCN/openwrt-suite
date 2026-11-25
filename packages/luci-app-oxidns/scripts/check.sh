@@ -27,9 +27,13 @@ for (const file of [
 }
 
 const menu = JSON.parse(fs.readFileSync('root/usr/share/luci/menu.d/luci-app-oxidns.json', 'utf8'));
+// Menu titles are translatable but LuCI falls back to the English title when a
+// catalogue entry is absent. Keep them out of the hard "required" set so a
+// catalogue gap cannot block packaging; report it as a warning instead.
+const menuTitles = new Set();
 for (const entry of Object.values(menu)) {
 	if (entry.title)
-		required.add(entry.title);
+		menuTitles.add(entry.title);
 }
 
 function poIds(file) {
@@ -47,6 +51,7 @@ function poIds(file) {
 
 const pot = poIds('po/templates/oxidns.pot');
 const zh = poIds('po/zh_Hans/oxidns.po');
+const translatable = new Set([...required, ...menuTitles]);
 const failures = [];
 for (const [label, ids] of [['POT', pot], ['zh_Hans PO', zh]]) {
 	for (const id of [...required].sort()) {
@@ -54,8 +59,12 @@ for (const [label, ids] of [['POT', pot], ['zh_Hans PO', zh]]) {
 			failures.push(`${label} missing msgid: ${id}`);
 	}
 }
+for (const id of [...menuTitles].sort()) {
+	if (!pot.has(id) || !zh.has(id))
+		console.warn(`translation catalogue does not cover menu title: ${id}`);
+}
 for (const id of [...pot].sort()) {
-	if (!required.has(id))
+	if (!translatable.has(id))
 		failures.push(`POT stale msgid: ${id}`);
 }
 if (failures.length) {
@@ -106,16 +115,23 @@ if grep -q "^config prewarm 'main'" root/etc/config/oxidns; then
 	echo "prewarm section ID must not be 'main' (collides with settings main)" >&2
 	exit 1
 fi
-# Both entry points must self-heal persisted configs from the bad release.
+# Legacy releases shipped `config prewarm 'main'`, which collided with
+# `config settings 'main'` and hid api_pass. The shipped config uses a distinct
+# section ID, and the init script migrates persisted bad configs on service
+# start -- the only path allowed to rewrite /etc/config/oxidns. rpcd read paths
+# must stay read-only, so rpcd no longer heals; it just reads the corrected
+# section.
 grep -q 'heal_prewarm_section_id' root/etc/init.d/oxidns
-grep -q 'heal_prewarm_section_id' root/usr/libexec/rpcd/luci.oxidns
-# Regression guard: prewarm_save ends in `uci commit oxidns`, which erases
-# api_pass on a colliding config. `load_prewarm_settings` is on BOTH the read
-# and save paths, so the heal call must live in that function body -- merely
-# defining the helper elsewhere is not enough.
+if ! awk '/^start_service\(\) \{/{f=1} f{print} f&&/^}/{exit}' \
+	root/etc/init.d/oxidns | grep -q 'heal_prewarm_section_id'; then
+	echo "start_service() must call heal_prewarm_section_id" >&2
+	exit 1
+fi
+# Regression guard: rpcd's prewarm reader must use the corrected section ID,
+# not the legacy 'main' one that shadowed the settings section.
 if ! awk '/^load_prewarm_settings\(\) \{/{f=1} f{print} f&&/^}/{exit}' \
-	root/usr/libexec/rpcd/luci.oxidns | grep -q 'heal_prewarm_section_id'; then
-	echo "load_prewarm_settings() must call heal_prewarm_section_id (save path)" >&2
+	root/usr/libexec/rpcd/luci.oxidns | grep -q 'oxidns\.prewarm\.'; then
+	echo "load_prewarm_settings() must read the oxidns.prewarm.* section" >&2
 	exit 1
 fi
 test -s root/usr/share/oxidns/prewarm.default.txt
@@ -139,7 +155,7 @@ sh -n oxidns-rules-baseline/files/90-oxidns-rules
 # [cache lookup removed] Keep the page and its RPC surface gone. A stale menu
 # entry or ACL method would leave a dead view in LuCI, so fail if any of them
 # ever comes back.
-if grep -qi 'cache.js\|Cache Lookup\|cache_suggest\|cache_detail\|probe_upstreams\|zone_info\|trace_route' \
+if grep -rqi 'cache.js\|Cache Lookup\|cache_suggest\|cache_detail\|probe_upstreams\|zone_info\|trace_route' \
 	htdocs root 2>/dev/null; then
 	echo "Cache Lookup page artifacts are still present" >&2
 	exit 1
@@ -210,3 +226,215 @@ if grep -q 'Loyalsoldier/v2ray-rules-dat@release' root/usr/libexec/rpcd/luci.oxi
 	echo "geo default must not fall back to upstream Loyalsoldier release" >&2
 	exit 1
 fi
+
+# [versions] Makefile, README examples and release workflow must agree. A
+# stale example is how users end up building a package whose version does not
+# match the Makefile metadata.
+ROOT_VERSION="$(sed -n 's/^PKG_VERSION:=//p' Makefile | head -n 1)"
+ROOT_RELEASE="$(sed -n 's/^PKG_RELEASE:=//p' Makefile | head -n 1)"
+RULES_VERSION="$(sed -n 's/^PKG_VERSION:=//p' oxidns-rules-baseline/Makefile | head -n 1)"
+RULES_HASH="$(sed -n 's/^PKG_HASH:=//p' oxidns-rules-baseline/Makefile | head -n 1)"
+[ -n "$ROOT_VERSION" ] && [ -n "$ROOT_RELEASE" ] || {
+	echo "cannot read PKG_VERSION/PKG_RELEASE from Makefile" >&2
+	exit 1
+}
+[ -n "$RULES_VERSION" ] && printf '%s\n' "$RULES_HASH" | grep -Eq '^[0-9a-f]{64}$' || {
+	echo "rules baseline PKG_VERSION/PKG_HASH missing or not a SHA256" >&2
+	exit 1
+}
+root_version_re="$(printf '%s' "$ROOT_VERSION" | sed 's/\./\\./g')"
+for readme in README.md README.en.md; do
+	grep -Eq "build-luci-package\.sh[[:space:]]+${root_version_re}([[:space:]]|$)" "$readme" || {
+		echo "$readme quick-packaging example must use PKG_VERSION=$ROOT_VERSION" >&2
+		exit 1
+	}
+	grep -q 'sha256sum -c' "$readme" || {
+		echo "$readme must show checksum-verified downloads" >&2
+		exit 1
+	}
+done
+grep -q "rules-v\$(PKG_VERSION)" oxidns-rules-baseline/Makefile || {
+	echo "rules baseline PKG_SOURCE_URL must use rules-v\$(PKG_VERSION)" >&2
+	exit 1
+}
+# The workflow summary prints the values a maintainer must copy into the
+# Makefile; fail if those labels drift.
+grep -q 'PKG_VERSION:=\${VERSION}' .github/workflows/rules-release.yml || {
+	echo "rules-release.yml summary must print PKG_VERSION:=\${VERSION}" >&2
+	exit 1
+}
+grep -q 'PKG_HASH:=' .github/workflows/rules-release.yml || {
+	echo "rules-release.yml summary must print PKG_HASH" >&2
+	exit 1
+}
+grep -q 'rules-v\${VERSION}' .github/workflows/rules-release.yml || {
+	echo "rules-release.yml must publish rules-v\${VERSION} tags" >&2
+	exit 1
+}
+
+# [workflow hardening] every action must be pinned to a full 40-hex SHA with a
+# trailing '# vX' comment, every job must declare a timeout, and the default
+# GITHUB_TOKEN must be read-only (write scopes are granted per publish job).
+for workflow in .github/workflows/*.yml; do
+	if grep -E '^[[:space:]]+uses: ' "$workflow" | grep -vE '@[0-9a-f]{40} # v[0-9]+$'; then
+		echo "$workflow has an unpinned action (need a full SHA + '# vX' comment)" >&2
+		exit 1
+	fi
+	jobs_count="$(awk '/^jobs:$/{f=1;next} f && /^  [a-z][a-z0-9-]*:$/{c++} END{print c+0}' "$workflow")"
+	timeouts_count="$(grep -Ec '^    timeout-minutes:' "$workflow")"
+	[ "$jobs_count" -eq "$timeouts_count" ] || {
+		echo "$workflow: $jobs_count jobs but $timeouts_count timeout-minutes" >&2
+		exit 1
+	}
+	grep -q '^permissions:$' "$workflow" || {
+		echo "$workflow missing top-level permissions" >&2
+		exit 1
+	}
+done
+
+# [licenses] core carries the upstream license, rules use a valid SPDX
+# expression, and the vendored CodeMirror MIT license ships in metadata.
+grep -q '^PKG_LICENSE_FILES:=LICENSE' oxidns-core/Makefile || {
+	echo "oxidns-core/Makefile must declare PKG_LICENSE_FILES for upstream LICENSE" >&2
+	exit 1
+}
+grep -q '^PKG_LICENSE:=GPL-3.0-or-later AND MIT AND 0BSD AND WTFPL$' oxidns-rules-baseline/Makefile || {
+	echo "rules baseline PKG_LICENSE must be the full SPDX expression" >&2
+	exit 1
+}
+grep -q 'oxidns-codemirror/LICENSE' Makefile || {
+	echo "root Makefile must declare the vendored CodeMirror MIT license" >&2
+	exit 1
+}
+
+# [targets] Buildroot mapping and runtime targets.json must not drift; the
+# Makefile's TARGET MAP comment is the cross-check source.
+node <<'NODE'
+const fs = require('fs');
+const mk = fs.readFileSync('oxidns-core/Makefile', 'utf8');
+const data = JSON.parse(fs.readFileSync('root/usr/share/oxidns/targets.json', 'utf8'));
+const known = new Set(data.targets.map((t) => t.rust_target));
+const rows = [...mk.matchAll(/^#\s+(x86_64|aarch64|i386|arm \([^)]*\))\s+->\s+(\S+)/gm)];
+if (rows.length !== 5)
+	throw new Error(`oxidns-core TARGET MAP has ${rows.length} rows, expected 5`);
+for (const [, arch, target] of rows) {
+	if (!known.has(target))
+		throw new Error(`Makefile mapping ${arch} -> ${target} missing from targets.json`);
+}
+if (!mk.includes('CONFIG_SOFTFLOAT'))
+	throw new Error('soft-float ARM must be excluded from the hard-float core build');
+NODE
+
+# [build-rules] Negative fixtures for the validators. These must fail on
+# malformed input; a validator that accepts everything is worse than none.
+(
+	eval "$(sed -n '/^validate_domain_set() {/,/^}/p' scripts/build-rules-baseline.sh)"
+	eval "$(sed -n '/^validate_plain_list() {/,/^}/p' scripts/build-rules-baseline.sh)"
+	eval "$(sed -n '/^validate_adguard_list() {/,/^}/p' scripts/build-rules-baseline.sh)"
+	fixtures="$(mktemp -d "${TMPDIR:-/tmp}/oxidns-validator-fixtures.XXXXXX")"
+	trap 'rm -rf "$fixtures"' EXIT
+	printf 'good.example.com\n' > "$fixtures/domain-ok.txt"
+	printf 'this is not a domain\n' > "$fixtures/domain-bad.txt"
+	printf '<html><body>error</body></html>\n' > "$fixtures/plain-bad.txt"
+	printf '||example.com^\n' > "$fixtures/adguard-ok.txt"
+	printf '<html><body>error</body></html>\n' > "$fixtures/adguard-bad.txt"
+	validate_domain_set "$fixtures/domain-ok.txt" 1
+	validate_plain_list "$fixtures/domain-ok.txt" 1
+	validate_adguard_list "$fixtures/adguard-ok.txt" 1
+	if validate_domain_set "$fixtures/domain-bad.txt" 1; then
+		echo "validate_domain_set accepted a malformed line" >&2
+		exit 1
+	fi
+	if validate_plain_list "$fixtures/plain-bad.txt" 1; then
+		echo "validate_plain_list accepted an HTML error page" >&2
+		exit 1
+	fi
+	if validate_adguard_list "$fixtures/adguard-bad.txt" 1; then
+		echo "validate_adguard_list accepted an HTML error page" >&2
+		exit 1
+	fi
+)
+
+# [reproducibility] Two offline builds from identical fixture data must
+# produce byte-identical tarballs. curl is stubbed from PATH so this needs no
+# network access and cannot be affected by upstream list churn.
+(
+	repro_dir="$(mktemp -d "${TMPDIR:-/tmp}/oxidns-rules-repro.XXXXXX")"
+	trap 'rm -rf "$repro_dir"' EXIT
+	mkdir -p "$repro_dir/bin" "$repro_dir/fixtures"
+	awk 'BEGIN { for (i = 0; i < 50000; i++) print "||example.com^" }' > "$repro_dir/fixtures/filter_1.txt"
+	awk 'BEGIN { for (i = 0; i < 50000; i++) print "example.com" }' > "$repro_dir/fixtures/anti-ad-domains.txt"
+	awk 'BEGIN { for (i = 0; i < 100000; i++) print "example.com" }' > "$repro_dir/fixtures/mosdns_adrules.txt"
+	cp "$repro_dir/fixtures/mosdns_adrules.txt" "$repro_dir/fixtures/domain"
+	awk 'BEGIN { for (i = 0; i < 50000; i++) printf "server=/example%d.com/127.0.0.1#53\n", i }' > "$repro_dir/fixtures/accelerated-domains.china.conf"
+	cat > "$repro_dir/bin/curl" <<'EOF'
+#!/bin/sh
+set -eu
+out=""
+url=""
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		-o) out="$2"; shift 2 ;;
+		--proto|--proto-redir|--max-redirs|--retry|--max-time) shift 2 ;;
+		--*) shift ;;
+		*) url="$1"; shift ;;
+	esac
+done
+case "$url" in
+	*filter_1.txt) name=filter_1.txt ;;
+	*anti-ad-domains.txt) name=anti-ad-domains.txt ;;
+	*mosdns_adrules.txt) name=mosdns_adrules.txt ;;
+	*/domain) name=domain ;;
+	*accelerated-domains.china.conf) name=accelerated-domains.china.conf ;;
+	*) echo "unexpected URL: $url" >&2; exit 1 ;;
+esac
+cp "${FIXTURE_DIR:?}/$name" "$out"
+EOF
+	chmod 755 "$repro_dir/bin/curl"
+	PATH="$repro_dir/bin:$PATH" FIXTURE_DIR="$repro_dir/fixtures" \
+		OUT_DIR="$repro_dir/out1" SOURCE_DATE_EPOCH=1767225600 \
+		scripts/build-rules-baseline.sh 2026.01.01 >/dev/null
+	PATH="$repro_dir/bin:$PATH" FIXTURE_DIR="$repro_dir/fixtures" \
+		OUT_DIR="$repro_dir/out2" SOURCE_DATE_EPOCH=1767225600 \
+		scripts/build-rules-baseline.sh 2026.01.01 >/dev/null
+	cmp "$repro_dir/out1/oxidns-rules-baseline-2026.01.01.tar.gz.sha256" \
+		"$repro_dir/out2/oxidns-rules-baseline-2026.01.01.tar.gz.sha256" || {
+		echo "rules baseline rebuild is not reproducible" >&2
+		exit 1
+	}
+	cmp "$repro_dir/out1/CONTENT-SHA256" "$repro_dir/out2/CONTENT-SHA256"
+)
+
+# [cross-agent contracts] Guards for fixes owned by other agents. Patterns
+# are deliberately tolerant of quoting/formatting changes.
+settings_save_emissions="$(grep -c '"settings_save":{' root/usr/libexec/rpcd/luci.oxidns || true)"
+if [ "${settings_save_emissions:-0}" -gt 1 ]; then
+	echo "rpcd list emits settings_save more than once" >&2
+	exit 1
+fi
+if ! awk '/^valid_upload_path\(\) \{/{f=1} f{print} f&&/^}/{exit}' \
+	root/usr/libexec/rpcd/luci.oxidns | grep -Eq '(\.\.|path_has_parent_ref)'; then
+	echo "valid_upload_path must reject parent directory references" >&2
+	exit 1
+fi
+if ! grep -q 'mktemp' root/usr/libexec/oxidns-prewarm; then
+	echo "prewarmer must use mktemp for its temporary files" >&2
+	exit 1
+fi
+if ! awk '/^valid_geo_url\(\) \{/{f=1} f{print} f&&/^}/{exit}' \
+	root/usr/libexec/rpcd/luci.oxidns | grep -Eq '127\.|10\.|192\.168|169\.254|localhost|private'; then
+	echo "geo URL validation must reject private/loopback addresses" >&2
+	exit 1
+fi
+grep -q 'run_with_core_lock' root/usr/libexec/rpcd/luci.oxidns || {
+	echo "core/rules write paths must hold the shared lock" >&2
+	exit 1
+}
+grep -q 'geo_running' root/usr/libexec/rpcd/luci.oxidns || {
+	echo "geo write path needs a busy marker" >&2
+	exit 1
+}
+grep -q 'rollback' root/usr/libexec/rpcd/luci.oxidns || {
+	echo "write paths need a rollback path on failure" >&2
+	exit 1
+}

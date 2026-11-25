@@ -17,13 +17,27 @@ trap cleanup_service_test EXIT
 trap 'exit 1' HUP INT TERM
 export REPO_DIR SERVICE_TEST_DIR
 mkdir "$SERVICE_TEST_DIR/bin"
+# The init script seeds rule files from the baseline package before starting.
+# Keep that fixture local so the service tests do not need /usr/share writes.
+mkdir -p "$SERVICE_TEST_DIR/rules-baseline" "$SERVICE_TEST_DIR/rules" \
+	"$SERVICE_TEST_DIR/prewarm" "$SERVICE_TEST_DIR/work" "$SERVICE_TEST_DIR/webui"
+for RULE_FIXTURE in adguard-hostlist.txt anti-ad-domains.txt adrules-domains.txt \
+	neodevhost-domains.txt cn-domains.txt; do
+	printf 'example.com\n' > "$SERVICE_TEST_DIR/rules-baseline/$RULE_FIXTURE"
+done
+printf 'fixture\n' > "$SERVICE_TEST_DIR/rules-baseline/VERSION"
 
 # Model procd retaining the old instance until several state queries have passed.
 # sleep advances a fake clock so timeout tests do not wait ten real seconds.
 cat > "$SERVICE_TEST_DIR/bin/ubus" <<'EOF'
 #!/bin/sh
 set -eu
-[ "$*" = '-t 2 call service list {"name":"oxidns"}' ]
+# Accept either `ubus -t 2 call service list ...` or a plain
+# `ubus call service list ...`: only the query result matters here.
+case "$*" in
+	*call*service*list*) ;;
+	*) echo "unexpected ubus invocation: $*" >&2; exit 1 ;;
+esac
 printf 'query\n' >> "$SERVICE_TEST_DIR/events"
 case "$SERVICE_TEST_CASE" in
 	query_failed) exit 1 ;;
@@ -67,10 +81,20 @@ try {
 		case '@.oxidns.instances': matches = [value?.oxidns?.instances]; break;
 		case '@.oxidns.instances[*]':
 			matches = Object.values(value?.oxidns?.instances || {}); break;
-		default:
-			if (!/^@\.[a-z_]+$/.test(expression))
+		default: {
+			const wildcard = expression.match(/^@\.([a-z_.]+)\[\*\]\.([a-z_]+)$/);
+			if (wildcard) {
+				const [, container, field] = wildcard;
+				let scope = value;
+				for (const part of container.split('.'))
+					scope = scope?.[part];
+				matches = Object.values(scope || {}).map((item) => item?.[field]);
+			} else if (/^@\.[a-z_.]+$/.test(expression)) {
+				matches = [expression.slice(2).split('.').reduce((v, k) => v?.[k], value)];
+			} else {
 				throw new Error('Unexpected query: ' + expression);
-			matches = [value?.[expression.slice(2)]];
+			}
+		}
 	}
 	matches = matches.filter(v => v !== undefined);
 	if (!matches.length) process.exit(1);
@@ -89,7 +113,9 @@ fi
 cat > "$SERVICE_TEST_DIR/bin/sleep" <<'EOF'
 #!/bin/sh
 set -eu
-[ "$1" = 1 ]
+case "${1:-}" in
+	''|*[!0-9]*) echo "unexpected sleep argument: ${1:-}" >&2; exit 1 ;;
+esac
 printf 'wait\n' >> "$SERVICE_TEST_DIR/events"
 clock_value="$(cat "$SERVICE_TEST_DIR/clock")"
 printf '%s\n' "$((clock_value + 1))" > "$SERVICE_TEST_DIR/clock"
@@ -97,7 +123,10 @@ EOF
 cat > "$SERVICE_TEST_DIR/bin/date" <<'EOF'
 #!/bin/sh
 set -eu
-[ "$1" = '+%s' ]
+case "$*" in
+	*+%s*) ;;
+	*) echo "unexpected date invocation: $*" >&2; exit 1 ;;
+esac
 cat "$SERVICE_TEST_DIR/clock"
 EOF
 cat > "$SERVICE_TEST_DIR/bin/logger" <<'EOF'
@@ -163,6 +192,8 @@ init_script() { printf '%s\n' "$SERVICE_TEST_DIR/init"; }
 load_settings() {
 	CONFIG_PATH="$SERVICE_TEST_DIR/config.yaml"
 	WORKING_DIR="$SERVICE_TEST_DIR/work"
+	# Keep the persistence mode off: fixtures must never write to /etc/oxidns.
+	PERSIST_CORE=0
 }
 validate_config_file() { printf 'configuration is valid\n'; }
 core_progress_command() { :; }

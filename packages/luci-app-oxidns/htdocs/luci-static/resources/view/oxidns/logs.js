@@ -10,14 +10,23 @@ var callLogsRecent = rpc.declare({
 	expect: {}
 });
 
+var BACKEND_ERRORS = {
+	log_read_failed: _('The system log could not be read.'),
+	rpc_unavailable: _('The LuCI backend is unavailable.')
+};
+
 var state = {
 	lines: [],
 	pending: [],
 	rawLines: [],
+	renderedLines: [],
+	renderedSig: '',
 	paused: false,
 	followTail: true,
 	limit: 100,
 	clearBaseline: null,
+	clearCursor: 0,
+	inFlight: false,
 	filters: {
 		keyword: '',
 		plugin: '',
@@ -33,6 +42,98 @@ var FIELD_RES = {
 	qtype: /(?:^|\s)qtype=(\S+)/,
 	rcode: /(?:^|\s)rcode=(\S+)/
 };
+
+var viewRoot = null;
+var pollFn = null;
+var viewObserver = null;
+var cleanupTasks = [];
+var retryTimer = null;
+var retryCount = 0;
+
+function isAttached(node) {
+	return !!(node && document.body && typeof document.body.contains === 'function' && document.body.contains(node));
+}
+
+function addCleanup(fn) {
+	if (typeof fn === 'function' && cleanupTasks.indexOf(fn) < 0)
+		cleanupTasks.push(fn);
+}
+
+function runCleanup() {
+	var tasks = cleanupTasks.slice();
+	cleanupTasks = [];
+
+	for (var i = 0; i < tasks.length; i++) {
+		try { tasks[i](); } catch (e) {}
+	}
+}
+
+function watchView(root) {
+	viewRoot = root || null;
+
+	if (viewObserver) {
+		try { viewObserver.disconnect(); } catch (e) {}
+		viewObserver = null;
+	}
+
+	var vp = document.getElementById('view');
+	if (!vp || typeof MutationObserver !== 'function')
+		return;
+
+	viewObserver = new MutationObserver(function() {
+		if (viewRoot && !isAttached(viewRoot)) {
+			try { viewObserver.disconnect(); } catch (e) {}
+			viewObserver = null;
+			runCleanup();
+		}
+	});
+	viewObserver.observe(vp, { childList: true, subtree: false });
+}
+
+function unregisterPoll() {
+	if (pollFn && typeof poll.remove === 'function')
+		poll.remove(pollFn);
+	pollFn = null;
+}
+
+function cancelRetry() {
+	if (retryTimer !== null) {
+		window.clearTimeout(retryTimer);
+		retryTimer = null;
+	}
+	retryCount = 0;
+}
+
+function backendMessage(err, fallback) {
+	var code = err && err.code;
+	if (code && BACKEND_ERRORS[code])
+		return BACKEND_ERRORS[code];
+	return fallback || _('Operation failed');
+}
+
+function showError(message) {
+	var node = byId('oxidns-log-error');
+	if (!node)
+		return;
+	node.textContent = message || '';
+	node.style.display = message ? 'block' : 'none';
+}
+
+function scheduleRetry() {
+	cancelRetry();
+	if (retryCount >= 4) {
+		showError(_('Could not refresh logs. Use Refresh to try again.'));
+		return;
+	}
+
+	retryCount++;
+	showError(_('Could not refresh logs. Retrying...'));
+	retryTimer = window.setTimeout(function() {
+		retryTimer = null;
+		if (isAttached(viewRoot))
+			refreshLogs();
+	}, Math.min(30000, 1000 * Math.pow(2, retryCount)));
+}
 
 function byId(id) {
 	return document.getElementById(id);
@@ -94,33 +195,73 @@ function applyFilters(lines) {
 	return filtered;
 }
 
+/*
+ * 以前每次都用 baseline 的每个后缀去比对日志前缀，是 O(n^2)。
+ * 现在只保留一个游标：logread 的旧行始终在窗口前部，新行追加在后面，
+ * 所以从左到右推进游标即可，单轮 O(n)。
+ */
 function trimClearedLines(lines) {
 	var baseline = state.clearBaseline;
-	var remove = 0;
-
 	if (!baseline || !baseline.length)
 		return lines;
 
-	for (var i = Math.min(baseline.length, lines.length); i > 0; i--) {
-		var match = true;
+	var cursor = state.clearCursor || 0;
+	var i = 0;
 
-		for (var j = 0; j < i; j++) {
-			if (baseline[baseline.length - i + j] !== lines[j]) {
-				match = false;
-				break;
-			}
-		}
+	while (cursor < baseline.length && i < lines.length && baseline[cursor] === lines[i]) {
+		cursor++;
+		i++;
+	}
 
-		if (match) {
-			remove = i;
+	state.clearCursor = cursor;
+
+	if (cursor >= baseline.length) {
+		state.clearBaseline = null;
+		state.clearCursor = 0;
+	}
+	else if (i === 0) {
+		/* 日志轮转 / 清空后 baseline 不再出现在窗口里，直接丢弃 */
+		state.clearBaseline = null;
+		state.clearCursor = 0;
+	}
+
+	return i ? lines.slice(i) : lines;
+}
+
+/* 后端每次返回最新 N 行：找出与旧窗口重叠的部分，只追加真正新增的行 */
+function mergeRecentLines(prev, next) {
+	if (!prev.length || !next.length)
+		return (next.length ? next : prev).slice(-state.limit);
+
+	var first = next[0];
+	var start = -1;
+
+	for (var i = prev.length - 1; i >= 0 && i >= prev.length - state.limit; i--) {
+		if (prev[i] === first) {
+			start = i;
 			break;
 		}
 	}
 
-	if (remove > 0)
-		return lines.slice(remove);
+	if (start < 0)
+		return next.slice(-state.limit);
 
-	return lines;
+	var k = 1;
+	while (start + k < prev.length && k < next.length && prev[start + k] === next[k])
+		k++;
+
+	return prev.slice(0, start + k).concat(next.slice(k)).slice(-state.limit);
+}
+
+function isPrefix(prefix, values) {
+	if (prefix.length > values.length)
+		return false;
+
+	for (var i = 0; i < prefix.length; i++)
+		if (prefix[i] !== values[i])
+			return false;
+
+	return true;
 }
 
 function afterPaint(fn) {
@@ -140,13 +281,13 @@ function scrollLogToBottom() {
 		log.scrollTop = log.scrollHeight;
 }
 
-function updateFilterSummary() {
+function updateFilterSummary(visible) {
 	var node = byId('oxidns-log-filter-summary');
 	if (!node)
 		return;
 
 	var total = state.lines.length;
-	var shown = applyFilters(state.lines).length;
+	var shown = visible.length;
 
 	if (shown === total)
 		node.textContent = _('%d lines').format(total);
@@ -154,15 +295,34 @@ function updateFilterSummary() {
 		node.textContent = _('%d of %d lines').format(shown, total);
 }
 
-function renderLines() {
+function renderLines(force) {
 	var log = byId('oxidns-log-lines');
 	if (!log)
 		return;
 
 	var visible = applyFilters(state.lines);
+	var sig = visible.join('\n') + '\u0000' + JSON.stringify(state.filters);
+
+	if (!force && sig === state.renderedSig)
+		return;
+
 	var shouldFollow = state.followTail || isNearBottom(log);
-	log.textContent = visible.join('\n');
-	updateFilterSummary();
+
+	/* 大部分刷新只是末尾追加几行：只追加文本节点，不重建整块日志 */
+	if (!force && state.renderedLines.length && visible.length > state.renderedLines.length &&
+	    isPrefix(state.renderedLines, visible)) {
+		for (var i = state.renderedLines.length; i < visible.length; i++)
+			log.appendChild(document.createTextNode((i ? '\n' : '') + visible[i]));
+	}
+	else {
+		while (log.firstChild)
+			log.removeChild(log.firstChild);
+		log.textContent = visible.join('\n');
+	}
+
+	state.renderedLines = visible.slice();
+	state.renderedSig = sig;
+	updateFilterSummary(visible);
 
 	if (shouldFollow) {
 		state.followTail = true;
@@ -170,6 +330,7 @@ function renderLines() {
 	}
 }
 
+/* 只追加新出现的选项，不删已有项，避免过滤下拉框每秒抖动 */
 function updateFilterOptions() {
 	for (var i = 0; i < FILTER_FIELDS.length; i++) {
 		var field = FILTER_FIELDS[i];
@@ -178,32 +339,44 @@ function updateFilterOptions() {
 			continue;
 
 		var values = distinctValues(state.lines, field);
-		var signature = values.join('\n');
-		if (select.getAttribute('data-signature') === signature)
-			continue;
-		select.setAttribute('data-signature', signature);
+		var existing = {};
 
-		while (select.firstChild)
-			select.removeChild(select.firstChild);
+		for (var j = 0; j < select.options.length; j++)
+			existing[select.options[j].value] = true;
 
-		select.appendChild(E('option', { 'value': '' }, _('All')));
+		for (var k = 0; k < values.length; k++) {
+			if (!existing[values[k]]) {
+				select.appendChild(E('option', { 'value': values[k] }, values[k]));
+				existing[values[k]] = true;
+			}
+		}
 
-		for (var j = 0; j < values.length; j++)
-			select.appendChild(E('option', { 'value': values[j] }, values[j]));
-
-		if (state.filters[field] && values.indexOf(state.filters[field]) < 0)
+		if (state.filters[field] && !existing[state.filters[field]])
 			state.filters[field] = '';
+
 		select.value = state.filters[field];
 	}
 }
 
 function refreshLogs() {
-	return L.resolveDefault(callLogsRecent(state.limit), null).then(function(result) {
+	if (!isAttached(viewRoot)) {
+		unregisterPoll();
+		return Promise.resolve();
+	}
+
+	if (state.inFlight)
+		return Promise.resolve();
+
+	state.inFlight = true;
+
+	return Promise.resolve(callLogsRecent(state.limit)).then(function(result) {
+		state.inFlight = false;
+
 		if (!result || result.ok === false)
-			return;
+			throw result || { code: 'rpc_unavailable' };
 
-		state.rawLines = normalizeLines(result);
-
+		/* 保留最后一次成功读取的内容，错误时不把日志清空 */
+		state.rawLines = mergeRecentLines(state.rawLines, normalizeLines(result));
 		var lines = trimClearedLines(state.rawLines);
 
 		if (state.paused)
@@ -211,8 +384,15 @@ function refreshLogs() {
 		else
 			state.lines = lines;
 
+		cancelRetry();
+		showError('');
 		updateFilterOptions();
 		renderLines();
+	}).catch(function(err) {
+		state.inFlight = false;
+		showError(backendMessage(err, _('Could not refresh logs.')));
+		scheduleRetry();
+		console.warn('oxidns logs refresh:', err);
 	});
 }
 
@@ -238,13 +418,17 @@ function clearLogs() {
 		? state.rawLines.slice()
 		: currentLines;
 
-	if (baseline.length)
+	if (baseline.length) {
 		state.clearBaseline = baseline;
+		state.clearCursor = 0;
+	}
 
 	state.lines = [];
 	state.pending = [];
 	state.followTail = true;
-	renderLines();
+	state.renderedLines = [];
+	state.renderedSig = '';
+	renderLines(true);
 }
 
 function resetFilters() {
@@ -260,7 +444,7 @@ function resetFilters() {
 			select.value = '';
 	}
 
-	renderLines();
+	renderLines(true);
 }
 
 function updatePauseButton() {
@@ -274,6 +458,7 @@ function updatePauseButton() {
 
 function controlButton(label, handler, style) {
 	return E('button', {
+		'type': 'button',
 		'class': 'btn cbi-button cbi-button-%s'.format(style || 'neutral'),
 		'click': function(ev) {
 			ev.preventDefault();
@@ -335,7 +520,7 @@ return view.extend({
 	load: function() {
 		return Promise.resolve({
 			ok: true,
-			source: 'logread',
+			source: _('logread'),
 			lines: []
 		});
 	},
@@ -344,14 +529,19 @@ return view.extend({
 		state.lines = normalizeLines(initial);
 		state.pending = [];
 		state.rawLines = state.lines.slice();
+		state.renderedLines = [];
+		state.renderedSig = '';
 		state.paused = false;
 		state.followTail = true;
 		state.clearBaseline = null;
+		state.clearCursor = 0;
+		state.inFlight = false;
 		state.filters = { keyword: '', plugin: '', qtype: '', rcode: '' };
-		window.setTimeout(refreshLogs, 0);
-		poll.add(refreshLogs, 1);
 
-		return E('div', { 'class': 'cbi-map' }, [
+		addCleanup(unregisterPoll);
+		addCleanup(cancelRetry);
+
+		var map = E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, _('OxiDNS Logs')),
 			E('div', { 'class': 'cbi-map-descr' },
 				_('View recent OxiDNS entries from OpenWrt logread. Use the filters to narrow down entries by keyword, plugin, query type or response code.')),
@@ -362,6 +552,7 @@ return view.extend({
 				}, [
 					E('button', {
 						'id': 'oxidns-log-pause-toggle',
+						'type': 'button',
 						'class': 'btn cbi-button cbi-button-neutral',
 						'click': function(ev) {
 							ev.preventDefault();
@@ -372,12 +563,21 @@ return view.extend({
 					controlButton(_('Clear'), clearLogs, 'negative'),
 					E('span', {
 						'id': 'oxidns-log-filter-summary',
+						'aria-live': 'polite',
 						'style': 'align-self: center; margin-left: auto; color: #888; font-size: 12px;'
 					}, '')
 				]),
+				E('div', {
+					'id': 'oxidns-log-error',
+					'class': 'alert-message error',
+					'aria-live': 'polite',
+					'style': 'margin-bottom: .75em; display: none;'
+				}),
 				filterBar(),
 				E('pre', {
 					'id': 'oxidns-log-lines',
+					'aria-label': _('OxiDNS log output'),
+					'role': 'log',
 					'scroll': function(ev) {
 						state.followTail = isNearBottom(ev.target);
 					},
@@ -385,6 +585,17 @@ return view.extend({
 				}, state.lines.join('\n'))
 			])
 		]);
+
+		watchView(map);
+
+		pollFn = refreshLogs;
+		poll.add(pollFn, 1);
+		window.setTimeout(function() {
+			if (isAttached(viewRoot))
+				refreshLogs();
+		}, 0);
+
+		return map;
 	},
 
 	handleSaveApply: null,

@@ -1,6 +1,7 @@
 'use strict';
 'require view';
 'require rpc';
+'require request';
 'require ui';
 
 var callPrewarmRead = rpc.declare({
@@ -16,11 +17,13 @@ var callPrewarmSave = rpc.declare({
 	expect: {}
 });
 
-var callPrewarmRun = rpc.declare({
-	object: 'luci.oxidns',
-	method: 'prewarm_run',
-	expect: {}
-});
+var PREWARM_RUN_RPC = { object: 'luci.oxidns', method: 'prewarm_run' };
+
+var BACKEND_ERRORS = {
+	invalid_prewarm_settings: _('The prewarm port or interval is invalid.'),
+	prewarm_failed: _('The prewarm operation failed.'),
+	rpc_unavailable: _('The LuCI backend is unavailable.')
+};
 
 function field(id) {
 	var node = document.getElementById(id);
@@ -53,13 +56,18 @@ function select(id, options, value) {
 		}));
 }
 
-function textInput(id, value) {
-	return E('input', {
+function textInput(id, value, describedBy) {
+	var attrs = {
 		'id': id,
 		'class': 'cbi-input-text',
 		'type': 'text',
+		'inputmode': 'numeric',
 		'value': value || ''
-	});
+	};
+	if (describedBy)
+		attrs['aria-describedby'] = describedBy;
+
+	return E('input', attrs);
 }
 
 function listTextarea(content) {
@@ -91,67 +99,131 @@ function setStatus(message, danger) {
 	node.className = danger ? 'alert-message error' : 'alert-message info';
 }
 
-function callWithTimeout(call, seconds) {
-	var previous = L.env.rpctimeout;
-	L.env.rpctimeout = seconds;
-	return call().then(function(result) {
-		if (previous === undefined)
-			delete L.env.rpctimeout;
-		else
-			L.env.rpctimeout = previous;
-		return result;
-	}, function(err) {
-		if (previous === undefined)
-			delete L.env.rpctimeout;
-		else
-			L.env.rpctimeout = previous;
-		throw err;
+function backendMessage(err, fallback) {
+	var code = err && err.code;
+	if (code && BACKEND_ERRORS[code])
+		return BACKEND_ERRORS[code];
+	return fallback || _('Operation failed');
+}
+
+function focusModal() {
+	window.setTimeout(function() {
+		var modal = document.getElementById('modal') || document.querySelector('.modal');
+		if (!modal)
+			return;
+
+		var target = modal.querySelector('[autofocus], button:not([disabled]), input:not([disabled]), select, textarea');
+		if (target && typeof target.focus === 'function')
+			target.focus();
+	}, 0);
+}
+
+/* 每次调用自带 HTTP 超时，不修改 L.env.rpctimeout */
+function callLongRpc(desc, seconds) {
+	return new Promise(function(resolve, reject) {
+		var msg = {
+			jsonrpc: '2.0',
+			id: 'oxidns-' + Date.now() + '-' + Math.floor(Math.random() * 1000000),
+			method: 'call',
+			params: [ rpc.getSessionID(), desc.object, desc.method, {} ]
+		};
+		var req = {
+			object: desc.object,
+			method: desc.method,
+			expect: {},
+			resolve: resolve,
+			reject: reject
+		};
+
+		request.post(rpc.getBaseURL(), msg, {
+			timeout: seconds * 1000,
+			credentials: true
+		}).then(function(res) {
+			rpc.parseCallReply(req, res);
+		}, function(err) {
+			reject(err);
+		});
 	});
 }
 
+function numericField(id, fallback, min, max) {
+	var raw = String(field(id) || '').trim();
+	if (!/^[0-9]+$/.test(raw)) {
+		setStatus(_('Enter a number between %d and %d.').format(min, max), true);
+		return null;
+	}
+
+	var value = parseInt(raw, 10);
+	if (isNaN(value) || value < min || value > max) {
+		setStatus(_('Enter a number between %d and %d.').format(min, max), true);
+		return null;
+	}
+
+	return value;
+}
+
 function savePrewarm() {
+	/* RPC list 声明 enabled 为 boolean、port / interval 为 number，必须传对应类型 */
+	var enabled = checked('oxidns-prewarm-enabled');
+	var port = numericField('oxidns-prewarm-port', 5333, 1, 65535);
+	if (port === null)
+		return Promise.resolve();
+
+	var interval = numericField('oxidns-prewarm-interval', 3000, 0, 86400);
+	if (interval === null)
+		return Promise.resolve();
+
 	ui.showModal(_('OxiDNS'), [ E('p', {}, _('Saving prewarm settings...')) ]);
-	return L.resolveDefault(callPrewarmSave(
-		checked('oxidns-prewarm-enabled') ? '1' : '0',
+	focusModal();
+
+	return Promise.resolve(callPrewarmSave(
+		enabled,
 		field('oxidns-prewarm-protocol') || 'udp',
 		field('oxidns-prewarm-server') || '127.0.0.1',
-		field('oxidns-prewarm-port') || '5333',
-		field('oxidns-prewarm-interval') || '3000',
+		port,
+		interval,
 		field('oxidns-prewarm-content')
-	), null).then(function(result) {
+	)).then(function(result) {
 		ui.hideModal();
 		if (!result || result.ok === false) {
-			setStatus((result && (result.message || result.error)) || _('Failed to save prewarm settings'), true);
+			setStatus(backendMessage(result, _('Failed to save prewarm settings')), true);
 			return;
 		}
 		setStatus(_('Prewarm settings saved.'), false);
 	}).catch(function(err) {
 		ui.hideModal();
-		setStatus(err.message || String(err), true);
+		setStatus(backendMessage(err, _('Failed to save prewarm settings')), true);
 	});
 }
 
 function runPrewarm() {
 	ui.showModal(_('OxiDNS'), [ E('p', {}, _('Warming up...')) ]);
-	return L.resolveDefault(callWithTimeout(callPrewarmRun, 180), null).then(function(result) {
+	focusModal();
+
+	return callLongRpc(PREWARM_RUN_RPC, 180).then(function(result) {
 		ui.hideModal();
 		if (!result || result.ok === false) {
-			setStatus((result && (result.message || result.error)) || _('Prewarm failed'), true);
+			setStatus(backendMessage(result, _('Prewarm failed')), true);
 			return;
 		}
 		setStatus(_('Prewarm completed.'), false);
 	}).catch(function(err) {
 		ui.hideModal();
-		setStatus(err.message || String(err), true);
+		setStatus(backendMessage(err, _('Prewarm failed')), true);
 	});
 }
 
 return view.extend({
 	load: function() {
-		return L.resolveDefault(callPrewarmRead(), {});
+		return Promise.resolve(callPrewarmRead()).catch(function(err) {
+			console.warn('oxidns prewarm load:', err);
+			return { ok: false, code: 'rpc_unavailable' };
+		});
 	},
 
 	render: function(settings) {
+		settings = settings || {};
+
 		return E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, _('Prewarm')),
 			E('div', { 'class': 'cbi-map-descr' },
@@ -179,18 +251,19 @@ return view.extend({
 						[ '192.168.1.1', _('192.168.1.1 (LAN address)') ]
 					], settings.server || '127.0.0.1')),
 					row(_('Port'), E('div', {}, [
-						textInput('oxidns-prewarm-port', settings.port || '5333'),
+						textInput('oxidns-prewarm-port', settings.port || '5333', 'oxidns-prewarm-port-description'),
 						description('oxidns-prewarm-port-description',
 							_('The selected server must be an OxiDNS listener with cache enabled.'))
 					])),
 					row(_('Interval (seconds)'), E('div', {}, [
-						textInput('oxidns-prewarm-interval', settings.interval || '3000'),
+						textInput('oxidns-prewarm-interval', settings.interval || '3000', 'oxidns-prewarm-interval-description'),
 						description('oxidns-prewarm-interval-description',
 							_('0 = run once at service start.'))
 					]))
 				]),
 				E('div', { 'class': 'cbi-button-row' }, [
 					E('button', {
+						'type': 'button',
 						'class': 'btn cbi-button cbi-button-positive',
 						'click': function(ev) {
 							ev.preventDefault();
@@ -199,6 +272,7 @@ return view.extend({
 					}, _('Save Settings')),
 					' ',
 					E('button', {
+						'type': 'button',
 						'class': 'btn cbi-button cbi-button-neutral',
 						'click': function(ev) {
 							ev.preventDefault();
@@ -206,7 +280,11 @@ return view.extend({
 						}
 					}, _('Run now'))
 				]),
-				E('div', { 'id': 'oxidns-prewarm-status', 'style': 'margin-top: 1em;' })
+				E('div', {
+					'id': 'oxidns-prewarm-status',
+					'aria-live': 'polite',
+					'style': 'margin-top: 1em;'
+				})
 			])
 		]);
 	},

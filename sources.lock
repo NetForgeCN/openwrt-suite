@@ -14,7 +14,7 @@ mosdns|a8a6caffe04167dbb17407a63463eb4ce7243873|2026-11-15T06:10:52Z|https://git
 nikki|aaf46bf02a9ab2b5a8ab3fcaa5f84c99e56585bf|2026-11-13T10:53:39Z|https://github.com/nikkinikki-org/OpenWrt-nikki.git
 openappfilter|0814b87f57181ef238b9a21604c999e98de73cf2|2026-11-16T15:06:30Z|https://github.com/destan19/OpenAppFilter.git
 opennexttrace|fcac844b466e22d94da3aef39049cb4ae5ee6f35|2026-11-08T04:32:51Z|https://github.com/haohaoget/luci-app-open_nexttrace.git
-oxidns|5b5a36f54412362bd8872c0d6699dde94fb86379|2026-11-25T02:44:30Z|https://github.com/NetForgeCN/luci-app-oxidns.git
+oxidns|f8ae31ebd39c8129c00b09f7a2bde2e848202ee9|2026-11-25T03:12:10Z|https://github.com/NetForgeCN/luci-app-oxidns.git
 photondns|c53b3b75f0a00f68d75588cdd51529f22421e461|2026-11-11T07:09:16Z|https://github.com/c2h2/luci-app-photondns.git
 pulse|e8d2edf96c484fbf85c70957265538a769225a74|2026-11-22T15:04:42Z|https://github.com/w9315273/luci-app-pulse.git
 temp-status|6d127817d92d758e35617620f9567a1336f5f8a5|2026-11-08T04:32:51Z|https://github.com/gSpotx2f/luci-app-temp-status.git

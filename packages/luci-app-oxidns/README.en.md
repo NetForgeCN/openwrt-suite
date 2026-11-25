@@ -36,6 +36,8 @@ Built on the [svenshi/luci-app-oxidns](https://github.com/svenshi/luci-app-oxidn
 | `Geo Data` | geoip.dat / geosite.dat status, download URLs, directory, online update |
 | `Prewarm` | Enable switch, domain list, target endpoint, interval and manual run |
 
+> Security note: core uploads are disabled by default. Enable "Allow manually uploaded cores" on the `Settings` page and make sure the logged-in user belongs to the `luci-app-oxidns-core-upload` ACL group (the default root account does). Uploaded binaries are never executed during validation; they are only run as the service core. Optional SHA-256 pins on the `Geo Data` page abort an update on mismatch and keep the current data.
+
 ## Quick start
 
 1. Install the package as described in “Build and install”.
@@ -60,7 +62,7 @@ Prewarming walks the domain list and sends A and AAAA queries to the selected Ox
 | Enabled | yes |
 | Target | `udp://127.0.0.1:5333` |
 | Interval | 3000 seconds (~50 minutes) |
-| List | 89 bundled domains, editable in the page |
+| List | 75 bundled domains, editable in the page |
 | Concurrency | 4 |
 | Query timeout / retries | 2 seconds / 1 |
 
@@ -112,42 +114,61 @@ make package/luci-app-oxidns/compile V=s
 
 `oxidns-core` and `oxidns-rules-baseline` are hard dependencies and are selected with the app. Artifacts appear in `bin/packages/<arch>/`.
 
-Supported targets: x86_64, aarch64, i386 and ARM hard-float (cortex maps to armv7, others to armv6). On architectures without a published musl core (for example MIPS), leave `oxidns-core` unselected and upload a core from the page.
+Supported targets: x86_64, aarch64, i386 and ARM hard-float (cortex maps to armv7, others to armv6). Soft-float ARM cannot use the published hard-float (eabihf) core. Architectures without a published musl core (for example MIPS) cannot bake in a core through buildroot because `oxidns-core` is a hard dependency; use the quick-packaging path below without an embedded core and upload a suitable core from the `Core` page.
 
 ### Option 2: Quick packaging
 
-Requires `node`, `tar`, `gzip` and `sha256sum`:
+Requires Node.js 22, `tar`, `gzip` and `sha256sum` (`shasum -a 256` on macOS):
 
 ```sh
 git clone https://github.com/NetForgeCN/luci-app-oxidns.git
 cd luci-app-oxidns
 
-# App only; install the core later from LuCI
+# App only; install the core later from LuCI. The version defaults to the
+# PKG_VERSION in the root Makefile.
 ./scripts/build-luci-package.sh 0.2.0 dist
 
 # App with embedded core and rule baseline (pick the asset for your CPU)
-curl -LO https://github.com/svenshi/oxidns/releases/download/v1.7.1/oxidns-x86_64-unknown-linux-musl.tar.gz
-curl -LO https://github.com/NetForgeCN/luci-app-oxidns/releases/download/rules-v2026.11.24.0419/oxidns-rules-baseline-2026.11.24.0419.tar.gz
+curl -fL -O https://github.com/svenshi/oxidns/releases/download/v1.7.1/oxidns-x86_64-unknown-linux-musl.tar.gz
+curl -fL -O https://github.com/NetForgeCN/luci-app-oxidns/releases/download/rules-v2026.11.24.0419/oxidns-rules-baseline-2026.11.24.0419.tar.gz
+cat > sha256sums.txt <<'EOF'
+6c82984e477d70d0c9259a6c7997496e248c78a384b2b7585908bba7f4af854c  oxidns-x86_64-unknown-linux-musl.tar.gz
+1084a9aa8a7986c6159fbeba78433ff64c26567bfe0f782822fc3898023b2a6a  oxidns-rules-baseline-2026.11.24.0419.tar.gz
+EOF
+sha256sum -c sha256sums.txt
 ./scripts/build-luci-package.sh 0.2.0 dist-embedded \
 	oxidns-x86_64-unknown-linux-musl.tar.gz \
-	oxidns-rules-baseline-2026.11.24.0419.tar.gz
+	oxidns-rules-baseline-2026.11.24.0419.tar.gz \
+	6c82984e477d70d0c9259a6c7997496e248c78a384b2b7585908bba7f4af854c \
+	1084a9aa8a7986c6159fbeba78433ff64c26567bfe0f782822fc3898023b2a6a
 ```
 
-Install:
+The script requires a SHA256 for each embedded archive and refuses archives
+containing absolute paths, `..`, links or device entries. When bumping the
+core or baseline version, update the hashes in `oxidns-core/Makefile` /
+`oxidns-rules-baseline/Makefile` and the checksums above together.
+
+Install (local packages are unsigned, so verify the generated
+`sha256sums.txt` first):
 
 ```sh
+sha256sum -c sha256sums.txt
 opkg install luci-app-oxidns_*.ipk
 opkg install luci-i18n-oxidns-zh-cn_*.ipk
-# apk systems:
-apk add --allow-untrusted ./luci-app-oxidns_*.apk
+# apk systems, after checksum verification:
+apk add ./luci-app-oxidns_*.apk ./luci-i18n-oxidns-zh-cn_*.apk
 ```
+
+If apk refuses an unsigned local package, use `--allow-untrusted` only after
+the `sha256sum -c` verification has succeeded.
 
 ## Persistence and upgrades
 
-- Core and WebUI live in `/etc/oxidns/core/`; runtime paths are symlinks.
+- Core and WebUI live in the persistent area `/etc/oxidns/core/`; `/usr/bin/oxidns` and `/usr/share/oxidns/webui` are only symlinks to them.
+- The LuCI views, rpcd backend and `/etc/init.d/oxidns` are installed by the package under `/usr` and are replaced by the firmware on sysupgrade; the core, configuration and rule working copy stay in `/etc`.
 - `/etc/oxidns` and `/etc/config/oxidns` are added to `/etc/sysupgrade.conf`, so configuration survives a keep-settings upgrade.
 - At boot, missing symlinks and rule files are restored from persistent storage.
-- For a firmware upgrade, keep settings, flash, then reinstall the app once.
+- For a firmware upgrade, keep settings, flash, then reinstall the app once to restore the `/usr` views, rpcd backend and init script; the persistent core/config do not need to be downloaded again.
 - Upgrade the core with `Core -> Check Update` and the lists with `Rules`; they are independent.
 
 ## Default paths

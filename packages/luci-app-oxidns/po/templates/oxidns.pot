@@ -14,7 +14,28 @@ msgstr ""
 msgid "%d of %d lines"
 msgstr ""
 
+msgid "%s, %s"
+msgstr ""
+
+msgid "0 = run once at service start."
+msgstr ""
+
+msgid "127.0.0.1 (local listener)"
+msgstr ""
+
+msgid "192.168.1.1 (LAN address)"
+msgstr ""
+
+msgid "5353"
+msgstr ""
+
+msgid "A geo data download is already running."
+msgstr ""
+
 msgid "A new OxiDNS core release is available."
+msgstr ""
+
+msgid "A proxy is currently configured. Enter a new value to replace it."
 msgstr ""
 
 msgid "A token is currently configured. Enter a new value to replace it."
@@ -23,7 +44,19 @@ msgstr ""
 msgid "Actions"
 msgstr ""
 
+msgid "Active firewall sections"
+msgstr ""
+
 msgid "All"
+msgstr ""
+
+msgid "Apply"
+msgstr ""
+
+msgid "Apply the %s service action?"
+msgstr ""
+
+msgid "Applying DNS hijack..."
 msgstr ""
 
 msgid "Applying service action..."
@@ -77,10 +110,13 @@ msgstr ""
 msgid "Config path"
 msgstr ""
 
-msgid "Configuration"
+msgid "Configuration and working directory data are preserved unless selected below."
 msgstr ""
 
-msgid "Configuration and working directory data are preserved unless selected below."
+msgid "Configuration changed"
+msgstr ""
+
+msgid "Configuration reloaded from the device."
 msgstr ""
 
 msgid "Configure OxiDNS core download sources, runtime paths, and optional download credentials."
@@ -110,7 +146,67 @@ msgstr ""
 msgid "Core repository"
 msgstr ""
 
+msgid "Could not refresh DNS hijack status."
+msgstr ""
+
+msgid "Could not refresh DNS hijack status. Retrying..."
+msgstr ""
+
+msgid "Could not refresh DNS hijack status. Use Refresh to try again."
+msgstr ""
+
+msgid "Could not refresh OxiDNS status."
+msgstr ""
+
+msgid "Could not refresh OxiDNS status. Retrying..."
+msgstr ""
+
+msgid "Could not refresh OxiDNS status. Use Refresh to try again."
+msgstr ""
+
+msgid "Could not refresh core status."
+msgstr ""
+
+msgid "Could not refresh core status. Retrying..."
+msgstr ""
+
+msgid "Could not refresh core status. Use Refresh to try again."
+msgstr ""
+
+msgid "Could not refresh geo data status. Retrying..."
+msgstr ""
+
+msgid "Could not refresh geo data status. Use Refresh to try again."
+msgstr ""
+
+msgid "Could not refresh logs."
+msgstr ""
+
+msgid "Could not refresh logs. Retrying..."
+msgstr ""
+
+msgid "Could not refresh logs. Use Refresh to try again."
+msgstr ""
+
+msgid "Could not refresh rule status."
+msgstr ""
+
+msgid "Could not refresh rule status. Retrying..."
+msgstr ""
+
+msgid "Could not refresh rule status. Use Refresh to try again."
+msgstr ""
+
 msgid "Current version"
+msgstr ""
+
+msgid "DNS Hijack"
+msgstr ""
+
+msgid "DNS hijack disabled."
+msgstr ""
+
+msgid "DNS hijack enabled. LAN port 53 requests are redirected to OxiDNS."
 msgstr ""
 
 msgid "Delete configuration file"
@@ -131,7 +227,19 @@ msgstr ""
 msgid "Domain lists used for China/ad split and ad blocking. The working copy is seeded from the bundled baseline at boot and can be updated from a published release."
 msgstr ""
 
+msgid "Download / Update"
+msgstr ""
+
+msgid "Download and install the latest rule subscription now?"
+msgstr ""
+
+msgid "Download and update the geoip.dat / geosite.dat used by OxiDNS. Defaults fetch the self-maintained NetForgeCN rules (Loyalsoldier full set plus extra ad tags); URLs and the storage directory can be customized and restored to defaults."
+msgstr ""
+
 msgid "Download core archive"
+msgstr ""
+
+msgid "Download finished."
 msgstr ""
 
 msgid "Download proxy"
@@ -140,16 +248,31 @@ msgstr ""
 msgid "Download release metadata"
 msgstr ""
 
+msgid "Download started."
+msgstr ""
+
 msgid "Edit, validate, and save the full OxiDNS YAML configuration file."
 msgstr ""
 
 msgid "Enable"
 msgstr ""
 
+msgid "Enable DNS hijack"
+msgstr ""
+
+msgid "Enable prewarming"
+msgstr ""
+
 msgid "Enabled"
 msgstr ""
 
 msgid "Enabled (core not saved yet)"
+msgstr ""
+
+msgid "Enter a number between %d and %d."
+msgstr ""
+
+msgid "Enter a port number between 1 and 65535."
 msgstr ""
 
 msgid "Error"
@@ -161,13 +284,85 @@ msgstr ""
 msgid "Example: http://127.0.0.1:7890"
 msgstr ""
 
+msgid "Failed to apply DNS hijack"
+msgstr ""
+
+msgid "Failed to download the OxiDNS core archive."
+msgstr ""
+
+msgid "Failed to download the rules archive."
+msgstr ""
+
+msgid "Failed to install the OxiDNS core."
+msgstr ""
+
+msgid "Failed to install the downloaded rules."
+msgstr ""
+
+msgid "Failed to install the uploaded core file."
+msgstr ""
+
+msgid "Failed to remove the OxiDNS core."
+msgstr ""
+
+msgid "Failed to restore defaults"
+msgstr ""
+
+msgid "Failed to restore the bundled rules."
+msgstr ""
+
+msgid "Failed to restore the default geo settings."
+msgstr ""
+
+msgid "Failed to save geo settings"
+msgstr ""
+
+msgid "Failed to save prewarm settings"
+msgstr ""
+
 msgid "Failed to save settings"
+msgstr ""
+
+msgid "Failed to save settings."
+msgstr ""
+
+msgid "Failed to save the DNS hijack settings."
+msgstr ""
+
+msgid "Failed to save the geo settings."
+msgstr ""
+
+msgid "Failed to start the download"
+msgstr ""
+
+msgid "Failed to update the OxiDNS core."
+msgstr ""
+
+msgid "Failed to write the firewall redirect."
 msgstr ""
 
 msgid "File"
 msgstr ""
 
 msgid "Format: http://host:port, https://host:port, socks5://host:port, or socks5h://host:port. Use http://user:pass@host:port when authentication is required."
+msgstr ""
+
+msgid "Geo Data"
+msgstr ""
+
+msgid "Geo download progress"
+msgstr ""
+
+msgid "Geo settings restored to defaults."
+msgstr ""
+
+msgid "Geo settings saved."
+msgstr ""
+
+msgid "GeoIP download URL"
+msgstr ""
+
+msgid "GeoSite download URL"
 msgstr ""
 
 msgid "GitHub token"
@@ -177,6 +372,9 @@ msgid "Install Core"
 msgstr ""
 
 msgid "Install core files"
+msgstr ""
+
+msgid "Install the OxiDNS core before DNS hijack can redirect to a local listener."
 msgstr ""
 
 msgid "Install the OxiDNS core before editing the configuration."
@@ -200,6 +398,12 @@ msgstr ""
 msgid "Installing uploaded OxiDNS core..."
 msgstr ""
 
+msgid "Interval (seconds)"
+msgstr ""
+
+msgid "Keep popular domains resolved so the first visit is fast. A and AAAA records are queried through the selected OxiDNS listener."
+msgstr ""
+
 msgid "Keyword (qname, domain, text...)"
 msgstr ""
 
@@ -210,9 +414,6 @@ msgid "Lines"
 msgstr ""
 
 msgid "Local copy"
-msgstr ""
-
-msgid "Logs"
 msgstr ""
 
 msgid "LuCI backend"
@@ -227,16 +428,31 @@ msgstr ""
 msgid "Missing"
 msgstr ""
 
+msgid "Modified"
+msgstr ""
+
 msgid "No"
 msgstr ""
 
 msgid "No rule update available."
 msgstr ""
 
+msgid "No target port available (source: %s)."
+msgstr ""
+
+msgid "No usable DNS listener port was found."
+msgstr ""
+
 msgid "Not installed"
 msgstr ""
 
+msgid "One domain per line. Blank lines and lines starting with # are ignored. Changes apply on the next pass; use Run now to apply immediately."
+msgstr ""
+
 msgid "Open WebUI"
+msgstr ""
+
+msgid "Operation cancelled locally."
 msgstr ""
 
 msgid "Operation completed."
@@ -281,6 +497,9 @@ msgstr ""
 msgid "OxiDNS is already stopped."
 msgstr ""
 
+msgid "OxiDNS log output"
+msgstr ""
+
 msgid "Path"
 msgstr ""
 
@@ -296,7 +515,28 @@ msgstr ""
 msgid "Plugin"
 msgstr ""
 
+msgid "Port"
+msgstr ""
+
 msgid "Prepare download"
+msgstr ""
+
+msgid "Prewarm"
+msgstr ""
+
+msgid "Prewarm completed."
+msgstr ""
+
+msgid "Prewarm failed"
+msgstr ""
+
+msgid "Prewarm list"
+msgstr ""
+
+msgid "Prewarm settings saved."
+msgstr ""
+
+msgid "Protocol"
 msgstr ""
 
 msgid "QType"
@@ -305,13 +545,22 @@ msgstr ""
 msgid "RCode"
 msgstr ""
 
-msgid "Reason"
+msgid "Read the port from config.yaml automatically"
+msgstr ""
+
+msgid "Redirect LAN DNS requests on port 53 (TCP and UDP, IPv4 and IPv6) to the local OxiDNS DNS listener."
 msgstr ""
 
 msgid "Refresh"
 msgstr ""
 
 msgid "Release asset"
+msgstr ""
+
+msgid "Reload and retry"
+msgstr ""
+
+msgid "Reload from device"
 msgstr ""
 
 msgid "Remove Core"
@@ -341,10 +590,25 @@ msgstr ""
 msgid "Restart"
 msgstr ""
 
+msgid "Restart OxiDNS after saving"
+msgstr ""
+
+msgid "Restart OxiDNS after the download"
+msgstr ""
+
 msgid "Restart service"
 msgstr ""
 
 msgid "Restore baseline"
+msgstr ""
+
+msgid "Restore defaults"
+msgstr ""
+
+msgid "Restore the default GeoIP and GeoSite URLs and storage directory?"
+msgstr ""
+
+msgid "Restoring defaults..."
 msgstr ""
 
 msgid "Restoring rules from the bundled baseline..."
@@ -368,10 +632,16 @@ msgstr ""
 msgid "Rule update available."
 msgstr ""
 
-msgid "Rules"
+msgid "Rules were written, but the firewall reload failed. The rules take effect on the next firewall reload or reboot."
+msgstr ""
+
+msgid "Run now"
 msgstr ""
 
 msgid "Running"
+msgstr ""
+
+msgid "SHA-256"
 msgstr ""
 
 msgid "Save"
@@ -389,10 +659,19 @@ msgstr ""
 msgid "Saving configuration..."
 msgstr ""
 
+msgid "Saving geo settings..."
+msgstr ""
+
+msgid "Saving prewarm settings..."
+msgstr ""
+
 msgid "Saving settings..."
 msgstr ""
 
 msgid "Select release archive"
+msgstr ""
+
+msgid "Server IP"
 msgstr ""
 
 msgid "Service"
@@ -405,9 +684,6 @@ msgid "Service action failed"
 msgstr ""
 
 msgid "Service status"
-msgstr ""
-
-msgid "Settings"
 msgstr ""
 
 msgid "Settings saved."
@@ -428,7 +704,16 @@ msgstr ""
 msgid "Start the OxiDNS service before opening WebUI."
 msgstr ""
 
+msgid "Start the geo data download now?"
+msgstr ""
+
+msgid "Starting download..."
+msgstr ""
+
 msgid "State"
+msgstr ""
+
+msgid "Status"
 msgstr ""
 
 msgid "Stop"
@@ -437,16 +722,109 @@ msgstr ""
 msgid "Stopped"
 msgstr ""
 
+msgid "Storage directory"
+msgstr ""
+
 msgid "Store the core binary and webui under /etc/oxidns/core, which is kept during firmware upgrades. Requires enough free space on the overlay partition."
+msgstr ""
+
+msgid "TCP"
 msgstr ""
 
 msgid "Target"
 msgstr ""
 
+msgid "Target ports"
+msgstr ""
+
+msgid "The LuCI backend is unavailable."
+msgstr ""
+
 msgid "The OxiDNS core is already up to date."
 msgstr ""
 
+msgid "The UCI command is not available."
+msgstr ""
+
+msgid "The configuration could not be written."
+msgstr ""
+
+msgid "The configuration file changed on the device since it was loaded."
+msgstr ""
+
+msgid "The configuration file changed on the device since it was loaded. Reloading discards local edits; reloading and retrying refreshes the base version and then saves the current editor content, overwriting the device changes."
+msgstr ""
+
+msgid "The configuration file is too large to read."
+msgstr ""
+
+msgid "The configuration file was not found or is a symlink."
+msgstr ""
+
+msgid "The configuration is not valid."
+msgstr ""
+
+msgid "The configuration path is invalid."
+msgstr ""
+
+msgid "The configured GeoIP URL, GeoSite URL, directory or SHA-256 checksum is invalid."
+msgstr ""
+
+msgid "The core bundle must be full, standard or minimal."
+msgstr ""
+
+msgid "The core repository must use the owner/repository format."
+msgstr ""
+
+msgid "The geo data directory could not be created."
+msgstr ""
+
+msgid "The hijack port must be a number between 1 and 65535."
+msgstr ""
+
+msgid "The init script is not available."
+msgstr ""
+
+msgid "The operation was cancelled in the browser. The device may still be working; check the status before retrying."
+msgstr ""
+
+msgid "The persistent storage setting is invalid."
+msgstr ""
+
+msgid "The port is read from config.yaml automatically."
+msgstr ""
+
+msgid "The port mode must be automatic or manual."
+msgstr ""
+
+msgid "The prewarm operation failed."
+msgstr ""
+
+msgid "The prewarm port or interval is invalid."
+msgstr ""
+
+msgid "The selected server must be an OxiDNS listener with cache enabled."
+msgstr ""
+
+msgid "The service action failed."
+msgstr ""
+
+msgid "The system log could not be read."
+msgstr ""
+
+msgid "The system log setting is invalid."
+msgstr ""
+
+msgid "The working directory is invalid."
+msgstr ""
+
 msgid "This overwrites every rule file in the working copy with the bundled baseline."
+msgstr ""
+
+msgid "UDP"
+msgstr ""
+
+msgid "UDP port %s, TCP port %s"
 msgstr ""
 
 msgid "Unable to load configuration."
@@ -461,7 +839,13 @@ msgstr ""
 msgid "Unpack core archive"
 msgstr ""
 
+msgid "Unsaved DNS hijack changes discarded."
+msgstr ""
+
 msgid "Update now"
+msgstr ""
+
+msgid "Update rules now"
 msgstr ""
 
 msgid "Update to %s"
@@ -480,6 +864,9 @@ msgid "Upload Core"
 msgstr ""
 
 msgid "Upload has been cancelled"
+msgstr ""
+
+msgid "Use a manual port"
 msgstr ""
 
 msgid "Validate"
@@ -512,6 +899,9 @@ msgstr ""
 msgid "Waiting for command output..."
 msgstr ""
 
+msgid "Warming up..."
+msgstr ""
+
 msgid "WebUI"
 msgstr ""
 
@@ -539,193 +929,25 @@ msgstr ""
 msgid "Yes"
 msgstr ""
 
-msgid "0 = run once at service start."
+msgid "You have local edits in the editor. Reloading from the device will discard them."
 msgstr ""
 
-msgid "127.0.0.1 (local listener)"
-msgstr ""
-
-msgid "192.168.1.1 (LAN address)"
-msgstr ""
-
-msgid "Enable prewarming"
-msgstr ""
-
-msgid "Failed to save prewarm settings"
-msgstr ""
-
-msgid "Interval (seconds)"
-msgstr ""
-
-msgid "Keep popular domains resolved so the first visit is fast. A and AAAA records are queried through the selected OxiDNS listener."
-msgstr ""
-
-msgid "One domain per line. Blank lines and lines starting with # are ignored. Changes apply on the next pass; use Run now to apply immediately."
-msgstr ""
-
-msgid "Port"
-msgstr ""
-
-msgid "Prewarm"
-msgstr ""
-
-msgid "Prewarm completed."
-msgstr ""
-
-msgid "Prewarm failed"
-msgstr ""
-
-msgid "Prewarm list"
-msgstr ""
-
-msgid "Prewarm settings saved."
-msgstr ""
-
-msgid "Protocol"
-msgstr ""
-
-msgid "Run now"
-msgstr ""
-
-msgid "Saving prewarm settings..."
-msgstr ""
-
-msgid "Server IP"
-msgstr ""
-
-msgid "TCP"
-msgstr ""
-
-msgid "The selected server must be an OxiDNS listener with cache enabled."
-msgstr ""
-
-msgid "UDP"
-msgstr ""
-
-msgid "Warming up..."
-msgstr ""
-
-msgid "%s, %s"
-msgstr ""
-
-msgid "Active firewall sections"
-msgstr ""
-
-msgid "Apply"
-msgstr ""
-
-msgid "Applying DNS hijack..."
-msgstr ""
-
-msgid "DNS Hijack"
-msgstr ""
-
-msgid "DNS hijack disabled."
-msgstr ""
-
-msgid "DNS hijack enabled. LAN port 53 requests are redirected to OxiDNS."
-msgstr ""
-
-msgid "Download / Update"
-msgstr ""
-
-msgid "Download and update the geoip.dat / geosite.dat used by OxiDNS. Defaults fetch the self-maintained NetForgeCN rules (Loyalsoldier full set plus extra ad tags); URLs and the storage directory can be customized and restored to defaults."
-msgstr ""
-
-msgid "Download finished."
-msgstr ""
-
-msgid "Download started."
-msgstr ""
-
-msgid "Enable DNS hijack"
-msgstr ""
-
-msgid "Enter a port number between 1 and 65535."
-msgstr ""
-
-msgid "Failed to apply DNS hijack"
-msgstr ""
-
-msgid "Failed to restore defaults"
-msgstr ""
-
-msgid "Failed to save geo settings"
-msgstr ""
-
-msgid "Failed to start the download"
-msgstr ""
-
-msgid "Geo Data"
-msgstr ""
-
-msgid "Geo settings restored to defaults."
-msgstr ""
-
-msgid "Geo settings saved."
-msgstr ""
-
-msgid "GeoIP download URL"
-msgstr ""
-
-msgid "GeoSite download URL"
-msgstr ""
-
-msgid "Install the OxiDNS core before DNS hijack can redirect to a local listener."
-msgstr ""
-
-msgid "Modified"
-msgstr ""
-
-msgid "No target port available (source: %s)."
-msgstr ""
-
-msgid "Read the port from config.yaml automatically"
-msgstr ""
-
-msgid "Redirect LAN DNS requests on port 53 (TCP and UDP, IPv4 and IPv6) to the local OxiDNS DNS listener."
-msgstr ""
-
-msgid "Restart OxiDNS after the download"
-msgstr ""
-
-msgid "Restore defaults"
-msgstr ""
-
-msgid "Restoring defaults..."
-msgstr ""
-
-msgid "Rules were written, but the firewall reload failed. The rules take effect on the next firewall reload or reboot."
-msgstr ""
-
-msgid "SHA-256"
-msgstr ""
-
-msgid "Saving geo settings..."
-msgstr ""
-
-msgid "Starting download..."
-msgstr ""
-
-msgid "Status"
-msgstr ""
-
-msgid "Storage directory"
-msgstr ""
-
-msgid "Target ports"
-msgstr ""
-
-msgid "UDP port %s, TCP port %s"
-msgstr ""
-
-msgid "Use a manual port"
+msgid "You have unsaved changes. Remote updates are paused until you Apply or Cancel."
 msgstr ""
 
 msgid "from config.yaml"
 msgstr ""
 
+msgid "full"
+msgstr ""
+
+msgid "logread"
+msgstr ""
+
 msgid "manual"
+msgstr ""
+
+msgid "minimal"
 msgstr ""
 
 msgid "not present"
@@ -733,3 +955,25 @@ msgstr ""
 
 msgid "port %s (TCP/UDP)"
 msgstr ""
+
+msgid "standard"
+msgstr ""
+
+msgid "Allow manually uploaded cores"
+msgstr ""
+
+msgid "Disabled by default. Enabling it permits installing an uploaded core archive; the upload permission is also controlled by the separate luci-app-oxidns-core-upload ACL group. Only enable it for trusted administrators."
+msgstr ""
+
+msgid "GeoIP SHA-256 pin"
+msgstr ""
+
+msgid "GeoSite SHA-256 pin"
+msgstr ""
+
+msgid "Optional 64-hex SHA-256 pins. When set, downloads are verified before they are published; a mismatch aborts the update and keeps the current data."
+msgstr ""
+
+msgid "The core upload setting is invalid."
+msgstr ""
+

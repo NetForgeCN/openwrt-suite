@@ -22,10 +22,23 @@ var callSettingsSave = rpc.declare({
 		'clear_download_proxy',
 		'clear_github_token',
 		'log_syslog',
-		'persist_core'
+		'persist_core',
+		'allow_core_upload'
 	],
 	expect: {}
 });
+
+var BACKEND_ERRORS = {
+	invalid_core_repository: _('The core repository must use the owner/repository format.'),
+	invalid_core_bundle: _('The core bundle must be full, standard or minimal.'),
+	invalid_config_path: _('The configuration path is invalid.'),
+	invalid_working_dir: _('The working directory is invalid.'),
+	invalid_log_syslog: _('The system log setting is invalid.'),
+	invalid_persist_core: _('The persistent storage setting is invalid.'),
+	invalid_allow_core_upload: _('The core upload setting is invalid.'),
+	settings_save_failed: _('Failed to save settings.'),
+	rpc_unavailable: _('The LuCI backend is unavailable.')
+};
 
 function field(id) {
 	var node = document.getElementById(id);
@@ -64,9 +77,10 @@ function option(value, label, selected) {
 function bundleSelect(id, value) {
 	var selected = value || 'full';
 	return E('select', { 'id': id, 'class': 'cbi-input-select' }, [
-		option('full', 'full', selected === 'full'),
-		option('standard', 'standard', selected === 'standard'),
-		option('minimal', 'minimal', selected === 'minimal')
+		/* 选项文案必须可翻译 */
+		option('full', _('full'), selected === 'full'),
+		option('standard', _('standard'), selected === 'standard'),
+		option('minimal', _('minimal'), selected === 'minimal')
 	]);
 }
 
@@ -123,6 +137,45 @@ function proxyDescription() {
 	return _('Format: http://host:port, https://host:port, socks5://host:port, or socks5h://host:port. Use http://user:pass@host:port when authentication is required.');
 }
 
+function backendMessage(err, fallback) {
+	var code = err && err.code;
+	if (code && BACKEND_ERRORS[code])
+		return BACKEND_ERRORS[code];
+	return fallback || _('Operation failed');
+}
+
+function focusModal() {
+	window.setTimeout(function() {
+		var modal = document.getElementById('modal') || document.querySelector('.modal');
+		if (!modal)
+			return;
+
+		var target = modal.querySelector('[autofocus], button:not([disabled]), input:not([disabled]), select, textarea');
+		if (target && typeof target.focus === 'function')
+			target.focus();
+	}, 0);
+}
+
+/* 已配置的代理可能含用户名密码：用 password 输入框 + 占位提示，不回显明文 */
+function proxyInput(configured) {
+	return textInput('oxidns-setting-download-proxy', '', configured,
+		configured
+			? _('A proxy is currently configured. Enter a new value to replace it.')
+			: _('Example: http://127.0.0.1:7890'));
+}
+
+function updateProxyInput(configured) {
+	var proxy = document.getElementById('oxidns-setting-download-proxy');
+	if (!proxy)
+		return;
+
+	proxy.type = configured ? 'password' : 'text';
+	proxy.value = '';
+	proxy.placeholder = configured
+		? _('A proxy is currently configured. Enter a new value to replace it.')
+		: _('Example: http://127.0.0.1:7890');
+}
+
 function saveSettings() {
 	var payload = {
 		core_repository: field('oxidns-setting-core-repository') || 'svenshi/oxidns',
@@ -134,14 +187,16 @@ function saveSettings() {
 		clear_download_proxy: checked('oxidns-setting-clear-download-proxy'),
 		clear_github_token: checked('oxidns-setting-clear-github-token'),
 		log_syslog: checked('oxidns-setting-log-syslog') ? '1' : '0',
-		persist_core: checked('oxidns-setting-persist-core') ? '1' : '0'
+		persist_core: checked('oxidns-setting-persist-core') ? '1' : '0',
+		allow_core_upload: checked('oxidns-setting-allow-core-upload') ? '1' : '0'
 	};
 
 	ui.showModal(_('OxiDNS'), [
 		E('p', {}, _('Saving settings...'))
 	]);
+	focusModal();
 
-	return L.resolveDefault(callSettingsSave(
+	return Promise.resolve(callSettingsSave(
 		payload.core_repository,
 		payload.core_bundle,
 		payload.config_path,
@@ -151,11 +206,12 @@ function saveSettings() {
 		payload.clear_download_proxy,
 		payload.clear_github_token,
 		payload.log_syslog,
-		payload.persist_core
-	), null).then(function(result) {
+		payload.persist_core,
+		payload.allow_core_upload
+	)).then(function(result) {
 		ui.hideModal();
 		if (!result || result.ok === false) {
-			setStatus((result && (result.message || result.error)) || _('Failed to save settings'), true);
+			setStatus(backendMessage(result, _('Failed to save settings')), true);
 			return;
 		}
 		setStatus(_('Settings saved.'), false);
@@ -165,9 +221,11 @@ function saveSettings() {
 		var persistCore = document.getElementById('oxidns-setting-persist-core');
 		if (persistCore)
 			persistCore.checked = result.persist_core !== false;
-		var proxy = document.getElementById('oxidns-setting-download-proxy');
-		if (proxy)
-			proxy.value = result.download_proxy || '';
+		var allowUpload = document.getElementById('oxidns-setting-allow-core-upload');
+		if (allowUpload)
+			allowUpload.checked = result.allow_core_upload === true;
+
+		updateProxyInput(!!result.download_proxy_set);
 		var token = document.getElementById('oxidns-setting-github-token');
 		if (token)
 			token.value = '';
@@ -185,16 +243,21 @@ function saveSettings() {
 			result.github_token_set ? _('A token is currently configured. Enter a new value to replace it.') : _('Optional. The token is never shown after saving.'));
 	}).catch(function(err) {
 		ui.hideModal();
-		setStatus(err.message || String(err), true);
+		setStatus(backendMessage(err, _('Failed to save settings')), true);
 	});
 }
 
 return view.extend({
 	load: function() {
-		return L.resolveDefault(callSettingsRead(), {});
+		return Promise.resolve(callSettingsRead()).catch(function(err) {
+			console.warn('oxidns settings load:', err);
+			return { ok: false, code: 'rpc_unavailable' };
+		});
 	},
 
 	render: function(settings) {
+		settings = settings || {};
+
 		return E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, _('OxiDNS Settings')),
 			E('div', { 'class': 'cbi-map-descr' },
@@ -214,6 +277,15 @@ return view.extend({
 						E('div', { 'class': 'cbi-value-description' },
 							_('Store the core binary and webui under /etc/oxidns/core, which is kept during firmware upgrades. Requires enough free space on the overlay partition.'))
 					])),
+					row(_('Allow manually uploaded cores'), E('div', {}, [
+						E('input', {
+							'id': 'oxidns-setting-allow-core-upload',
+							'type': 'checkbox',
+							'checked': settings.allow_core_upload === true ? 'checked' : null
+						}),
+						E('div', { 'class': 'cbi-value-description' },
+							_('Disabled by default. Enabling it permits installing an uploaded core archive; the upload permission is also controlled by the separate luci-app-oxidns-core-upload ACL group. Only enable it for trusted administrators.'))
+					])),
 					row(_('Write to system log'), E('div', {}, [
 						E('input', {
 							'id': 'oxidns-setting-log-syslog',
@@ -224,14 +296,15 @@ return view.extend({
 							_('When disabled, the LuCI log page no longer shows new runtime logs. Restart OxiDNS after changing this setting.'))
 					])),
 					row(_('Download proxy'), secretSettingInput(
-						textInput('oxidns-setting-download-proxy', settings.download_proxy || '', false, _('Example: http://127.0.0.1:7890')),
+						proxyInput(!!settings.download_proxy_set),
 						'oxidns-setting-download-proxy-description',
 						proxyDescription(),
 						'oxidns-setting-clear-download-proxy',
 						_('Clear configured download proxy'),
 						settings.download_proxy_set)),
 					row(_('GitHub token'), secretSettingInput(
-						textInput('oxidns-setting-github-token', '', true),
+						textInput('oxidns-setting-github-token', '', true,
+							settings.github_token_set ? _('A token is currently configured. Enter a new value to replace it.') : null),
 						'oxidns-setting-github-token-description',
 						settings.github_token_set ? _('A token is currently configured. Enter a new value to replace it.') : _('Optional. The token is never shown after saving.'),
 						'oxidns-setting-clear-github-token',
@@ -240,6 +313,7 @@ return view.extend({
 				]),
 				E('div', { 'class': 'cbi-button-row' }, [
 					E('button', {
+						'type': 'button',
 						'class': 'btn cbi-button cbi-button-positive',
 						'click': function(ev) {
 							ev.preventDefault();
@@ -247,7 +321,11 @@ return view.extend({
 						}
 					}, _('Save Settings'))
 				]),
-				E('div', { 'id': 'oxidns-settings-status', 'style': 'margin-top: 1em;' })
+				E('div', {
+					'id': 'oxidns-settings-status',
+					'aria-live': 'polite',
+					'style': 'margin-top: 1em;'
+				})
 			])
 		]);
 	},

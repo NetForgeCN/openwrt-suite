@@ -10,6 +10,16 @@ config settings 'main'
 	# API 密码：配置里写 ${OXIDNS_API_PASS} 时，两处脚本从这里取值注入环境。
 	# 留空 = 不注入，oxidns 会因变量未定义而启动/检查失败（fail closed）。
 	option api_pass ''
+	# S2: core_upload_install is disabled by default. Installing an arbitrary
+	# uploaded executable as root is only permitted after an administrator
+	# explicitly sets this to '1' and grants the separate ACL group
+	# luci-app-oxidns-core-upload. Restart remains the only intended execution
+	# path; uploaded binaries are never executed during validation/reporting.
+	option allow_core_upload '0'
+	# S4: optional SHA256 pins for geoip.dat / geosite.dat downloads.
+	# Empty means "no pin"; a non-empty value must be a 64-hex digest.
+	option geoip_sha256 ''
+	option geosite_sha256 ''
 
 # Section ID must be 'prewarm', not 'main': rpcd/init.d read these via
 # `uci get oxidns.prewarm.*`. Reusing the 'main' ID collides with the

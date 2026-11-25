@@ -79,8 +79,44 @@ GITHUB_TOKEN=""
 DOWNLOAD_ERROR=""
 DOWNLOAD_RC=""
 
+# Central limits / constants (quality: avoid magic numbers scattered in code).
+MAX_JSON_FILE_BYTES=262144		# cap for file-backed JSON string values
+PROGRESS_MAX_BYTES=262144		# rotate progress logs past this size
+PROGRESS_KEEP=1					# rotated progress logs to keep
+DOWNLOAD_MAX_SECONDS=600		# hard timeout for a single download attempt
+DOWNLOAD_CONNECT_SECONDS=20	# connection timeout (curl)
+DOWNLOAD_MAX_BYTES=268435456	# 256 MiB upper bound for downloaded artifacts
+DOWNLOAD_RETRIES=3				# attempts per download (with backoff)
+BUILD_INFO_CACHE_TTL=60			# seconds to reuse build-info output
+UCI_LOCK_DIR="$CORE_PROGRESS_DIR/uci-operation.lock"
+GEO_LOCK_DIR="$CORE_PROGRESS_DIR/geo-operation.lock"
+GEO_LOG_LOCK_DIR="$CORE_PROGRESS_DIR/geo-log.lock"
+ALLOW_CORE_UPLOAD_DEFAULT=0		# S2: uploaded cores are opt-in (UCI allow_core_upload)
+
+# C3: fail with a structured JSON error instead of an empty ubus reply when a
+# required command is missing.
+require_commands() {
+	for REQUIRED_CMD in "$@"; do
+		if ! command -v "$REQUIRED_CMD" >/dev/null 2>&1; then
+			json_error "dependency_missing" "required command is not installed: $REQUIRED_CMD"
+			return 1
+		fi
+	done
+	return 0
+}
+
+# S7: escape every control character (0x00-0x1f) as \u00XX so file contents,
+# progress logs and external command output can never break the JSON envelope.
 json_escape_stream() {
-	awk 'BEGIN { ORS = "" }
+	awk 'BEGIN {
+		ORS = ""
+		for (i = 1; i <= 31; i++)
+			ctrl[sprintf("%c", i)] = sprintf("\\u%04x", i);
+		ctrl["\t"] = "\\t";
+		ctrl["\r"] = "\\r";
+		ctrl["\b"] = "\\b";
+		ctrl["\f"] = "\\f";
+	}
 	{
 		if (NR > 1)
 			printf "\\n";
@@ -90,10 +126,8 @@ json_escape_stream() {
 				printf "\\\\";
 			else if (c == "\"")
 				printf "\\\"";
-			else if (c == "\t")
-				printf "\\t";
-			else if (c == "\r")
-				printf "\\r";
+			else if (c in ctrl)
+				printf "%s", ctrl[c];
 			else
 				printf "%s", c;
 		}
@@ -106,10 +140,17 @@ json_string() {
 	printf '"'
 }
 
+# S7: never emit unbounded or symlinked file content into a JSON response.
 json_file_string() {
 	printf '"'
-	if [ -r "$1" ]; then
-		json_escape_stream < "$1"
+	if [ -n "$1" ] && [ -f "$1" ] && [ ! -L "$1" ]; then
+		FILE_BYTES="$(file_size_bytes "$1" 2>/dev/null || printf '0')"
+		case "$FILE_BYTES" in
+			''|*[!0-9]*) FILE_BYTES=0 ;;
+		esac
+		if [ "$FILE_BYTES" -le "$MAX_JSON_FILE_BYTES" ]; then
+			json_escape_stream < "$1"
+		fi
 	fi
 	printf '"'
 }
@@ -155,7 +196,10 @@ json_detailed_error() {
 	printf '}\n'
 }
 
-sanitize_progress_text() {
+# S5: single redaction implementation used by progress logs, error details and
+# any other text that can originate from a tool invocation. The token is never
+# placed on a command line (see write_curl_auth_config).
+redact_text() {
 	awk -v token="$GITHUB_TOKEN" -v proxy="$DOWNLOAD_PROXY" '
 		function redact(value, secret,    out, pos) {
 			if (secret == "")
@@ -175,6 +219,32 @@ sanitize_progress_text() {
 	'
 }
 
+sanitize_progress_text() {
+	redact_text
+}
+
+# S5: write a curl config file (mode 600) carrying the bearer token so the
+# secret is never visible in the process list. Caller must delete the file.
+write_curl_auth_config() {
+	CURL_CONFIG_FILE="$(mktemp "$TMP_ROOT/oxidns-curl.XXXXXX")" || return 1
+	chmod 600 "$CURL_CONFIG_FILE" 2>/dev/null || true
+	CONFIG_PROXY="$(printf '%s' "$DOWNLOAD_PROXY" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+	CONFIG_TOKEN="$(printf '%s' "$GITHUB_TOKEN" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+	{
+		if [ -n "$CONFIG_PROXY" ]; then
+			printf 'proxy = "%s"\n' "$CONFIG_PROXY"
+		fi
+		printf 'user-agent = "luci-app-oxidns"\n'
+		if [ -n "$CONFIG_TOKEN" ]; then
+			printf 'header = "Authorization: Bearer %s"\n' "$CONFIG_TOKEN"
+		fi
+	} > "$CURL_CONFIG_FILE" || {
+		rm -f "$CURL_CONFIG_FILE"
+		return 1
+	}
+	printf '%s' "$CURL_CONFIG_FILE"
+}
+
 prepare_core_progress_dir() {
 	if [ -L "$CORE_PROGRESS_DIR" ] || { [ -e "$CORE_PROGRESS_DIR" ] && [ ! -d "$CORE_PROGRESS_DIR" ]; }; then
 		return 1
@@ -189,20 +259,45 @@ prepare_core_progress_dir() {
 	return 0
 }
 
+# P2: geo and core operations use the same helpers but distinct log files.
+# PROGRESS_LOG_FILE is set by the geo methods; never follow a symlinked log.
+progress_log_path() {
+	printf '%s' "${PROGRESS_LOG_FILE:-$CORE_PROGRESS_LOG}"
+}
+
 prepare_core_progress_file() {
 	RESET_FILE="${1:-0}"
+	ACTIVE_PROGRESS_LOG="$(progress_log_path)"
 	prepare_core_progress_dir || return 1
-	if [ -L "$CORE_PROGRESS_LOG" ] || { [ -e "$CORE_PROGRESS_LOG" ] && [ ! -f "$CORE_PROGRESS_LOG" ]; }; then
-		rm -f "$CORE_PROGRESS_LOG" 2>/dev/null || return 1
+	if [ -L "$ACTIVE_PROGRESS_LOG" ] || { [ -e "$ACTIVE_PROGRESS_LOG" ] && [ ! -f "$ACTIVE_PROGRESS_LOG" ]; }; then
+		rm -f "$ACTIVE_PROGRESS_LOG" 2>/dev/null || return 1
 	fi
-	if [ "$RESET_FILE" = "1" ] || [ ! -e "$CORE_PROGRESS_LOG" ]; then
-		: > "$CORE_PROGRESS_LOG" 2>/dev/null || return 1
+	if [ "$RESET_FILE" = "1" ] || [ ! -e "$ACTIVE_PROGRESS_LOG" ]; then
+		: > "$ACTIVE_PROGRESS_LOG" 2>/dev/null || return 1
 	fi
-	[ ! -L "$CORE_PROGRESS_LOG" ] || return 1
+	[ ! -L "$ACTIVE_PROGRESS_LOG" ] || return 1
 	if command -v chown >/dev/null 2>&1; then
-		chown 0:0 "$CORE_PROGRESS_LOG" 2>/dev/null || true
+		chown 0:0 "$ACTIVE_PROGRESS_LOG" 2>/dev/null || true
 	fi
-	chmod 600 "$CORE_PROGRESS_LOG" 2>/dev/null || true
+	chmod 600 "$ACTIVE_PROGRESS_LOG" 2>/dev/null || true
+	return 0
+}
+
+# P2: cap and rotate progress logs instead of letting them grow forever.
+rotate_progress_file_if_needed() {
+	ROTATE_LOG="$(progress_log_path)"
+	[ -f "$ROTATE_LOG" ] && [ ! -L "$ROTATE_LOG" ] || return 0
+	ROTATE_SIZE="$(file_size_bytes "$ROTATE_LOG" 2>/dev/null || printf '0')"
+	case "$ROTATE_SIZE" in
+		''|*[!0-9]*) return 0 ;;
+	esac
+	if [ "$ROTATE_SIZE" -gt "$PROGRESS_MAX_BYTES" ]; then
+		KEEP_LOG="$ROTATE_LOG.$PROGRESS_KEEP"
+		rm -f "$KEEP_LOG" 2>/dev/null || true
+		mv "$ROTATE_LOG" "$KEEP_LOG" 2>/dev/null || true
+		: > "$ROTATE_LOG" 2>/dev/null || true
+		chmod 600 "$ROTATE_LOG" 2>/dev/null || true
+	fi
 	return 0
 }
 
@@ -216,7 +311,9 @@ core_progress_log() {
 	PROGRESS_TEXT="$(printf '%s' "$PROGRESS_MESSAGE" | sanitize_progress_text)"
 	[ -n "$PROGRESS_TEXT" ] || PROGRESS_TEXT="-"
 	prepare_core_progress_file 0 || return 0
-	printf '[%s] %s %s\n' "$(progress_timestamp)" "$PROGRESS_KIND" "$PROGRESS_TEXT" >> "$CORE_PROGRESS_LOG" 2>/dev/null || true
+	rotate_progress_file_if_needed
+	ACTIVE_PROGRESS_LOG="$(progress_log_path)"
+	printf '[%s] %s %s\n' "$(progress_timestamp)" "$PROGRESS_KIND" "$PROGRESS_TEXT" >> "$ACTIVE_PROGRESS_LOG" 2>/dev/null || true
 }
 
 core_progress_command() {
@@ -238,14 +335,50 @@ pid_is_running() {
 	kill -0 "$PID_VALUE" 2>/dev/null
 }
 
-clear_stale_core_lock() {
-	[ -d "$CORE_LOCK_DIR" ] && [ ! -L "$CORE_LOCK_DIR" ] || return 1
-	LOCK_PID="$(sed -n '1p' "$CORE_LOCK_DIR/pid" 2>/dev/null || true)"
+# R3/R4: shared atomic directory locks. A lock only exists once mkdir
+# succeeds, and its pid file is verified before a stale lock is reused.
+clear_stale_dir_lock() {
+	LOCK_DIR_PATH="$1"
+	[ -d "$LOCK_DIR_PATH" ] && [ ! -L "$LOCK_DIR_PATH" ] || return 1
+	LOCK_PID="$(sed -n '1p' "$LOCK_DIR_PATH/pid" 2>/dev/null || true)"
 	if pid_is_running "$LOCK_PID"; then
 		return 1
 	fi
-	rm -f "$CORE_LOCK_DIR/pid" 2>/dev/null || return 1
-	rmdir "$CORE_LOCK_DIR" 2>/dev/null || return 1
+	rm -f "$LOCK_DIR_PATH/pid" 2>/dev/null || return 1
+	rmdir "$LOCK_DIR_PATH" 2>/dev/null || return 1
+	return 0
+}
+
+acquire_dir_lock() {
+	LOCK_DIR_PATH="$1"
+	if mkdir "$LOCK_DIR_PATH" 2>/dev/null || \
+		{ clear_stale_dir_lock "$LOCK_DIR_PATH" && mkdir "$LOCK_DIR_PATH" 2>/dev/null; }; then
+		# Write the pid and verify it (set -eu must not hide a failed write).
+		if printf '%s\n' "$$" > "$LOCK_DIR_PATH/pid" 2>/dev/null &&
+			[ "$(sed -n '1p' "$LOCK_DIR_PATH/pid" 2>/dev/null || true)" = "$$" ]; then
+			chmod 700 "$LOCK_DIR_PATH" 2>/dev/null || true
+			return 0
+		fi
+		rm -f "$LOCK_DIR_PATH/pid" 2>/dev/null || true
+		rmdir "$LOCK_DIR_PATH" 2>/dev/null || true
+		return 1
+	fi
+	return 1
+}
+
+release_dir_lock() {
+	LOCK_DIR_PATH="$1"
+	EXPECTED_PID="${2:-$$}"
+	LOCK_PID="$(sed -n '1p' "$LOCK_DIR_PATH/pid" 2>/dev/null || true)"
+	# Never remove a lock that belongs to somebody else.
+	[ "$LOCK_PID" = "$EXPECTED_PID" ] || return 0
+	rm -f "$LOCK_DIR_PATH/pid" 2>/dev/null || true
+	rmdir "$LOCK_DIR_PATH" 2>/dev/null || true
+	return 0
+}
+
+clear_stale_core_lock() {
+	clear_stale_dir_lock "$CORE_LOCK_DIR"
 }
 
 acquire_core_lock() {
@@ -253,10 +386,8 @@ acquire_core_lock() {
 		json_error "core_lock_failed" "failed to prepare core operation lock directory"
 		return 1
 	}
-	if mkdir "$CORE_LOCK_DIR" 2>/dev/null || { clear_stale_core_lock && mkdir "$CORE_LOCK_DIR" 2>/dev/null; }; then
+	if acquire_dir_lock "$CORE_LOCK_DIR"; then
 		CORE_LOCK_HELD=1
-		printf '%s\n' "$$" > "$CORE_LOCK_DIR/pid" 2>/dev/null || true
-		chmod 700 "$CORE_LOCK_DIR" 2>/dev/null || true
 		return 0
 	fi
 	core_progress_log "error" "another core operation is already running"
@@ -266,18 +397,54 @@ acquire_core_lock() {
 
 release_core_lock() {
 	if [ "${CORE_LOCK_HELD:-0}" = "1" ]; then
-		rm -f "$CORE_LOCK_DIR/pid" 2>/dev/null || true
-		rmdir "$CORE_LOCK_DIR" 2>/dev/null || true
+		release_dir_lock "$CORE_LOCK_DIR"
 		CORE_LOCK_HELD=0
 	fi
+}
+
+# R6: one transaction wrapper for every UCI write path. The callback performs
+# only `uci set/delete` calls; commit/revert and the lock happen here.
+uci_transaction() {
+	TRANSACTION_PACKAGES="$1"
+	TRANSACTION_CALLBACK="$2"
+	shift 2
+	prepare_core_progress_dir || {
+		json_error "uci_lock_failed" "cannot prepare the UCI operation lock directory"
+		return 1
+	}
+	if ! acquire_dir_lock "$UCI_LOCK_DIR"; then
+		json_error "uci_busy" "another UCI configuration write is in progress"
+		return 1
+	fi
+	UCI_TX_RC=0
+	if ! "$TRANSACTION_CALLBACK" "$@"; then
+		UCI_TX_RC=1
+	else
+		for TX_PACKAGE in $TRANSACTION_PACKAGES; do
+			if ! uci -q commit "$TX_PACKAGE"; then
+				UCI_TX_RC=1
+				break
+			fi
+		done
+	fi
+	if [ "$UCI_TX_RC" -ne 0 ]; then
+		for TX_PACKAGE in $TRANSACTION_PACKAGES; do
+			uci -q revert "$TX_PACKAGE" >/dev/null 2>&1 || true
+		done
+	fi
+	release_dir_lock "$UCI_LOCK_DIR"
+	return "$UCI_TX_RC"
 }
 
 run_with_core_lock() {
 	acquire_core_lock || return 1
 	trap 'release_core_lock' EXIT
 	trap 'release_core_lock; exit 1' HUP INT TERM
-	"$@"
-	CORE_ACTION_RC="$?"
+	if "$@"; then
+		CORE_ACTION_RC=0
+	else
+		CORE_ACTION_RC="$?"
+	fi
 	release_core_lock
 	trap - EXIT HUP INT TERM
 	return "$CORE_ACTION_RC"
@@ -292,20 +459,21 @@ file_size_bytes() {
 }
 
 emit_core_progress() {
+	ACTIVE_PROGRESS_LOG="$(progress_log_path)"
 	if ! prepare_core_progress_file 0; then
 		printf '{"ok":true,"path":'
-		json_string "$CORE_PROGRESS_LOG"
+		json_string "$ACTIVE_PROGRESS_LOG"
 		printf ',"mtime":"","size":"0","text":""}\n'
 		return 0
 	fi
 	printf '{"ok":true,"path":'
-	json_string "$CORE_PROGRESS_LOG"
+	json_string "$ACTIVE_PROGRESS_LOG"
 	printf ',"mtime":'
-	json_string "$(stat_mtime "$CORE_PROGRESS_LOG")"
+	json_string "$(stat_mtime "$ACTIVE_PROGRESS_LOG")"
 	printf ',"size":'
-	json_string "$(file_size_bytes "$CORE_PROGRESS_LOG")"
+	json_string "$(file_size_bytes "$ACTIVE_PROGRESS_LOG")"
 	printf ',"text":'
-	json_file_string "$CORE_PROGRESS_LOG"
+	json_file_string "$ACTIVE_PROGRESS_LOG"
 	printf '}\n'
 }
 
@@ -319,44 +487,18 @@ uci_get() {
 	fi
 }
 
-# One-time self-heal for the shipped bad config: fde42f8 wrote the prewarm
-# section as `config prewarm 'main'`, colliding with `config settings 'main'`.
-# UCI keeps one section per ID, so `uci get oxidns.main.api_pass` returned the
-# prewarm section (no api_pass) and ${OXIDNS_API_PASS} expansion failed with
-# "undefined environment variable". This also means `uci get oxidns.prewarm.*`
-# never resolved, so prewarm settings saved in LuCI silently fell back to
-# defaults until this fix.
-#
-# Two cases must be handled (prewarm_save creates a proper 'prewarm' section
-# when it can't see one, so a persisted config may contain BOTH sections):
-#   1) only `prewarm 'main'`  -> rename it, keeping its options
-#   2) `prewarm 'main'` AND `prewarm 'prewarm'` -> drop the whole bad block,
-#      keeping the user-saved 'prewarm' section (renaming would duplicate IDs)
-# Do NOT use `uci rename` + commit: on a colliding file UCI's parser drops the
-# shadowed settings options and a commit would erase api_pass. Idempotent.
-heal_prewarm_section_id() {
-	[ -r "$UCI_CONFIG_FILE" ] || return 0
-	grep -q "^config prewarm 'main'" "$UCI_CONFIG_FILE" 2>/dev/null || return 0
-
-	if grep -q "^config prewarm 'prewarm'" "$UCI_CONFIG_FILE" 2>/dev/null; then
-		local tmp="${UCI_CONFIG_FILE}.oxidns-heal.$$"
-		if awk -v bad="config prewarm 'main'" '
-			$0 == bad { drop = 1; next }
-			/^config / { drop = 0 }
-			!drop { print }
-		' "$UCI_CONFIG_FILE" > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
-			cat "$tmp" > "$UCI_CONFIG_FILE" 2>/dev/null || true
-		fi
-		rm -f "$tmp" 2>/dev/null || true
-	else
-		sed -i "s/^config prewarm 'main'/config prewarm 'prewarm'/" \
-			"$UCI_CONFIG_FILE" 2>/dev/null || true
-	fi
-	return 0
+uci_delete_if_present() {
+	UCI_DELETE_KEY="$1"
+	uci -q get "$UCI_DELETE_KEY" >/dev/null 2>&1 || return 0
+	uci -q delete "$UCI_DELETE_KEY" >/dev/null 2>&1
 }
 
+# S3: rpcd methods are read-only with respect to /etc/config/oxidns. The
+# one-time legacy section-ID migration lives in /etc/init.d/oxidns and runs
+# only at service start under a lock; calling it from a read path could rewrite
+# the config merely because the UI polled status.
+
 load_settings() {
-	heal_prewarm_section_id
 	SERVICE_NAME="$DEFAULT_SERVICE_NAME"
 	CONFIG_PATH="$(uci_get config_path "$DEFAULT_CONFIG_PATH")"
 	WORKING_DIR="$(uci_get working_dir "$DEFAULT_WORKING_DIR")"
@@ -378,10 +520,19 @@ load_settings() {
 	# from config.yaml; manual uses the hijack_port value set in the page.
 	HIJACK_PORT_MODE="$(uci_get hijack_port_mode auto)"
 	HIJACK_PORT="$(uci_get hijack_port '')"
+	# S2: uploading and installing an arbitrary core is opt-in. Default off.
+	ALLOW_CORE_UPLOAD="$(uci_get allow_core_upload "$ALLOW_CORE_UPLOAD_DEFAULT")"
+	case "$ALLOW_CORE_UPLOAD" in
+		1|true|yes|on) ALLOW_CORE_UPLOAD=1 ;;
+		*) ALLOW_CORE_UPLOAD=0 ;;
+	esac
 	# Geo data: empty means use DEFAULT_GEOIP_URL / DEFAULT_GEOSITE_URL.
 	GEOIP_URL="$(uci_get geoip_url '')"
 	GEOSITE_URL="$(uci_get geosite_url '')"
 	GEO_DIR="$(uci_get geo_dir '')"
+	# S4: optional SHA256 pins for downloaded geo data (empty = no pin).
+	GEOIP_SHA256="$(uci_get geoip_sha256 '')"
+	GEOSITE_SHA256="$(uci_get geosite_sha256 '')"
 	# [API password] init script only injects this variable into the procd
 	# service process. rpcd is a separate daemon, so its children (notably
 	# `oxidns check` spawned by validate_config_file / core install) do NOT
@@ -593,9 +744,24 @@ is_wildcard_host() {
 	return 1
 }
 
+# P1: build-info is expensive; cache it briefly. The cache key includes the
+# binary mtime so a newly installed core is never reported with stale data.
 build_info_json() {
+	CACHE_FILE="$CORE_PROGRESS_DIR/build-info.cache"
 	if [ -x "$OXIDNS_BIN" ]; then
-		"$OXIDNS_BIN" build-info 2>/dev/null || true
+		if [ -f "$CACHE_FILE" ] && [ ! -L "$CACHE_FILE" ]; then
+			CACHE_AGE="$(($(date +%s) - $(stat_mtime "$CACHE_FILE" 2>/dev/null || printf '0')))"
+			if [ "$CACHE_AGE" -ge 0 ] && [ "$CACHE_AGE" -lt "$BUILD_INFO_CACHE_TTL" ]; then
+				cat "$CACHE_FILE" 2>/dev/null || true
+				return 0
+			fi
+		fi
+		BUILD_OUTPUT="$("$OXIDNS_BIN" build-info 2>/dev/null || true)"
+		if [ -n "$BUILD_OUTPUT" ] && prepare_core_progress_dir; then
+			printf '%s' "$BUILD_OUTPUT" > "$CACHE_FILE" 2>/dev/null || true
+			chmod 600 "$CACHE_FILE" 2>/dev/null || true
+		fi
+		printf '%s' "$BUILD_OUTPUT"
 	fi
 }
 
@@ -605,38 +771,65 @@ json_value_from_string() {
 	if command -v jsonfilter >/dev/null 2>&1; then
 		printf '%s' "$JSON" | jsonfilter -e "@.$KEY" 2>/dev/null || true
 	else
-		printf '%s' "$JSON" | sed -n "s/.*\"$KEY\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | sed -n '1p'
+		VALUE="$(printf '%s' "$JSON" | sed -n "s/.*\"$KEY\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | sed -n '1p')"
+		printf '%s' "$VALUE" | decode_json_escapes
 	fi
 }
 
+# C4: use jsonfilter when available; otherwise a formatting-tolerant awk
+# fallback joins the file into one stream before matching each target object.
 detect_rust_target_from_file() {
 	TARGET_FILE="$1"
 	ARCH="$2"
 	[ -r "$TARGET_FILE" ] || return 1
+	if command -v jsonfilter >/dev/null 2>&1; then
+		TARGET_JSON="$(jsonfilter -i "$TARGET_FILE" -e '@' 2>/dev/null || true)"
+		if [ -n "$TARGET_JSON" ]; then
+			printf '%s' "$TARGET_JSON" | awk -v arch="$ARCH" '
+				{
+					gsub(/[\r\n]/, " ");
+					stream = stream $0 " ";
+				}
+				END {
+					n = split(stream, parts, /\{[^{}]*\}/);
+					for (i = 1; i <= n; i++) {
+						obj = parts[i];
+						if (obj !~ /"rust_target"/) continue;
+						if (index(obj, "\"" arch "\"") == 0) continue;
+						if (match(obj, /"rust_target"[[:space:]]*:[[:space:]]*"[^"]+"/)) {
+							value = substr(obj, RSTART, RLENGTH);
+							gsub(/^.*"/, "", value);
+							gsub(/".*$/, "", value);
+							print value;
+							exit 0;
+						}
+					}
+					exit 1;
+				}
+			' && return 0
+		fi
+	fi
 	awk -v arch="$ARCH" '
-		function field_value(line,    value) {
-			value = line;
-			sub(/^.*:[[:space:]]*"/, "", value);
-			sub(/".*$/, "", value);
-			return value;
+		{
+			gsub(/[\r\n]/, " ");
+			stream = stream $0 " ";
 		}
-		/"rust_target"[[:space:]]*:/ {
-			target = field_value($0);
-			next;
-		}
-		target != "" && (/"uname_arches"[[:space:]]*:/ || /"aliases"[[:space:]]*:/) {
-			line = $0;
-			gsub(/[\[\],"]/, " ", line);
-			n = split(line, parts, /[[:space:]]+/);
+		END {
+			n = split(stream, parts, /\{[^{}]*\}/);
 			for (i = 1; i <= n; i++) {
-				if (parts[i] == arch) {
-					print target;
-					found = 1;
-					exit;
+				obj = parts[i];
+				if (obj !~ /"rust_target"/) continue;
+				if (index(obj, "\"" arch "\"") == 0) continue;
+				if (match(obj, /"rust_target"[[:space:]]*:[[:space:]]*"[^"]+"/)) {
+					value = substr(obj, RSTART, RLENGTH);
+					gsub(/^.*"/, "", value);
+					gsub(/".*$/, "", value);
+					print value;
+					exit 0;
 				}
 			}
+			exit 1;
 		}
-		END { exit found ? 0 : 1 }
 	' "$TARGET_FILE"
 }
 
@@ -661,6 +854,15 @@ detect_rust_target() {
 		armv6l|armv6)
 			printf 'arm-unknown-linux-musleabihf'
 			;;
+		armv5*|armv4*)
+			printf 'arm-unknown-linux-musleabi'
+			;;
+		mips)
+			printf 'mips-unknown-linux-musl'
+			;;
+		mipsel|mipsle)
+			printf 'mipsel-unknown-linux-musl'
+			;;
 		*)
 			return 1
 			;;
@@ -669,7 +871,8 @@ detect_rust_target() {
 
 emit_status() {
 	load_settings
-	ensure_core_links
+	# S9: status must be side-effect free. Broken runtime links are repaired
+	# only by the service start path (init.d restore_core_links) and installs.
 	ENABLED=0
 	RUNNING=0
 	CORE_INSTALLED=0
@@ -744,9 +947,17 @@ emit_status() {
 	printf ',"webui_saved":'
 	if [ -d "$PERSIST_WEBUI" ]; then json_bool 1; else json_bool 0; fi
 	printf '}'
+	# S7: rebuild the build object from parsed values through json_string;
+	# never inject the raw output of an external binary into the JSON stream.
 	printf ',"build":'
 	if printf '%s' "$BUILD_JSON" | grep -q '^{'; then
-		printf '%s' "$BUILD_JSON"
+		printf '{"version":'
+		json_string "$CORE_VERSION"
+		printf ',"bundle":'
+		json_string "$CORE_BUNDLE_VALUE"
+		printf ',"target":'
+		json_string "$(json_value_from_string target "$BUILD_JSON")"
+		printf '}'
 	else
 		printf 'null'
 	fi
@@ -830,7 +1041,10 @@ run_service() {
 		json_error "service_unavailable" "init script not found: $INIT"
 		return 1
 	fi
-	SERVICE_OUT="$(mktemp "$TMP_ROOT/luci-oxidns-service.XXXXXX")"
+	SERVICE_OUT="$(mktemp "$TMP_ROOT/luci-oxidns-service.XXXXXX")" || {
+		json_error "mktemp_unavailable" "cannot create a temporary service output file"
+		return 1
+	}
 	if run_init_action "$INIT" "$ACTION" >"$SERVICE_OUT" 2>&1; then
 		rm -f "$SERVICE_OUT"
 		syslog_service_event "service $ACTION succeeded"
@@ -848,15 +1062,20 @@ run_service() {
 }
 
 stat_mtime() {
-	stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || printf ''
+	stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || printf '0'
 }
 
 emit_config_read() {
 	load_settings
-	if [ ! -r "$CONFIG_PATH" ]; then
-		printf '{"ok":false,"code":"config_not_found","message":"configuration file not found","path":'
+	if [ ! -r "$CONFIG_PATH" ] || [ -L "$CONFIG_PATH" ]; then
+		printf '{"ok":false,"code":"config_not_found","message":"configuration file not found or is a symlink","path":'
 		json_string "$CONFIG_PATH"
 		printf '}\n'
+		return 1
+	fi
+	CONFIG_BYTES="$(file_size_bytes "$CONFIG_PATH")"
+	if [ "$CONFIG_BYTES" -gt "$MAX_JSON_FILE_BYTES" ]; then
+		json_detailed_error "config_too_large" "configuration file exceeds the readable size limit" "config_read" "path=$CONFIG_PATH size=$CONFIG_BYTES limit=$MAX_JSON_FILE_BYTES"
 		return 1
 	fi
 	printf '{'
@@ -905,6 +1124,8 @@ emit_settings_read() {
 	json_bool "$LOG_SYSLOG"
 	printf ',"persist_core":'
 	json_bool "$PERSIST_CORE"
+	printf ',"allow_core_upload":'
+	json_bool "$ALLOW_CORE_UPLOAD"
 	printf ','
 	json_field_string download_proxy "$DOWNLOAD_PROXY"
 	printf ','
@@ -924,6 +1145,41 @@ settings_value() {
 		return 1
 	fi
 	printf '%s' "$VALUE"
+}
+
+# R6/R12: callbacks perform only uci set/delete. uci_transaction owns the
+# lock, commit check and revert-on-failure; no write error is swallowed.
+settings_save_apply() {
+	uci -q set oxidns.main=settings || return 1
+	uci -q set "oxidns.main.core_repository=$REPOSITORY_VALUE" || return 1
+	uci -q set "oxidns.main.core_bundle=$BUNDLE_VALUE" || return 1
+	uci -q set "oxidns.main.config_path=$CONFIG_VALUE" || return 1
+	uci -q set "oxidns.main.working_dir=$WORKING_VALUE" || return 1
+	uci -q set "oxidns.main.log_syslog=$LOG_SYSLOG_VALUE" || return 1
+	uci -q set "oxidns.main.persist_core=$PERSIST_CORE_VALUE" || return 1
+	uci -q set "oxidns.main.allow_core_upload=$ALLOW_UPLOAD_VALUE" || return 1
+	uci_delete_if_present oxidns.main.api_base_url || return 1
+	uci_delete_if_present oxidns.main.install_mode || return 1
+	uci_delete_if_present oxidns.main.service_name || return 1
+	uci_delete_if_present oxidns.main.package_feed_url || return 1
+	uci_delete_if_present oxidns.main.manifest_url || return 1
+
+	CLEAR_PROXY="$(input_bool clear_download_proxy "$INPUT")"
+	if [ "$CLEAR_PROXY" = "1" ]; then
+		uci_delete_if_present oxidns.main.download_proxy || return 1
+	elif [ -n "$PROXY_VALUE" ]; then
+		uci -q set "oxidns.main.download_proxy=$PROXY_VALUE" || return 1
+	elif [ -z "$DOWNLOAD_PROXY" ]; then
+		uci_delete_if_present oxidns.main.download_proxy || return 1
+	fi
+
+	CLEAR_TOKEN="$(input_bool clear_github_token "$INPUT")"
+	if [ "$CLEAR_TOKEN" = "1" ]; then
+		uci_delete_if_present oxidns.main.github_token || return 1
+	elif [ -n "$NEW_TOKEN" ]; then
+		uci -q set "oxidns.main.github_token=$NEW_TOKEN" || return 1
+	fi
+	return 0
 }
 
 emit_settings_save() {
@@ -969,6 +1225,17 @@ emit_settings_save() {
 				;;
 		esac
 	fi
+	ALLOW_UPLOAD_VALUE="$ALLOW_CORE_UPLOAD"
+	if input_has_key allow_core_upload "$INPUT"; then
+		ALLOW_UPLOAD_VALUE="$(input_value allow_core_upload "$INPUT")"
+		case "$ALLOW_UPLOAD_VALUE" in
+			0|1) ;;
+			*)
+				json_error "invalid_allow_core_upload" "allow_core_upload must be 0 or 1"
+				return 1
+				;;
+		esac
+	fi
 
 	case "$REPOSITORY_VALUE" in
 		*/*) ;;
@@ -998,46 +1265,74 @@ emit_settings_save() {
 		return 1
 	fi
 
-	uci -q set oxidns.main=settings
-	uci -q set "oxidns.main.core_repository=$REPOSITORY_VALUE"
-	uci -q set "oxidns.main.core_bundle=$BUNDLE_VALUE"
-	uci -q set "oxidns.main.config_path=$CONFIG_VALUE"
-	uci -q set "oxidns.main.working_dir=$WORKING_VALUE"
-	uci -q set "oxidns.main.log_syslog=$LOG_SYSLOG_VALUE"
-	uci -q set "oxidns.main.persist_core=$PERSIST_CORE_VALUE"
-	uci -q delete oxidns.main.api_base_url >/dev/null 2>&1 || true
-	uci -q delete oxidns.main.install_mode >/dev/null 2>&1 || true
-	uci -q delete oxidns.main.service_name >/dev/null 2>&1 || true
-	uci -q delete oxidns.main.package_feed_url >/dev/null 2>&1 || true
-	uci -q delete oxidns.main.manifest_url >/dev/null 2>&1 || true
-
-	CLEAR_PROXY="$(input_bool clear_download_proxy "$INPUT")"
-	if [ "$CLEAR_PROXY" = "1" ]; then
-		uci -q delete oxidns.main.download_proxy >/dev/null 2>&1 || true
-	elif [ -n "$PROXY_VALUE" ]; then
-		uci -q set "oxidns.main.download_proxy=$PROXY_VALUE"
-	elif [ -z "$DOWNLOAD_PROXY" ]; then
-		uci -q delete oxidns.main.download_proxy >/dev/null 2>&1 || true
-	fi
-
 	NEW_TOKEN="$(input_value github_token "$INPUT")"
-	CLEAR_TOKEN="$(input_bool clear_github_token "$INPUT")"
-	if [ "$CLEAR_TOKEN" = "1" ]; then
-		uci -q delete oxidns.main.github_token >/dev/null 2>&1 || true
-	elif [ -n "$NEW_TOKEN" ]; then
-		if ! safe_single_line_value "$NEW_TOKEN"; then
-			json_error "invalid_token" "github_token must be a single-line value"
-			return 1
-		fi
-		uci -q set oxidns.main.github_token="$NEW_TOKEN"
+	if [ -n "$NEW_TOKEN" ] && ! safe_single_line_value "$NEW_TOKEN"; then
+		json_error "invalid_token" "github_token must be a single-line value"
+		return 1
 	fi
 
-	if uci -q commit oxidns; then
-		emit_settings_read
-	else
+	if ! uci_transaction oxidns settings_save_apply; then
 		json_error "settings_save_failed" "failed to commit oxidns settings"
 		return 1
 	fi
+	emit_settings_read
+}
+
+# C1: shared JSON string decoder for the no-jsonfilter fallback. Handles the
+# escapes LuCI emits (\n, \t, \r, \", \\, \/) and basic \uXXXX (including
+# surrogate pairs) as UTF-8.
+decode_json_escapes() {
+	awk '
+		BEGIN { ORS = "" }
+		function hexval(c) {
+			c = tolower(c);
+			return index("0123456789abcdef", c) - 1;
+		}
+		function codepoint(s,  i, v) {
+			v = 0;
+			for (i = 1; i <= 4; i++)
+				v = v * 16 + hexval(substr(s, i, 1));
+			return v;
+		}
+		function utf8(cp,  s) {
+			if (cp < 128) return sprintf("%c", cp);
+			if (cp < 2048) return sprintf("%c%c", 192 + int(cp / 64), 128 + cp % 64);
+			if (cp < 65536) return sprintf("%c%c%c", 224 + int(cp / 4096),
+				128 + int(cp / 64) % 64, 128 + cp % 64);
+			return sprintf("%c%c%c%c", 240 + int(cp / 16384),
+				128 + int(cp / 4096) % 64, 128 + int(cp / 64) % 64, 128 + cp % 64);
+		}
+		{
+			if (NR > 1) printf "\n";
+			s = $0;
+			out = "";
+			for (i = 1; i <= length(s); i++) {
+				c = substr(s, i, 1);
+				if (c != "\\") { out = out c; continue; }
+				e = substr(s, i + 1, 1);
+				if (e == "n") { out = out "\n"; i++; }
+				else if (e == "t") { out = out "\t"; i++; }
+				else if (e == "r") { out = out "\r"; i++; }
+				else if (e == "b") { out = out sprintf("%c", 8); i++; }
+				else if (e == "f") { out = out sprintf("%c", 12); i++; }
+				else if (e == "\"" || e == "\\" || e == "/") { out = out e; i++; }
+				else if (e == "u") {
+					cp = codepoint(substr(s, i + 2, 4));
+					i += 5;
+					if (cp >= 55296 && cp <= 56319 && substr(s, i + 1, 2) == "\\u") {
+						low = codepoint(substr(s, i + 3, 4));
+						if (low >= 56320 && low <= 57343) {
+							cp = 65536 + (cp - 55296) * 1024 + (low - 56320);
+							i += 6;
+						}
+					}
+					out = out utf8(cp);
+				}
+				else out = out c;
+			}
+			printf "%s", out;
+		}
+	'
 }
 
 input_value() {
@@ -1046,7 +1341,30 @@ input_value() {
 	if command -v jsonfilter >/dev/null 2>&1; then
 		printf '%s' "$INPUT" | jsonfilter -e "@.$KEY" 2>/dev/null || true
 	else
-		printf '%s' "$INPUT" | sed -n "s/.*\"$KEY\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p"
+		# Extract the raw JSON string (honouring escaped quotes/backslashes),
+		# then decode it with the shared decoder.
+		VALUE="$(printf '%s' "$INPUT" | awk -v key="$KEY" '{
+			s = $0;
+			needle = "\"" key "\"";
+			pos = index(s, needle);
+			if (pos == 0) next;
+			s = substr(s, pos + length(needle));
+			sub(/^[[:space:]]*:[[:space:]]*/, "", s);
+			if (substr(s, 1, 1) != "\"") next;
+			s = substr(s, 2);
+			out = "";
+			for (i = 1; i <= length(s); i++) {
+				c = substr(s, i, 1);
+				if (c == "\\" && i < length(s)) {
+					out = out c substr(s, i + 1, 1);
+					i++;
+				} else if (c == "\"") break;
+				else out = out c;
+			}
+			print out;
+			exit;
+		}')"
+		printf '%s' "$VALUE" | decode_json_escapes
 	fi
 }
 
@@ -1082,13 +1400,40 @@ path_is_under() {
 	return 1
 }
 
+# S6: resolve symlinks before any path is used for deletion, and reject any
+# path that still contains a parent reference or a glob metacharacter.
+resolved_path() {
+	RESOLVED_PATH_VALUE="$1"
+	case "$RESOLVED_PATH_VALUE" in
+		/*) ;;
+		*) return 1 ;;
+	esac
+	path_has_parent_ref "$RESOLVED_PATH_VALUE" && return 1
+	case "$RESOLVED_PATH_VALUE" in
+		*'*'*|*'?'*|*'['*|*']'*) return 1 ;;
+	esac
+	if printf '%s' "$RESOLVED_PATH_VALUE" | grep -q '[[:cntrl:]]'; then
+		return 1
+	fi
+	if command -v readlink >/dev/null 2>&1 && readlink -f "$RESOLVED_PATH_VALUE" >/dev/null 2>&1; then
+		RESOLVED_PATH_VALUE="$(readlink -f "$RESOLVED_PATH_VALUE")"
+	fi
+	path_has_parent_ref "$RESOLVED_PATH_VALUE" && return 1
+	printf '%s' "$RESOLVED_PATH_VALUE"
+}
+
+# Exact-name allowlists replace the old "basename merely contains oxidns" rule.
 oxidns_named_path() {
 	PATH_VALUE="$1"
-	BASE_NAME="$(basename "$PATH_VALUE" 2>/dev/null || printf '')"
-	DIR_NAME="$(dirname "$PATH_VALUE" 2>/dev/null || printf '')"
-	DIR_BASE="$(basename "$DIR_NAME" 2>/dev/null || printf '')"
-	case "$BASE_NAME:$DIR_BASE" in
-		*oxidns*|*:oxidns*)
+	RESOLVED="$(resolved_path "$PATH_VALUE")" || return 1
+	BASE_NAME="$(basename "$RESOLVED" 2>/dev/null || printf '')"
+	DIR_NAME="$(dirname "$RESOLVED" 2>/dev/null || printf '')"
+	case "$DIR_NAME/$BASE_NAME" in
+		/etc/oxidns/config.yaml|\
+		/etc/oxidns/oxidns.yaml|\
+		/etc/oxidns/oxidns.yml|\
+		/var/lib/oxidns/config.yaml|\
+		"$DEFAULT_WORKING_DIR"/config.yaml)
 			return 0
 			;;
 	esac
@@ -1097,28 +1442,35 @@ oxidns_named_path() {
 
 safe_remove_config_path() {
 	PATH_VALUE="$1"
-	[ -n "$PATH_VALUE" ] || return 1
-	case "$PATH_VALUE" in
-		/*) ;;
-		*) return 1 ;;
-	esac
-	[ -d "$PATH_VALUE" ] && return 1
-	oxidns_named_path "$PATH_VALUE"
+	oxidns_named_path "$PATH_VALUE" || return 1
+	[ ! -d "$PATH_VALUE" ] || return 1
+	[ ! -L "$PATH_VALUE" ] || return 1
+	return 0
 }
 
+# Only the runtime working directory may be removed: never /etc/oxidns (rules
+# and prewarm data) and never a top-level filesystem directory.
 safe_remove_working_dir() {
 	PATH_VALUE="$1"
-	[ -n "$PATH_VALUE" ] || return 1
-	case "$PATH_VALUE" in
-		/*) ;;
-		*) return 1 ;;
-	esac
-	case "$PATH_VALUE" in
-		/|/bin|/dev|/etc|/lib|/mnt|/overlay|/proc|/rom|/root|/sbin|/sys|/tmp|/usr|/var|/www)
+	RESOLVED="$(resolved_path "$PATH_VALUE")" || return 1
+	case "$RESOLVED" in
+		/var/lib/oxidns|/var/lib/oxidns/*|/tmp/oxidns-*)
+			;;
+		*)
 			return 1
 			;;
 	esac
-	oxidns_named_path "$PATH_VALUE"
+	# Rules and the prewarm list are data, never part of a core cleanup.
+	case "$RESOLVED" in
+		"$PERSIST_DIR"|"$PERSIST_DIR"/*|"$RULES_DIR"|"$RULES_DIR"/*|\
+		"$PREWARM_FILE"|"$PREWARM_DIR"/*|/etc/oxidns|/etc/oxidns/*)
+			return 1
+			;;
+	esac
+	case "$PATH_VALUE:$RESOLVED" in
+		*'/etc/oxidns'*|*'/etc/oxidns/'*) return 1 ;;
+	esac
+	return 0
 }
 
 path_has_parent_ref() {
@@ -1156,7 +1508,10 @@ validate_config_file() {
 emit_config_validate() {
 	INPUT="$(cat)"
 	CONTENT="$(input_value content "$INPUT")"
-	TMP_FILE="$(mktemp "$TMP_ROOT/oxidns-config.XXXXXX")"
+	TMP_FILE="$(mktemp "$TMP_ROOT/oxidns-config.XXXXXX")" || {
+		json_error "mktemp_unavailable" "cannot create a temporary configuration file"
+		return 1
+	}
 	if input_has_key content "$INPUT"; then
 		if [ -z "$CONTENT" ]; then
 			rm -f "$TMP_FILE"
@@ -1200,7 +1555,10 @@ emit_config_save() {
 		return 1
 	fi
 
-	TMP_FILE="$(mktemp "$TMP_ROOT/oxidns-config.XXXXXX")"
+	TMP_FILE="$(mktemp "$TMP_ROOT/oxidns-config.XXXXXX")" || {
+		json_error "mktemp_unavailable" "cannot create a temporary configuration file"
+		return 1
+	}
 	printf '%s' "$CONTENT" > "$TMP_FILE"
 	if ! OUTPUT="$(validate_config_file "$TMP_FILE")"; then
 		rm -f "$TMP_FILE"
@@ -1208,18 +1566,35 @@ emit_config_save() {
 		return 1
 	fi
 
-	mkdir -p "$(dirname "$CONFIG_PATH")"
-	if [ -e "$CONFIG_PATH" ]; then
-		mkdir -p "$WORKING_DIR/config-backups"
-		cp "$CONFIG_PATH" "$WORKING_DIR/config-backups/config.yaml.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+	if ! mkdir -p "$(dirname "$CONFIG_PATH")"; then
+		rm -f "$TMP_FILE"
+		json_detailed_error "config_dir_failed" "cannot create the configuration directory" "config_save" "path=$CONFIG_PATH"
+		return 1
 	fi
-	mv "$TMP_FILE" "$CONFIG_PATH"
+	if [ -e "$CONFIG_PATH" ] && [ ! -L "$CONFIG_PATH" ]; then
+		BACKUP_STAMP="$(date +%Y%m%d%H%M%S).$$"
+		if ! mkdir -p "$WORKING_DIR/config-backups" 2>/dev/null ||
+			! cp "$CONFIG_PATH" "$WORKING_DIR/config-backups/config.yaml.$BACKUP_STAMP" 2>/dev/null; then
+			rm -f "$TMP_FILE"
+			json_detailed_error "config_backup_failed" "cannot back up the existing configuration" "config_save" "path=$CONFIG_PATH backup=$BACKUP_STAMP"
+			return 1
+		fi
+	fi
+	if ! mv "$TMP_FILE" "$CONFIG_PATH"; then
+		rm -f "$TMP_FILE"
+		json_detailed_error "config_write_failed" "cannot write the configuration file" "config_save" "path=$CONFIG_PATH"
+		return 1
+	fi
 
 	RESTART_STATUS="not_requested"
 	MESSAGE="configuration saved"
 	if [ "$RESTART" = "true" ] || [ "$RESTART" = "1" ]; then
 		INIT="$(init_script)"
-		SERVICE_OUT="$(mktemp "$TMP_ROOT/oxidns-service.XXXXXX")"
+		SERVICE_OUT="$(mktemp "$TMP_ROOT/oxidns-service.XXXXXX")" || {
+			rm -f "$TMP_FILE"
+			json_error "mktemp_unavailable" "cannot create a temporary service output file"
+			return 1
+		}
 		if [ ! -x "$INIT" ]; then
 			rm -f "$SERVICE_OUT"
 			json_error "service_unavailable" "configuration saved, but init script was not found"
@@ -1298,32 +1673,24 @@ emit_logs_recent() {
 	case "$LIMIT" in
 		*[!0-9]*|'') LIMIT=200 ;;
 	esac
-	TMP_FILE="$(mktemp "$TMP_ROOT/oxidns-logs.XXXXXX")"
-	read_logread_logs "$LIMIT" "$TMP_FILE" || true
+	TMP_FILE="$(mktemp "$TMP_ROOT/oxidns-logs.XXXXXX")" || {
+		json_error "mktemp_unavailable" "cannot create a temporary log file"
+		return 1
+	}
+	if ! read_logread_logs "$LIMIT" "$TMP_FILE"; then
+		rm -f "$TMP_FILE"
+		json_error "log_read_failed" "cannot read recent system logs"
+		return 1
+	fi
 	emit_log_lines_json "logread" "$TMP_FILE"
 	rm -f "$TMP_FILE"
 }
 
 read_error_detail_file() {
 	DETAIL_FILE="$1"
-	[ -r "$DETAIL_FILE" ] || return 0
-	awk -v token="$GITHUB_TOKEN" -v proxy="$DOWNLOAD_PROXY" '
-		function redact(value, secret,    out, pos) {
-			if (secret == "")
-				return value;
-			out = "";
-			while ((pos = index(value, secret)) > 0) {
-				out = out substr(value, 1, pos - 1) "[redacted]";
-				value = substr(value, pos + length(secret));
-			}
-			return out value;
-		}
-		{
-			line = redact(redact($0, token), proxy);
-			gsub(/[[:cntrl:]]/, " ", line);
-			print line;
-		}
-	' "$DETAIL_FILE" | tail -c 1200
+	[ -r "$DETAIL_FILE" ] && [ ! -L "$DETAIL_FILE" ] || return 0
+	# S5: reuse the same redactor as progress logs.
+	redact_text < "$DETAIL_FILE" | tail -c 1200
 }
 
 set_download_error_from_file() {
@@ -1343,9 +1710,10 @@ run_download_command() {
 	DOWNLOAD_DISPLAY="$2"
 	DOWNLOAD_OUT="$3"
 	shift 3
-	DOWNLOAD_ERR_FILE="$(mktemp "$TMP_ROOT/oxidns-download.XXXXXX")"
-	DOWNLOAD_DONE_FILE="$(mktemp "$TMP_ROOT/oxidns-download-done.XXXXXX")"
+	DOWNLOAD_ERR_FILE="$(mktemp "$TMP_ROOT/oxidns-download.XXXXXX")" || return 1
+	DOWNLOAD_DONE_FILE="$(mktemp "$TMP_ROOT/oxidns-download-done.XXXXXX")" || { rm -f "$DOWNLOAD_ERR_FILE"; return 1; }
 	rm -f "$DOWNLOAD_DONE_FILE"
+	DOWNLOAD_PARENT_PID="$$"
 	core_progress_command "$DOWNLOAD_DISPLAY"
 	case "$-" in
 		*e*) DOWNLOAD_RESTORE_ERREXIT=1 ;;
@@ -1353,8 +1721,13 @@ run_download_command() {
 	esac
 	set +e
 	DOWNLOAD_LAST_SIZE=""
+	DOWNLOAD_MONITOR_DEADLINE="$(($(date +%s) + DOWNLOAD_MAX_SECONDS + 60))"
 	(
+		trap 'exit 0' HUP INT TERM
 		while [ ! -f "$DOWNLOAD_DONE_FILE" ]; do
+			# R7: the monitor can never loop forever, even if its parent dies.
+			[ "$(date +%s)" -ge "$DOWNLOAD_MONITOR_DEADLINE" ] && exit 0
+			kill -0 "$DOWNLOAD_PARENT_PID" 2>/dev/null || exit 0
 			if [ -f "$DOWNLOAD_OUT" ]; then
 				DOWNLOAD_SIZE="$(file_size_bytes "$DOWNLOAD_OUT")"
 				if [ "$DOWNLOAD_SIZE" != "$DOWNLOAD_LAST_SIZE" ]; then
@@ -1369,6 +1742,7 @@ run_download_command() {
 	"$@" >/dev/null 2>"$DOWNLOAD_ERR_FILE"
 	DOWNLOAD_CMD_RC="$?"
 	: > "$DOWNLOAD_DONE_FILE"
+	kill "$DOWNLOAD_MONITOR_PID" 2>/dev/null || true
 	wait "$DOWNLOAD_MONITOR_PID" 2>/dev/null || true
 	rm -f "$DOWNLOAD_DONE_FILE"
 	if [ "$DOWNLOAD_RESTORE_ERREXIT" = "1" ]; then
@@ -1377,10 +1751,18 @@ run_download_command() {
 		set +e
 	fi
 	if [ "$DOWNLOAD_CMD_RC" -eq 0 ]; then
+		DOWNLOAD_BYTES="$(file_size_bytes "$DOWNLOAD_OUT")"
+		if [ "$DOWNLOAD_BYTES" -gt "$DOWNLOAD_MAX_BYTES" ]; then
+			rm -f "$DOWNLOAD_ERR_FILE"
+			DOWNLOAD_RC=1
+			DOWNLOAD_ERROR="$DOWNLOAD_TOOL download exceeds the ${DOWNLOAD_MAX_BYTES}-byte limit"
+			core_progress_log "error" "$DOWNLOAD_ERROR"
+			return 1
+		fi
 		rm -f "$DOWNLOAD_ERR_FILE"
 		DOWNLOAD_ERROR=""
 		DOWNLOAD_RC=0
-		core_progress_log "success" "$DOWNLOAD_TOOL download complete: $(file_size_bytes "$DOWNLOAD_OUT") bytes"
+		core_progress_log "success" "$DOWNLOAD_TOOL download complete: $DOWNLOAD_BYTES bytes"
 		return 0
 	fi
 	set_download_error_from_file "$DOWNLOAD_ERR_FILE" "$DOWNLOAD_CMD_RC" "$DOWNLOAD_TOOL"
@@ -1388,47 +1770,76 @@ run_download_command() {
 	return "$DOWNLOAD_CMD_RC"
 }
 
+# S5: token and proxy are passed to curl through a mode-600 config file, never
+# on the command line. Transports without a config-file option refuse to run
+# with a token instead of leaking it in argv.
 download_file() {
 	URL="$1"
 	OUT="$2"
+	MAX_BYTES="${3:-$DOWNLOAD_MAX_BYTES}"
 	DOWNLOAD_ERROR=""
 	DOWNLOAD_RC=""
-	if command -v curl >/dev/null 2>&1; then
-		if [ -n "$DOWNLOAD_PROXY" ]; then
-			if [ -n "$GITHUB_TOKEN" ]; then
-				run_download_command curl "curl -fsSL --proxy [configured] -H 'User-Agent: luci-app-oxidns' -H 'Authorization: Bearer [redacted]' -o $OUT $URL" "$OUT" curl -fsSL --proxy "$DOWNLOAD_PROXY" -H "User-Agent: luci-app-oxidns" -H "Authorization: Bearer $GITHUB_TOKEN" -o "$OUT" "$URL"
+	DOWNLOAD_ATTEMPT=1
+	while [ "$DOWNLOAD_ATTEMPT" -le "$DOWNLOAD_RETRIES" ]; do
+		rm -f "$OUT"
+		if command -v curl >/dev/null 2>&1; then
+			AUTH_CONFIG="$(write_curl_auth_config)" || {
+				DOWNLOAD_RC=1
+				DOWNLOAD_ERROR="cannot create curl authentication config"
+				return 1
+			}
+			DL_RC=0
+			run_download_command curl "curl -fsSL -K [auth-config] -o $OUT $URL (attempt $DOWNLOAD_ATTEMPT)" \
+				"$OUT" curl -fsSL --connect-timeout "$DOWNLOAD_CONNECT_SECONDS" \
+				--max-time "$DOWNLOAD_MAX_SECONDS" --max-filesize "$MAX_BYTES" \
+				--retry 1 -K "$AUTH_CONFIG" -o "$OUT" "$URL" || DL_RC="$?"
+			rm -f "$AUTH_CONFIG"
+		elif [ -n "$GITHUB_TOKEN" ] || [ -n "$DOWNLOAD_PROXY" ]; then
+			DOWNLOAD_RC=1
+			DOWNLOAD_ERROR="curl is required when a github_token or download_proxy is configured"
+			core_progress_log "error" "$DOWNLOAD_ERROR"
+			return 1
+		elif command -v uclient-fetch >/dev/null 2>&1; then
+			DL_RC=0
+			run_download_command uclient-fetch "uclient-fetch -T $DOWNLOAD_MAX_SECONDS -O $OUT $URL (attempt $DOWNLOAD_ATTEMPT)" \
+				"$OUT" uclient-fetch -T "$DOWNLOAD_MAX_SECONDS" -O "$OUT" "$URL" || DL_RC="$?"
+		elif command -v wget >/dev/null 2>&1; then
+			DL_RC=0
+			run_download_command wget "wget -T $DOWNLOAD_MAX_SECONDS -O $OUT $URL (attempt $DOWNLOAD_ATTEMPT)" \
+				"$OUT" wget -T "$DOWNLOAD_MAX_SECONDS" -O "$OUT" "$URL" || DL_RC="$?"
+		else
+			DOWNLOAD_RC=127
+			DOWNLOAD_ERROR="none of curl, uclient-fetch, or wget is installed"
+			core_progress_log "error" "$DOWNLOAD_ERROR"
+			return 1
+		fi
+		DOWNLOAD_RC="$DL_RC"
+		if [ "$DL_RC" -eq 0 ]; then
+			DOWNLOAD_BYTES="$(file_size_bytes "$OUT")"
+			if [ "$DOWNLOAD_BYTES" -gt "$MAX_BYTES" ]; then
+				DOWNLOAD_ERROR="download exceeds the ${MAX_BYTES}-byte limit"
+				DOWNLOAD_RC=1
 			else
-				run_download_command curl "curl -fsSL --proxy [configured] -H 'User-Agent: luci-app-oxidns' -o $OUT $URL" "$OUT" curl -fsSL --proxy "$DOWNLOAD_PROXY" -H "User-Agent: luci-app-oxidns" -o "$OUT" "$URL"
+				return 0
 			fi
-		elif [ -n "$GITHUB_TOKEN" ]; then
-			run_download_command curl "curl -fsSL -H 'User-Agent: luci-app-oxidns' -H 'Authorization: Bearer [redacted]' -o $OUT $URL" "$OUT" curl -fsSL -H "User-Agent: luci-app-oxidns" -H "Authorization: Bearer $GITHUB_TOKEN" -o "$OUT" "$URL"
-		else
-			run_download_command curl "curl -fsSL -H 'User-Agent: luci-app-oxidns' -o $OUT $URL" "$OUT" curl -fsSL -H "User-Agent: luci-app-oxidns" -o "$OUT" "$URL"
 		fi
-	elif command -v uclient-fetch >/dev/null 2>&1; then
-		if [ -n "$GITHUB_TOKEN" ]; then
-			run_download_command uclient-fetch "uclient-fetch -O $OUT --header='User-Agent: luci-app-oxidns' --header='Authorization: Bearer [redacted]' $URL" "$OUT" uclient-fetch -O "$OUT" --header="User-Agent: luci-app-oxidns" --header="Authorization: Bearer $GITHUB_TOKEN" "$URL"
-		else
-			run_download_command uclient-fetch "uclient-fetch -O $OUT --header='User-Agent: luci-app-oxidns' $URL" "$OUT" uclient-fetch -O "$OUT" --header="User-Agent: luci-app-oxidns" "$URL"
+		DOWNLOAD_ATTEMPT=$((DOWNLOAD_ATTEMPT + 1))
+		if [ "$DOWNLOAD_ATTEMPT" -le "$DOWNLOAD_RETRIES" ]; then
+			core_progress_log "warn" "download attempt failed; retrying ($DOWNLOAD_ATTEMPT/$DOWNLOAD_RETRIES)"
+			sleep 1
 		fi
-	elif command -v wget >/dev/null 2>&1; then
-		if [ -n "$GITHUB_TOKEN" ]; then
-			run_download_command wget "wget --header='User-Agent: luci-app-oxidns' --header='Authorization: Bearer [redacted]' -O $OUT $URL" "$OUT" wget --header="User-Agent: luci-app-oxidns" --header="Authorization: Bearer $GITHUB_TOKEN" -O "$OUT" "$URL"
-		else
-			run_download_command wget "wget --header='User-Agent: luci-app-oxidns' -O $OUT $URL" "$OUT" wget --header="User-Agent: luci-app-oxidns" -O "$OUT" "$URL"
-		fi
-	else
-		DOWNLOAD_RC=127
-		DOWNLOAD_ERROR="none of curl, uclient-fetch, or wget is installed"
-		core_progress_log "error" "$DOWNLOAD_ERROR"
-		return 1
-	fi
+	done
+	return 1
 }
 
 require_download_transport() {
 	if [ -n "$DOWNLOAD_PROXY" ] && ! command -v curl >/dev/null 2>&1; then
 		core_progress_log "error" "download_proxy requires curl, but curl is not installed"
 		json_detailed_error "download_proxy_requires_curl" "download_proxy is configured, but curl is not installed; install curl or clear download_proxy" "prepare_download" "download_proxy only works with curl on OpenWrt"
+		return 1
+	fi
+	if [ -n "$GITHUB_TOKEN" ] && ! command -v curl >/dev/null 2>&1; then
+		json_detailed_error "token_requires_curl" "github_token is configured, but curl is not installed; install curl or clear github_token" "prepare_download" "the token is passed via a mode-600 curl config file"
 		return 1
 	fi
 	return 0
@@ -1472,6 +1883,67 @@ version_tag() {
 	esac
 }
 
+# R5: numeric semver-style comparison. Prints -1, 0 or 1.
+version_cmp() {
+	awk -v a="$1" -v b="$2" '
+		function split_version(v, arr,    n, tmp, i, j) {
+			sub(/^[vV]/, "", v);
+			n = split(v, tmp, /[^0-9]+/);
+			j = 0;
+			for (i = 1; i <= n; i++)
+				if (tmp[i] != "") arr[++j] = tmp[i] + 0;
+			return j;
+		}
+		BEGIN {
+			na = split_version(a, A);
+			nb = split_version(b, B);
+			n = (na > nb ? na : nb);
+			for (i = 1; i <= n; i++) {
+				ai = (i <= na ? A[i] : 0);
+				bi = (i <= nb ? B[i] : 0);
+				if (ai > bi) { print 1; exit }
+				if (ai < bi) { print -1; exit }
+			}
+			print 0;
+		}'
+}
+
+# R5: version-aware sort. sort -V where available, numeric segment sort else.
+version_sort() {
+	if command -v sort >/dev/null 2>&1 && sort -V </dev/null >/dev/null 2>&1; then
+		sort -V
+	else
+		awk '{ lines[NR] = $0 }
+		END {
+			# insertion sort using numeric version segments
+			for (i = 2; i <= NR; i++) {
+				key = lines[i]; j = i - 1;
+				while (j >= 1 && version_less(lines[j], key)) {
+					lines[j + 1] = lines[j]; j--;
+				}
+				lines[j + 1] = key;
+			}
+			for (i = 1; i <= NR; i++) print lines[i];
+		}
+		function segments(v, arr,    n, tmp, i, k) {
+			sub(/^[vV]/, "", v);
+			n = split(v, tmp, /[^0-9]+/); k = 0;
+			for (i = 1; i <= n; i++) if (tmp[i] != "") arr[++k] = tmp[i] + 0;
+			return k;
+		}
+		function version_less(a, b,    na, nb, n, i, ai, bi, A, B) {
+			na = segments(a, A); nb = segments(b, B);
+			n = (na > nb ? na : nb);
+			for (i = 1; i <= n; i++) {
+				ai = (i <= na ? A[i] : 0); bi = (i <= nb ? B[i] : 0);
+				if (ai < bi) return 1;
+				if (ai > bi) return 0;
+			}
+			return 0;
+		}'
+	fi
+}
+
 select_release_asset() {
 	RELEASE_FILE="$1"
 	WANT_ASSET="$2"
@@ -1489,11 +1961,12 @@ select_release_asset() {
 	SELECT_TAG="$(jsonfilter -i "$RELEASE_FILE" -e '@.tag_name' 2>/dev/null || true)"
 	[ -n "$SELECT_TAG" ] || return 1
 
-	NAME_FILE="$(mktemp "$TMP_ROOT/oxidns-asset-name.XXXXXX")"
-	URL_FILE="$(mktemp "$TMP_ROOT/oxidns-asset-url.XXXXXX")"
-	DIGEST_FILE="$(mktemp "$TMP_ROOT/oxidns-asset-digest.XXXXXX")"
-	SIZE_FILE="$(mktemp "$TMP_ROOT/oxidns-asset-size.XXXXXX")"
-	SELECT_FILE="$(mktemp "$TMP_ROOT/oxidns-asset-selected.XXXXXX")"
+	require_commands mktemp || return 1
+	NAME_FILE="$(mktemp "$TMP_ROOT/oxidns-asset-name.XXXXXX")" || return 1
+	URL_FILE="$(mktemp "$TMP_ROOT/oxidns-asset-url.XXXXXX")" || { rm -f "$NAME_FILE"; return 1; }
+	DIGEST_FILE="$(mktemp "$TMP_ROOT/oxidns-asset-digest.XXXXXX")" || { rm -f "$NAME_FILE" "$URL_FILE"; return 1; }
+	SIZE_FILE="$(mktemp "$TMP_ROOT/oxidns-asset-size.XXXXXX")" || { rm -f "$NAME_FILE" "$URL_FILE" "$DIGEST_FILE"; return 1; }
+	SELECT_FILE="$(mktemp "$TMP_ROOT/oxidns-asset-selected.XXXXXX")" || { rm -f "$NAME_FILE" "$URL_FILE" "$DIGEST_FILE" "$SIZE_FILE"; return 1; }
 
 	if ! jsonfilter -i "$RELEASE_FILE" -e '@.assets[*].name' > "$NAME_FILE" 2>/dev/null ||
 		! jsonfilter -i "$RELEASE_FILE" -e '@.assets[*].browser_download_url' > "$URL_FILE" 2>/dev/null ||
@@ -1543,40 +2016,48 @@ valid_sha256() {
 	printf '%s' "$1" | grep -Eq '^[0-9a-fA-F]{64}$'
 }
 
+# R8: never pipe tar into awk without checking tar's exit status. Both listings
+# are written to temp files first and their return codes are verified.
 validate_safe_archive() {
 	ARCHIVE="$1"
-	if ! tar -tzf "$ARCHIVE" | awk '
-		{
-			path = $0;
-			while (path ~ /^\.\//)
-				sub(/^\.\//, "", path);
-			while (path ~ /\/$/)
-				sub(/\/$/, "", path);
-			if (path == "" || path ~ /^\//)
-				bad = 1;
-			n = split(path, parts, "/");
-			for (i = 1; i <= n; i++) {
-				if (parts[i] == "" || parts[i] == "..")
+	LIST_FILE="$(mktemp "$TMP_ROOT/oxidns-tar-list.XXXXXX")" || return 1
+	VERBOSE_FILE="$(mktemp "$TMP_ROOT/oxidns-tar-verbose.XXXXXX")" || { rm -f "$LIST_FILE"; return 1; }
+	RC=0
+	tar -tzf "$ARCHIVE" > "$LIST_FILE" 2>/dev/null || RC=1
+	if [ "$RC" -eq 0 ]; then
+		awk '
+			{
+				path = $0;
+				while (path ~ /^\.\//)
+					sub(/^\.\//, "", path);
+				while (path ~ /\/$/)
+					sub(/\/$/, "", path);
+				if (path == "" || path ~ /^\//)
+					bad = 1;
+				n = split(path, parts, "/");
+				for (i = 1; i <= n; i++) {
+					if (parts[i] == "" || parts[i] == "..")
+						bad = 1;
+				}
+			}
+			END { exit bad ? 1 : 0 }
+		' "$LIST_FILE" || RC=1
+	fi
+	if [ "$RC" -eq 0 ]; then
+		tar -tvzf "$ARCHIVE" > "$VERBOSE_FILE" 2>/dev/null || RC=1
+	fi
+	if [ "$RC" -eq 0 ]; then
+		awk '
+			{
+				type = substr($0, 1, 1);
+				if (type != "-" && type != "d")
 					bad = 1;
 			}
-		}
-		END { exit bad ? 1 : 0 }
-	'; then
-		return 1
+			END { exit bad ? 1 : 0 }
+		' "$VERBOSE_FILE" || RC=1
 	fi
-
-	if ! tar -tvzf "$ARCHIVE" | awk '
-		{
-			type = substr($0, 1, 1);
-			if (type != "-" && type != "d")
-				bad = 1;
-		}
-		END { exit bad ? 1 : 0 }
-	'; then
-		return 1
-	fi
-
-	return 0
+	rm -f "$LIST_FILE" "$VERBOSE_FILE"
+	return "$RC"
 }
 
 valid_ipv4() {
@@ -1690,53 +2171,176 @@ core_install_error() {
 # /etc/sysupgrade.conf) and the runtime paths become symlinks into the
 # persistent area. Sets CORE_WEBUI_INSTALLED to 1 when webui files were laid
 # down. Requires CORE_TMP_DIR to point at the caller's temp directory.
+# R1: rollback support. Everything that will be replaced is copied (or its
+# symlink target recorded) before the first change. Restoring is best-effort
+# but never deletes the only good copy.
+CORE_ROLLBACK_DIR=""
+CORE_CONFIG_WAS_INSTALLED=0
+
+backup_core_files() {
+	CORE_ROLLBACK_DIR="$CORE_TMP_DIR/rollback"
+	mkdir -p "$CORE_ROLLBACK_DIR" 2>/dev/null || return 1
+	: > "$CORE_ROLLBACK_DIR/state" 2>/dev/null || return 1
+	if [ -f "$PERSIST_BIN" ] && [ ! -L "$PERSIST_BIN" ]; then
+		cp "$PERSIST_BIN" "$CORE_ROLLBACK_DIR/persist.bin" 2>/dev/null && \
+			printf 'persist_bin\n' >> "$CORE_ROLLBACK_DIR/state" || return 1
+	fi
+	if [ -f "$OXIDNS_BIN" ] && [ ! -L "$OXIDNS_BIN" ]; then
+		cp "$OXIDNS_BIN" "$CORE_ROLLBACK_DIR/runtime.bin" 2>/dev/null && \
+			printf 'runtime_bin\n' >> "$CORE_ROLLBACK_DIR/state" || return 1
+	fi
+	if [ -L "$OXIDNS_BIN" ]; then
+		readlink "$OXIDNS_BIN" > "$CORE_ROLLBACK_DIR/runtime.link" 2>/dev/null && \
+			printf 'runtime_link\n' >> "$CORE_ROLLBACK_DIR/state" || return 1
+	fi
+	if [ -d "$PERSIST_WEBUI" ] && [ ! -L "$PERSIST_WEBUI" ]; then
+		mkdir -p "$CORE_ROLLBACK_DIR/persist.webui" 2>/dev/null || return 1
+		cp -R "$PERSIST_WEBUI/." "$CORE_ROLLBACK_DIR/persist.webui/" 2>/dev/null && \
+			printf 'persist_webui\n' >> "$CORE_ROLLBACK_DIR/state" || return 1
+	fi
+	if [ -L "$PERSIST_WEBUI" ]; then
+		readlink "$PERSIST_WEBUI" > "$CORE_ROLLBACK_DIR/persist.link" 2>/dev/null && \
+			printf 'persist_link\n' >> "$CORE_ROLLBACK_DIR/state" || return 1
+	fi
+	if [ -d "$WEBUI_DIR" ] && [ ! -L "$WEBUI_DIR" ]; then
+		mkdir -p "$CORE_ROLLBACK_DIR/runtime.webui" 2>/dev/null || return 1
+		cp -R "$WEBUI_DIR/." "$CORE_ROLLBACK_DIR/runtime.webui/" 2>/dev/null && \
+			printf 'runtime_webui\n' >> "$CORE_ROLLBACK_DIR/state" || return 1
+	fi
+	if [ -L "$WEBUI_DIR" ]; then
+		readlink "$WEBUI_DIR" > "$CORE_ROLLBACK_DIR/webui.link" 2>/dev/null && \
+			printf 'webui_link\n' >> "$CORE_ROLLBACK_DIR/state" || return 1
+	fi
+	if [ -f "$CONFIG_PATH" ] && [ ! -L "$CONFIG_PATH" ]; then
+		cp "$CONFIG_PATH" "$CORE_ROLLBACK_DIR/config.yaml" 2>/dev/null && \
+			printf 'config\n' >> "$CORE_ROLLBACK_DIR/state" || return 1
+	fi
+	CORE_CONFIG_WAS_INSTALLED=0
+	return 0
+}
+
+restore_core_files() {
+	[ -d "$CORE_ROLLBACK_DIR" ] && [ -f "$CORE_ROLLBACK_DIR/state" ] || return 1
+	core_progress_log "error" "rolling back the previous core installation"
+	rm -f "$OXIDNS_BIN" "$PERSIST_BIN" 2>/dev/null || true
+	[ -L "$WEBUI_DIR" ] || rm -rf "$WEBUI_DIR" 2>/dev/null || true
+	[ -L "$PERSIST_WEBUI" ] || rm -rf "$PERSIST_WEBUI" 2>/dev/null || true
+	while read -r ITEM; do
+		case "$ITEM" in
+			persist_bin)
+				mkdir -p "$(dirname "$PERSIST_BIN")" 2>/dev/null || true
+				cp "$CORE_ROLLBACK_DIR/persist.bin" "$PERSIST_BIN" 2>/dev/null || true
+				chmod 755 "$PERSIST_BIN" 2>/dev/null || true
+				;;
+			runtime_bin)
+				mkdir -p "$(dirname "$OXIDNS_BIN")" 2>/dev/null || true
+				cp "$CORE_ROLLBACK_DIR/runtime.bin" "$OXIDNS_BIN" 2>/dev/null || true
+				chmod 755 "$OXIDNS_BIN" 2>/dev/null || true
+				;;
+			runtime_link)
+				TARGET="$(cat "$CORE_ROLLBACK_DIR/runtime.link" 2>/dev/null || true)"
+				[ -n "$TARGET" ] && ln -sfn "$TARGET" "$OXIDNS_BIN" 2>/dev/null || true
+				;;
+			persist_webui)
+				mkdir -p "$PERSIST_WEBUI" 2>/dev/null || true
+				cp -R "$CORE_ROLLBACK_DIR/persist.webui/." "$PERSIST_WEBUI/" 2>/dev/null || true
+				;;
+			runtime_webui)
+				mkdir -p "$WEBUI_DIR" 2>/dev/null || true
+				cp -R "$CORE_ROLLBACK_DIR/runtime.webui/." "$WEBUI_DIR/" 2>/dev/null || true
+				;;
+			persist_link)
+				TARGET="$(cat "$CORE_ROLLBACK_DIR/persist.link" 2>/dev/null || true)"
+				[ -n "$TARGET" ] && ln -sfn "$TARGET" "$PERSIST_WEBUI" 2>/dev/null || true
+				;;
+			webui_link)
+				TARGET="$(cat "$CORE_ROLLBACK_DIR/webui.link" 2>/dev/null || true)"
+				[ -n "$TARGET" ] && ln -sfn "$TARGET" "$WEBUI_DIR" 2>/dev/null || true
+				;;
+			config)
+				mkdir -p "$(dirname "$CONFIG_PATH")" 2>/dev/null || true
+				cp "$CORE_ROLLBACK_DIR/config.yaml" "$CONFIG_PATH" 2>/dev/null || true
+				;;
+		esac
+	done < "$CORE_ROLLBACK_DIR/state"
+	if [ "$CORE_CONFIG_WAS_INSTALLED" = "1" ]; then
+		# No previous config existed: remove the one this install created.
+		rm -f "$CONFIG_PATH" 2>/dev/null || true
+	fi
+	rm -f "$CORE_PROGRESS_DIR/build-info.cache" 2>/dev/null || true
+	return 0
+}
+
+# Install the unpacked core binary and webui. With persistence enabled the
+# files live under /etc/oxidns/core (kept across sysupgrade via
+# /etc/sysupgrade.conf) and the runtime paths become symlinks into the
+# persistent area. Sets CORE_WEBUI_INSTALLED to 1 when webui files were laid
+# down. Requires CORE_TMP_DIR to point at the caller's temp directory.
+# R1: no `rm` before `mv` - new files are staged and swapped atomically.
 install_core_files() {
 	UNPACK_DIR="$1"
 	CORE_WEBUI_INSTALLED=0
 
 	if [ "$PERSIST_CORE" = "1" ]; then
 		core_progress_command "install -m 755 $UNPACK_DIR/oxidns $PERSIST_BIN"
-		mkdir -p "$PERSIST_DIR" "$WORKING_DIR"
-		cp "$UNPACK_DIR/oxidns" "$CORE_TMP_DIR/oxidns.new"
-		chmod 755 "$CORE_TMP_DIR/oxidns.new"
-		mv "$CORE_TMP_DIR/oxidns.new" "$PERSIST_BIN"
+		mkdir -p "$PERSIST_DIR" "$WORKING_DIR" || return 1
+		cp "$UNPACK_DIR/oxidns" "$CORE_TMP_DIR/oxidns.new" || return 1
+		chmod 755 "$CORE_TMP_DIR/oxidns.new" || return 1
+		mv -f "$CORE_TMP_DIR/oxidns.new" "$PERSIST_BIN" || return 1
 
 		core_progress_command "ln -sf $PERSIST_BIN $OXIDNS_BIN"
-		mkdir -p "$(dirname "$OXIDNS_BIN")"
-		ln -sf "$PERSIST_BIN" "$OXIDNS_BIN"
+		mkdir -p "$(dirname "$OXIDNS_BIN")" || return 1
+		ln -sfn "$PERSIST_BIN" "$OXIDNS_BIN" || return 1
 
 		if [ -d "$UNPACK_DIR/webui" ]; then
 			core_progress_command "copy webui files to $PERSIST_WEBUI"
 			WEBUI_TMP="$CORE_TMP_DIR/webui.new"
 			rm -rf "$WEBUI_TMP"
-			mkdir -p "$WEBUI_TMP"
-			cp -R "$UNPACK_DIR/webui/." "$WEBUI_TMP/"
-			rm -rf "$PERSIST_WEBUI"
-			mv "$WEBUI_TMP" "$PERSIST_WEBUI"
+			mkdir -p "$WEBUI_TMP" || return 1
+			cp -R "$UNPACK_DIR/webui/." "$WEBUI_TMP/" || return 1
+			if [ -L "$PERSIST_WEBUI" ]; then
+				WEBUI_VERSION_DIR="$PERSIST_DIR/.webui.new.$$"
+				rm -rf "$WEBUI_VERSION_DIR"
+				mv "$WEBUI_TMP" "$WEBUI_VERSION_DIR" || return 1
+				ln -sfn "$WEBUI_VERSION_DIR" "$PERSIST_WEBUI" || return 1
+			else
+				[ ! -e "$PERSIST_WEBUI" ] || mv "$PERSIST_WEBUI" "$CORE_TMP_DIR/webui.old" || return 1
+				mv "$WEBUI_TMP" "$PERSIST_WEBUI" || return 1
+			fi
 
 			core_progress_command "ln -sfn $PERSIST_WEBUI $WEBUI_DIR"
-			mkdir -p "$(dirname "$WEBUI_DIR")"
-			ln -sfn "$PERSIST_WEBUI" "$WEBUI_DIR"
+			mkdir -p "$(dirname "$WEBUI_DIR")" || return 1
+			ln -sfn "$PERSIST_WEBUI" "$WEBUI_DIR" || return 1
 			CORE_WEBUI_INSTALLED=1
 		fi
 	else
 		core_progress_command "install -m 755 $UNPACK_DIR/oxidns $OXIDNS_BIN"
-		mkdir -p "$(dirname "$OXIDNS_BIN")" "$WORKING_DIR"
-		cp "$UNPACK_DIR/oxidns" "$CORE_TMP_DIR/oxidns.new"
-		chmod 755 "$CORE_TMP_DIR/oxidns.new"
-		mv "$CORE_TMP_DIR/oxidns.new" "$OXIDNS_BIN"
+		mkdir -p "$(dirname "$OXIDNS_BIN")" "$WORKING_DIR" || return 1
+		cp "$UNPACK_DIR/oxidns" "$CORE_TMP_DIR/oxidns.new" || return 1
+		chmod 755 "$CORE_TMP_DIR/oxidns.new" || return 1
+		mv -f "$CORE_TMP_DIR/oxidns.new" "$OXIDNS_BIN" || return 1
 
 		if [ -d "$UNPACK_DIR/webui" ]; then
 			core_progress_command "copy webui files to $WEBUI_DIR"
 			WEBUI_TMP="$CORE_TMP_DIR/webui.new"
 			rm -rf "$WEBUI_TMP"
-			mkdir -p "$(dirname "$WEBUI_DIR")" "$WEBUI_TMP"
-			cp -R "$UNPACK_DIR/webui/." "$WEBUI_TMP/"
-			rm -rf "$WEBUI_DIR"
-			mv "$WEBUI_TMP" "$WEBUI_DIR"
+			mkdir -p "$WEBUI_TMP" || return 1
+			cp -R "$UNPACK_DIR/webui/." "$WEBUI_TMP/" || return 1
+			if [ -L "$WEBUI_DIR" ]; then
+				WEBUI_VERSION_DIR="$(dirname "$WEBUI_DIR")/.oxidns-webui.new.$$"
+				rm -rf "$WEBUI_VERSION_DIR"
+				mv "$WEBUI_TMP" "$WEBUI_VERSION_DIR" || return 1
+				ln -sfn "$WEBUI_VERSION_DIR" "$WEBUI_DIR" || return 1
+			else
+				[ ! -e "$WEBUI_DIR" ] || mv "$WEBUI_DIR" "$CORE_TMP_DIR/webui.old" || return 1
+				mv "$WEBUI_TMP" "$WEBUI_DIR" || return 1
+			fi
 			CORE_WEBUI_INSTALLED=1
 		fi
 	fi
+	# P1: invalidate the build-info cache after replacing the binary.
+	rm -f "$CORE_PROGRESS_DIR/build-info.cache" 2>/dev/null || true
+	return 0
 }
 
 install_core_from_release() {
@@ -1745,6 +2349,9 @@ install_core_from_release() {
 	REQUEST_BUNDLE="$3"
 	load_settings
 	require_download_transport || return 1
+	if ! require_commands tar sha256sum mktemp; then
+		return 1
+	fi
 
 	case "$CORE_REPOSITORY" in
 		*/*) ;;
@@ -1769,7 +2376,10 @@ install_core_from_release() {
 	fi
 	core_progress_log "info" "repository=$CORE_REPOSITORY bundle=$REQUEST_BUNDLE asset=$ASSET_NAME"
 
-	CORE_TMP_DIR="$(mktemp -d "$TMP_ROOT/oxidns-core.XXXXXX")"
+	CORE_TMP_DIR="$(mktemp -d "$TMP_ROOT/oxidns-core.XXXXXX")" || {
+		json_error "mktemp_unavailable" "cannot create a temporary core work directory"
+		return 1
+	}
 	RELEASE_FILE="$CORE_TMP_DIR/release.json"
 	ARCHIVE_FILE="$CORE_TMP_DIR/$ASSET_NAME"
 	UNPACK_DIR="$CORE_TMP_DIR/unpack"
@@ -1819,7 +2429,10 @@ install_core_from_release() {
 	fi
 
 	mkdir -p "$UNPACK_DIR"
-	TAR_OUT="$(mktemp "$TMP_ROOT/oxidns-tar.XXXXXX")"
+	TAR_OUT="$(mktemp "$TMP_ROOT/oxidns-tar.XXXXXX")" || {
+		json_error "mktemp_unavailable" "cannot create a temporary tar output file"
+		return 1
+	}
 	core_progress_command "tar -xzf $ARCHIVE_FILE -C $UNPACK_DIR"
 	if ! tar -xzf "$ARCHIVE_FILE" -C "$UNPACK_DIR" >"$TAR_OUT" 2>&1; then
 		TAR_DETAIL="$(read_error_detail_file "$TAR_OUT" 2>/dev/null || true)"
@@ -1854,7 +2467,10 @@ install_core_from_release() {
 	INIT="$(init_script)"
 	if [ "$SERVICE_WAS_RUNNING" = "1" ] && [ -x "$INIT" ]; then
 		core_progress_command "$INIT stop"
-		SERVICE_OUT="$(mktemp "$TMP_ROOT/oxidns-service.XXXXXX")"
+		SERVICE_OUT="$(mktemp "$TMP_ROOT/oxidns-service.XXXXXX")" || {
+		json_error "mktemp_unavailable" "cannot create a temporary service output file"
+		return 1
+	}
 		if ! run_init_action "$INIT" stop >"$SERVICE_OUT" 2>&1; then
 			MSG="$(read_error_detail_file "$SERVICE_OUT" 2>/dev/null || true)"
 			rm -f "$SERVICE_OUT"
@@ -1864,13 +2480,26 @@ install_core_from_release() {
 		rm -f "$SERVICE_OUT"
 	fi
 
+	# R1: snapshot everything that is about to be replaced.
+	if ! backup_core_files; then
+		core_install_error "core_backup_failed" "cannot back up the current core before replacement" "backup_core" "dir=$CORE_TMP_DIR"
+		return 1
+	fi
 	core_progress_command "install core files"
-	install_core_files "$UNPACK_DIR"
+	if ! install_core_files "$UNPACK_DIR"; then
+		restore_core_files || true
+		core_install_error "core_install_failed" "failed to install the new core files; previous core restored" "install_files" "asset=$SELECT_ASSET_NAME"
+		return 1
+	fi
 
 	if [ -n "$CONFIG_TMP" ]; then
 		core_progress_command "install default config to $CONFIG_PATH"
-		mkdir -p "$(dirname "$CONFIG_PATH")"
-		mv "$CONFIG_TMP" "$CONFIG_PATH"
+		if ! mkdir -p "$(dirname "$CONFIG_PATH")" || ! mv "$CONFIG_TMP" "$CONFIG_PATH"; then
+			restore_core_files || true
+			core_install_error "config_install_failed" "failed to install the default configuration; previous core restored" "install_files" "config=$CONFIG_PATH"
+			return 1
+		fi
+		CORE_CONFIG_WAS_INSTALLED=1
 	elif [ -f "$UNPACK_DIR/config.yaml" ]; then
 		core_progress_command "copy config example to $WORKING_DIR/config.yaml.example"
 		cp "$UNPACK_DIR/config.yaml" "$WORKING_DIR/config.yaml.example" 2>/dev/null || true
@@ -1884,9 +2513,16 @@ install_core_from_release() {
 	else
 		CONFIG_CHECK_OUTPUT="${CONFIG_CHECK_OUTPUT:-configuration check failed}"
 		core_progress_log "error" "$CONFIG_CHECK_OUTPUT"
+		# R1: never report success when the new core cannot load the config.
+		restore_core_files || true
+		core_install_error "config_check_failed" "the new core failed the configuration check; previous core restored" "config_check" "${CONFIG_CHECK_OUTPUT:-config check failed}"
+		return 1
 	fi
 	if [ "$SERVICE_WAS_RUNNING" = "1" ] && [ -x "$INIT" ]; then
-		SERVICE_OUT="$(mktemp "$TMP_ROOT/oxidns-service.XXXXXX")"
+		SERVICE_OUT="$(mktemp "$TMP_ROOT/oxidns-service.XXXXXX")" || {
+		json_error "mktemp_unavailable" "cannot create a temporary service output file"
+		return 1
+	}
 		core_progress_command "$INIT start"
 		if "$INIT" start >"$SERVICE_OUT" 2>&1; then
 			SERVICE_RESTART="requested"
@@ -1894,7 +2530,11 @@ install_core_from_release() {
 		else
 			MSG="$(read_error_detail_file "$SERVICE_OUT" 2>/dev/null || true)"
 			rm -f "$SERVICE_OUT"
-			core_install_error "service_restart_failed" "core installed, but service restart failed" "restart_service" "${MSG:-service restart failed}"
+			restore_core_files || true
+			if [ -x "$INIT" ]; then
+				"$INIT" start >/dev/null 2>&1 || true
+			fi
+			core_install_error "service_restart_failed" "the new core failed to restart; previous core restored" "restart_service" "${MSG:-service restart failed}"
 			return 1
 		fi
 		rm -f "$SERVICE_OUT"
@@ -1963,6 +2603,9 @@ emit_core_reinstall() {
 emit_core_update_check() {
 	load_settings
 	require_download_transport || return 1
+	require_commands mktemp || return 1
+	PROGRESS_LOG_FILE="$CORE_PROGRESS_DIR/core-check.log"
+	core_progress_reset "check OxiDNS core updates"
 
 	case "$CORE_REPOSITORY" in
 		*/*) ;;
@@ -1989,7 +2632,10 @@ emit_core_update_check() {
 	fi
 
 	RELEASE_URL="$(release_api_url "$CORE_REPOSITORY" latest)"
-	RELEASE_FILE="$(mktemp "$TMP_ROOT/oxidns-update-check.XXXXXX")"
+	RELEASE_FILE="$(mktemp "$TMP_ROOT/oxidns-update-check.XXXXXX")" || {
+		json_error "mktemp_unavailable" "cannot create a temporary release metadata file"
+		return 1
+	}
 	if ! download_file "$RELEASE_URL" "$RELEASE_FILE"; then
 		rm -f "$RELEASE_FILE"
 		json_detailed_error "release_fetch_failed" "failed to fetch OxiDNS release metadata" "download_metadata" "repository=$CORE_REPOSITORY url=$RELEASE_URL; ${DOWNLOAD_ERROR:-unknown download error}"
@@ -2007,8 +2653,9 @@ emit_core_update_check() {
 
 	LATEST_VERSION="$(version_tag "$SELECT_TAG")"
 	CURRENT_TAG="$(version_tag "$CURRENT_VERSION")"
+	VERSION_ORDER="$(version_cmp "$LATEST_VERSION" "$CURRENT_TAG")"
 	UPDATE_AVAILABLE=0
-	if [ "$LATEST_VERSION" != "$CURRENT_TAG" ]; then
+	if [ "$VERSION_ORDER" = "1" ]; then
 		UPDATE_AVAILABLE=1
 	fi
 
@@ -2054,7 +2701,10 @@ upload_core_error() {
 	ERROR_STAGE="${3:-}"
 	ERROR_DETAIL="${4:-}"
 	rm -rf "${CORE_TMP_DIR:-}" 2>/dev/null || true
-	[ -n "${UPLOAD_PATH:-}" ] && rm -f "$UPLOAD_PATH" 2>/dev/null || true
+	# S1: only ever remove a path that still passes the strict upload check.
+	if [ -n "${UPLOAD_PATH:-}" ] && valid_upload_path "$UPLOAD_PATH"; then
+		rm -f "$UPLOAD_PATH" 2>/dev/null || true
+	fi
 	core_progress_log "error" "$ERROR_CODE: $ERROR_MESSAGE"
 	[ -n "$ERROR_STAGE" ] && core_progress_log "error" "stage=$ERROR_STAGE"
 	[ -n "$ERROR_DETAIL" ] && core_progress_log "error" "$ERROR_DETAIL"
@@ -2062,33 +2712,65 @@ upload_core_error() {
 	return 1
 }
 
+# S1: strip the exact prefix, then require a single safe basename. A shell
+# case of /tmp/oxidns-core-upload-* also matches paths containing '/', so
+# "../" traversal from cgi-io uploads was possible.
+UPLOAD_PREFIX="/tmp/oxidns-core-upload-"
 valid_upload_path() {
-	case "$1" in
-		/tmp/oxidns-core-upload-*) return 0 ;;
+	UPLOAD_VALUE="$1"
+	[ -n "$UPLOAD_VALUE" ] || return 1
+	case "$UPLOAD_VALUE" in
+		"$UPLOAD_PREFIX"*) ;;
+		*) return 1 ;;
 	esac
-	return 1
+	SUFFIX="${UPLOAD_VALUE#"$UPLOAD_PREFIX"}"
+	[ -n "$SUFFIX" ] || return 1
+	case "$SUFFIX" in
+		-*) return 1 ;;
+	esac
+	case "$SUFFIX" in
+		*'/'*|*'..'*|*'*'*|*'?'*|*'['*|*']'*) return 1 ;;
+	esac
+	if printf '%s' "$SUFFIX" | grep -q '[[:cntrl:]]'; then
+		return 1
+	fi
+	# Reject a symlinked parent directory as well as a symlinked upload file.
+	UPLOAD_PARENT="$(dirname "$UPLOAD_VALUE" 2>/dev/null || printf '')"
+	[ "$UPLOAD_PARENT" = "/tmp" ] || return 1
+	[ ! -L "$UPLOAD_PARENT" ] || return 1
+	[ -f "$UPLOAD_VALUE" ] && [ ! -L "$UPLOAD_VALUE" ] || return 1
+	return 0
 }
 
+# S2: static validation only. NEVER execute an uploaded binary as root during
+# validation or reporting; service restart is the only intended execution.
 validate_uploaded_binary() {
 	BIN="$1"
-	chmod 755 "$BIN"
-	if command -v hexdump >/dev/null 2>&1; then
-		MAGIC="$(dd if="$BIN" bs=4 count=1 2>/dev/null | hexdump -v -e '1/1 "%02x"')"
-		[ "$MAGIC" = "7f454c46" ] || return 1
-	elif command -v od >/dev/null 2>&1; then
-		MAGIC="$(dd if="$BIN" bs=4 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')"
-		[ "$MAGIC" = "7f454c46" ] || return 1
+	[ -f "$BIN" ] && [ ! -L "$BIN" ] || return 1
+	MAGIC="$(dd if="$BIN" bs=4 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+	[ "$MAGIC" = "7f454c46" ] || return 1
+	return 0
+}
+
+# Optional plain-text metadata inside an uploaded archive. Absent/invalid
+# metadata is reported as "unknown" instead of executing the binary.
+uploaded_metadata_value() {
+	UNPACK_DIR="$1"
+	FIELD="$2"
+	META_FILE=""
+	case "$FIELD" in
+		VERSION) META_FILE="$UNPACK_DIR/VERSION" ;;
+		BUNDLE) META_FILE="$UNPACK_DIR/BUNDLE" ;;
+		*) return 0 ;;
+	esac
+	if [ -f "$META_FILE" ] && [ ! -L "$META_FILE" ]; then
+		VALUE="$(sed -n '1p' "$META_FILE" 2>/dev/null | cut -c1-128)"
+		case "$VALUE" in
+			''|*[!A-Za-z0-9._+-]*) return 0 ;;
+		esac
+		printf '%s' "$VALUE"
 	fi
-	CHECK_BIN="$(dirname "$OXIDNS_BIN")/.oxidns-upload-check.$$"
-	mkdir -p "$(dirname "$OXIDNS_BIN")"
-	cp "$BIN" "$CHECK_BIN" || return 1
-	chmod 755 "$CHECK_BIN"
-	set +e
-	"$CHECK_BIN" build-info >/dev/null 2>&1
-	VALIDATE_RC="$?"
-	set -e
-	rm -f "$CHECK_BIN"
-	[ "$VALIDATE_RC" -eq 0 ]
+	return 0
 }
 
 install_uploaded_core_from_unpack() {
@@ -2105,10 +2787,10 @@ install_uploaded_core_from_unpack() {
 	fi
 	core_progress_command "validate uploaded oxidns binary"
 	if ! validate_uploaded_binary "$UNPACK_DIR/oxidns"; then
-		upload_core_error "uploaded_core_invalid" "uploaded oxidns binary cannot report build-info" "validate_uploaded_core" "the uploaded binary either is not executable for this target or build-info failed"
+		upload_core_error "uploaded_core_invalid" "uploaded oxidns file is not a static ELF binary" "validate_uploaded_core" "only the ELF magic header is checked; the binary is never executed during validation"
 		return 1
 	fi
-	core_progress_log "success" "uploaded binary passed validation"
+	core_progress_log "success" "uploaded binary passed static ELF validation (not executed)"
 
 	CONFIG_TMP=""
 	if [ ! -e "$CONFIG_PATH" ] && [ -f "$UNPACK_DIR/config.yaml" ]; then
@@ -2125,7 +2807,10 @@ install_uploaded_core_from_unpack() {
 	INIT="$(init_script)"
 	if [ "$SERVICE_WAS_RUNNING" = "1" ] && [ -x "$INIT" ]; then
 		core_progress_command "$INIT stop"
-		SERVICE_OUT="$(mktemp "$TMP_ROOT/oxidns-service.XXXXXX")"
+		SERVICE_OUT="$(mktemp "$TMP_ROOT/oxidns-service.XXXXXX")" || {
+		json_error "mktemp_unavailable" "cannot create a temporary service output file"
+		return 1
+	}
 		if ! run_init_action "$INIT" stop >"$SERVICE_OUT" 2>&1; then
 			MSG="$(read_error_detail_file "$SERVICE_OUT" 2>/dev/null || true)"
 			rm -f "$SERVICE_OUT"
@@ -2135,14 +2820,26 @@ install_uploaded_core_from_unpack() {
 		rm -f "$SERVICE_OUT"
 	fi
 
+	if ! backup_core_files; then
+		upload_core_error "core_backup_failed" "cannot back up the current core before replacement" "backup_core" "dir=$CORE_TMP_DIR"
+		return 1
+	fi
 	core_progress_command "install core files"
-	install_core_files "$UNPACK_DIR"
+	if ! install_core_files "$UNPACK_DIR"; then
+		restore_core_files || true
+		upload_core_error "core_install_failed" "failed to install the uploaded core; previous core restored" "install_files" "kind=$UPLOAD_KIND"
+		return 1
+	fi
 	HAS_WEBUI="$CORE_WEBUI_INSTALLED"
 
 	if [ -n "$CONFIG_TMP" ]; then
 		core_progress_command "install default config to $CONFIG_PATH"
-		mkdir -p "$(dirname "$CONFIG_PATH")"
-		mv "$CONFIG_TMP" "$CONFIG_PATH"
+		if ! mkdir -p "$(dirname "$CONFIG_PATH")" || ! mv "$CONFIG_TMP" "$CONFIG_PATH"; then
+			restore_core_files || true
+			upload_core_error "config_install_failed" "failed to install the default configuration; previous core restored" "install_files" "config=$CONFIG_PATH"
+			return 1
+		fi
+		CORE_CONFIG_WAS_INSTALLED=1
 	elif [ -f "$UNPACK_DIR/config.yaml" ]; then
 		core_progress_command "copy config example to $WORKING_DIR/config.yaml.example"
 		cp "$UNPACK_DIR/config.yaml" "$WORKING_DIR/config.yaml.example" 2>/dev/null || true
@@ -2156,6 +2853,12 @@ install_uploaded_core_from_unpack() {
 		else
 			CONFIG_CHECK_OUTPUT="${CONFIG_CHECK_OUTPUT:-configuration check failed}"
 			core_progress_log "error" "$CONFIG_CHECK_OUTPUT"
+			restore_core_files || true
+			if [ "$SERVICE_WAS_RUNNING" = "1" ] && [ -x "$INIT" ]; then
+				"$INIT" start >/dev/null 2>&1 || true
+			fi
+			upload_core_error "config_check_failed" "the uploaded core failed the configuration check; previous core restored" "config_check" "$CONFIG_CHECK_OUTPUT"
+			return 1
 		fi
 	else
 		CONFIG_CHECK_OUTPUT="configuration file is not installed"
@@ -2163,7 +2866,10 @@ install_uploaded_core_from_unpack() {
 	fi
 
 	if [ "$SERVICE_WAS_RUNNING" = "1" ] && [ -x "$INIT" ]; then
-		SERVICE_OUT="$(mktemp "$TMP_ROOT/oxidns-service.XXXXXX")"
+		SERVICE_OUT="$(mktemp "$TMP_ROOT/oxidns-service.XXXXXX")" || {
+		json_error "mktemp_unavailable" "cannot create a temporary service output file"
+		return 1
+	}
 		core_progress_command "$INIT start"
 		if "$INIT" start >"$SERVICE_OUT" 2>&1; then
 			SERVICE_RESTART="requested"
@@ -2171,16 +2877,23 @@ install_uploaded_core_from_unpack() {
 		else
 			MSG="$(read_error_detail_file "$SERVICE_OUT" 2>/dev/null || true)"
 			rm -f "$SERVICE_OUT"
-			upload_core_error "service_restart_failed" "core installed, but service restart failed" "restart_service" "${MSG:-service restart failed}"
+			restore_core_files || true
+			"$INIT" start >/dev/null 2>&1 || true
+			upload_core_error "service_restart_failed" "core installed, but service restart failed; previous core restored" "restart_service" "${MSG:-service restart failed}"
 			return 1
 		fi
 		rm -f "$SERVICE_OUT"
 	fi
 
-	BUILD_JSON="$(build_info_json)"
-	VERSION="$(json_value_from_string version "$BUILD_JSON")"
-	BUNDLE="$(json_value_from_string bundle "$BUILD_JSON")"
-	rm -f "$UPLOAD_PATH"
+	# S2: read optional plain-text metadata; otherwise report "unknown".
+	# Never call build-info on the uploaded binary here.
+	VERSION="$(uploaded_metadata_value "$UNPACK_DIR" VERSION)"
+	BUNDLE="$(uploaded_metadata_value "$UNPACK_DIR" BUNDLE)"
+	[ -n "$VERSION" ] || VERSION="unknown"
+	[ -n "$BUNDLE" ] || BUNDLE="unknown"
+	if [ -n "${UPLOAD_PATH:-}" ] && valid_upload_path "$UPLOAD_PATH"; then
+		rm -f "$UPLOAD_PATH" 2>/dev/null || true
+	fi
 	rm -rf "$CORE_TMP_DIR"
 	core_progress_log "success" "uploaded core installed: version=${VERSION:-unknown} bundle=${BUNDLE:-unknown}"
 	printf '{"ok":true,"action":"upload_install","kind":'
@@ -2211,13 +2924,26 @@ emit_core_upload_install_locked() {
 	UPLOAD_PATH="$(input_value path "$INPUT")"
 	core_progress_log "info" "uploaded_path=${UPLOAD_PATH:-missing}"
 
-	if ! valid_upload_path "$UPLOAD_PATH" || [ ! -f "$UPLOAD_PATH" ]; then
+	# S2: default-deny. Enabling this grants root code execution from an
+	# uploaded file, so it needs explicit UCI opt-in AND the separate ACL.
+	if [ "$ALLOW_CORE_UPLOAD" != "1" ]; then
+		json_detailed_error "core_upload_disabled" "core uploads are disabled; set allow_core_upload=1 and grant the core-upload ACL group" "validate_uploaded_core" "allow_core_upload=$ALLOW_CORE_UPLOAD"
+		return 1
+	fi
+	if ! require_commands tar mktemp od sha256sum; then
+		return 1
+	fi
+
+	if ! valid_upload_path "$UPLOAD_PATH"; then
 		core_progress_log "error" "invalid upload path"
 		json_detailed_error "invalid_upload_path" "uploaded file must be a readable /tmp/oxidns-core-upload-* file" "validate_uploaded_core" "path=${UPLOAD_PATH:-missing}"
 		return 1
 	fi
 
-	CORE_TMP_DIR="$(mktemp -d "$TMP_ROOT/oxidns-core-upload.XXXXXX")"
+	CORE_TMP_DIR="$(mktemp -d "$TMP_ROOT/oxidns-core-upload.XXXXXX")" || {
+		json_error "mktemp_unavailable" "cannot create a temporary upload work directory"
+		return 1
+	}
 	UNPACK_DIR="$CORE_TMP_DIR/unpack"
 	mkdir -p "$UNPACK_DIR"
 
@@ -2227,7 +2953,10 @@ emit_core_upload_install_locked() {
 			upload_core_error "uploaded_archive_unsafe" "uploaded archive contains unsafe paths or links" "validate_archive" "archive=$UPLOAD_PATH"
 			return 1
 		fi
-		TAR_OUT="$(mktemp "$TMP_ROOT/oxidns-upload-tar.XXXXXX")"
+		TAR_OUT="$(mktemp "$TMP_ROOT/oxidns-upload-tar.XXXXXX")" || {
+		json_error "mktemp_unavailable" "cannot create a temporary tar output file"
+		return 1
+	}
 		core_progress_command "tar -xzf $UPLOAD_PATH -C $UNPACK_DIR"
 		if ! tar -xzf "$UPLOAD_PATH" -C "$UNPACK_DIR" >"$TAR_OUT" 2>&1; then
 			TAR_DETAIL="$(read_error_detail_file "$TAR_OUT" 2>/dev/null || true)"
@@ -2241,7 +2970,10 @@ emit_core_upload_install_locked() {
 	fi
 
 	core_progress_command "cp $UPLOAD_PATH $UNPACK_DIR/oxidns"
-	cp "$UPLOAD_PATH" "$UNPACK_DIR/oxidns"
+	if ! cp "$UPLOAD_PATH" "$UNPACK_DIR/oxidns"; then
+		upload_core_error "upload_copy_failed" "cannot stage the uploaded binary" "validate_uploaded_core" "path=$UPLOAD_PATH"
+		return 1
+	fi
 	install_uploaded_core_from_unpack "binary" "$UNPACK_DIR"
 }
 
@@ -2270,7 +3002,10 @@ emit_core_remove_locked() {
 		return 1
 	fi
 	if [ "$REMOVE_WORKDIR" = "1" ] && [ "$REMOVE_CONFIG" != "1" ] && path_is_under "$CONFIG_PATH" "$WORKING_DIR" && [ -e "$CONFIG_PATH" ]; then
-		CONFIG_BACKUP="$(mktemp "$TMP_ROOT/oxidns-config-preserve.XXXXXX")"
+		CONFIG_BACKUP="$(mktemp "$TMP_ROOT/oxidns-config-preserve.XXXXXX")" || {
+		json_error "mktemp_unavailable" "cannot create a temporary config backup file"
+		return 1
+	}
 		core_progress_command "preserve $CONFIG_PATH before removing $WORKING_DIR"
 		if cp "$CONFIG_PATH" "$CONFIG_BACKUP" 2>/dev/null; then
 			:
@@ -2291,26 +3026,43 @@ emit_core_remove_locked() {
 		"$INIT" disable >/dev/null 2>&1 || true
 	fi
 	core_progress_command "rm -f $OXIDNS_BIN"
-	rm -f "$OXIDNS_BIN"
+	rm -f "$OXIDNS_BIN" || {
+		json_detailed_error "core_remove_failed" "cannot remove the OxiDNS binary" "remove_binary" "path=$OXIDNS_BIN"
+		return 1
+	}
 	core_progress_command "rm -rf $WEBUI_DIR"
-	rm -rf "$WEBUI_DIR"
+	rm -rf "$WEBUI_DIR" || {
+		json_detailed_error "core_remove_failed" "cannot remove the web UI" "remove_webui" "path=$WEBUI_DIR"
+		return 1
+	}
 	core_progress_command "rm -rf $PERSIST_DIR"
-	rm -rf "$PERSIST_DIR"
+	rm -rf "$PERSIST_DIR" || {
+		json_detailed_error "core_remove_failed" "cannot remove the persistent core directory" "remove_persist" "path=$PERSIST_DIR"
+		return 1
+	}
 
 	if [ "$REMOVE_CONFIG" = "1" ]; then
 		core_progress_command "rm -f $CONFIG_PATH"
-		rm -f "$CONFIG_PATH"
+		rm -f "$CONFIG_PATH" || {
+			json_detailed_error "core_remove_failed" "cannot remove the configuration file" "remove_config" "path=$CONFIG_PATH"
+			return 1
+		}
 		CONFIG_REMOVED=1
 	fi
 	if [ "$REMOVE_WORKDIR" = "1" ]; then
 		core_progress_command "rm -rf $WORKING_DIR"
-		rm -rf "$WORKING_DIR"
+		rm -rf "$WORKING_DIR" || {
+			json_detailed_error "core_remove_failed" "cannot remove the working directory" "remove_workdir" "path=$WORKING_DIR"
+			return 1
+		}
 		WORKDIR_REMOVED=1
 	fi
 	if [ -n "$CONFIG_BACKUP" ] && [ -f "$CONFIG_BACKUP" ]; then
 		core_progress_command "restore preserved config to $CONFIG_PATH"
-		mkdir -p "$(dirname "$CONFIG_PATH")"
-		mv "$CONFIG_BACKUP" "$CONFIG_PATH"
+		if ! mkdir -p "$(dirname "$CONFIG_PATH")" || ! mv "$CONFIG_BACKUP" "$CONFIG_PATH"; then
+			json_detailed_error "core_remove_failed" "cannot restore the preserved configuration" "restore_config" "path=$CONFIG_PATH"
+			return 1
+		fi
 	fi
 	core_progress_log "success" "core removed"
 	printf '{"ok":true,"action":"remove","binary_path":'
@@ -2411,8 +3163,12 @@ rules_validate_stage() {
 	if ! grep -qF "$RULES_DIR/" "$CONFIG_PATH" 2>/dev/null; then
 		core_progress_log "warn" "config does not reference $RULES_DIR, pre-flight check is not meaningful"
 	fi
-	STAGE_CONFIG="$(mktemp "$TMP_ROOT/oxidns-rules-config.XXXXXX")"
-	sed "s|$RULES_DIR/|$RULES_STAGE/|g" "$CONFIG_PATH" > "$STAGE_CONFIG"
+	require_commands mktemp || return 1
+	STAGE_CONFIG="$(mktemp "$TMP_ROOT/oxidns-rules-config.XXXXXX")" || return 1
+	sed "s|$RULES_DIR/|$RULES_STAGE/|g" "$CONFIG_PATH" > "$STAGE_CONFIG" || {
+		rm -f "$STAGE_CONFIG"
+		return 1
+	}
 	core_progress_command "$OXIDNS_BIN check (staged rules)"
 	STAGE_RC=0
 	STAGE_OUTPUT="$("$OXIDNS_BIN" check -c "$STAGE_CONFIG" -d "$WORKING_DIR" 2>&1)" || STAGE_RC=$?
@@ -2473,10 +3229,10 @@ rules_latest_tag() {
 	RULES_TAG_LIST="$(printf '%s' "$RULES_TAGS" | tr '\n' ' ' | cut -c1-200)"
 	core_progress_log "info" "release tags seen: $RULES_TAG_LIST"
 
-	# Accept only <prefix><digits/dots> and take the highest one.
+	# Accept only <prefix><digits/dots> and take the numerically highest one.
 	RULES_TAG="$(printf '%s\n' "$RULES_TAGS" \
 		| sed -n "s/^\($RULES_TAG_PREFIX[0-9][0-9.]*\)$/\1/p" \
-		| LC_ALL=C sort | tail -n 1)"
+		| version_sort | tail -n 1)"
 	return 0
 }
 
@@ -2574,12 +3330,58 @@ emit_rules_status() {
 	printf ']}\n'
 }
 
+# P2: cache rule-check results. The signature is the mtime+size of the local
+# installed rule files, so changing rules invalidates the cache immediately.
+RULES_CHECK_CACHE="$CORE_PROGRESS_DIR/rules-check.cache"
+rules_state_signature() {
+	printf 'version=%s:%s\n' \
+		"$(stat_mtime "$RULES_DIR/$RULES_VERSION_FILE" 2>/dev/null || printf '')" \
+		"$(file_size_bytes "$RULES_DIR/$RULES_VERSION_FILE" 2>/dev/null || printf '0')"
+	for FILE_NAME in $(rules_files); do
+		printf '%s=%s:%s\n' "$FILE_NAME" \
+			"$(stat_mtime "$RULES_DIR/$FILE_NAME" 2>/dev/null || printf '')" \
+			"$(file_size_bytes "$RULES_DIR/$FILE_NAME" 2>/dev/null || printf '0')"
+	done
+}
+
+rules_check_cache_emit() {
+	CACHE_SIGNATURE="$1"
+	[ -f "$RULES_CHECK_CACHE" ] && [ ! -L "$RULES_CHECK_CACHE" ] || return 1
+	CACHE_AGE="$(($(date +%s) - $(stat_mtime "$RULES_CHECK_CACHE" 2>/dev/null || printf '0')))"
+	[ "$CACHE_AGE" -ge 0 ] && [ "$CACHE_AGE" -lt "$BUILD_INFO_CACHE_TTL" ] || return 1
+	[ "$(sed -n '1p' "$RULES_CHECK_CACHE" 2>/dev/null)" = "$CACHE_SIGNATURE" ] || return 1
+	sed -n '2,$p' "$RULES_CHECK_CACHE" 2>/dev/null
+}
+
+rules_check_cache_store() {
+	CACHE_SIGNATURE="$1"
+	CACHE_RESULT="$2"
+	CACHE_TMP="$(mktemp "$CORE_PROGRESS_DIR/rules-check.XXXXXX" 2>/dev/null || true)"
+	[ -n "$CACHE_TMP" ] || return 0
+	{
+		printf '%s\n' "$CACHE_SIGNATURE"
+		cat "$CACHE_RESULT"
+	} > "$CACHE_TMP" 2>/dev/null || { rm -f "$CACHE_TMP"; return 0; }
+	mv -f "$CACHE_TMP" "$RULES_CHECK_CACHE" 2>/dev/null || rm -f "$CACHE_TMP"
+	return 0
+}
+
 emit_rules_check() {
 	load_settings
 	require_download_transport || return 1
+	require_commands mktemp || return 1
+	RULES_SIGNATURE="$(rules_state_signature)"
+	if rules_check_cache_emit "$RULES_SIGNATURE"; then
+		return 0
+	fi
+	# S9: check runs use their own log; installs/updates keep the shared log.
+	PROGRESS_LOG_FILE="$CORE_PROGRESS_DIR/rules-check.log"
 	core_progress_reset "check rule subscription updates"
 
-	CHECK_DIR="$(mktemp -d "$TMP_ROOT/oxidns-rules-check.XXXXXX")"
+	CHECK_DIR="$(mktemp -d "$TMP_ROOT/oxidns-rules-check.XXXXXX")" || {
+		json_error "mktemp_unavailable" "cannot create a temporary rules check directory"
+		return 1
+	}
 	RESOLVE_RC=0
 	rules_resolve_release "$CHECK_DIR" || RESOLVE_RC=$?
 	if [ "$RESOLVE_RC" -eq 2 ]; then
@@ -2609,24 +3411,35 @@ emit_rules_check() {
 		fi
 	done
 
-	printf '{"ok":true,"repository":'
-	json_string "$RULES_REPOSITORY"
-	printf ',"current_version":'
-	json_string "$CURRENT_VERSION"
-	printf ',"baseline_version":'
-	json_string "$(rules_version_of "$RULES_BASELINE_DIR/VERSION")"
-	printf ',"latest_version":'
-	json_string "$RULES_VERSION"
-	printf ',"asset":'
-	json_string "$RULES_ASSET"
-	printf ',"size":'
-	json_string "$RULES_SIZE"
-	if [ "$UPDATE_AVAILABLE" = "1" ]; then
-		printf ',"update_available":true'
-	else
-		printf ',"update_available":false'
+	RESULT_FILE="$(mktemp "$TMP_ROOT/oxidns-rules-result.XXXXXX" 2>/dev/null || true)"
+	if [ -z "$RESULT_FILE" ]; then
+		rm -rf "$CHECK_DIR"
+		json_error "mktemp_unavailable" "cannot create a temporary result file"
+		return 1
 	fi
-	printf '}\n'
+	{
+		printf '{"ok":true,"repository":'
+		json_string "$RULES_REPOSITORY"
+		printf ',"current_version":'
+		json_string "$CURRENT_VERSION"
+		printf ',"baseline_version":'
+		json_string "$(rules_version_of "$RULES_BASELINE_DIR/VERSION")"
+		printf ',"latest_version":'
+		json_string "$RULES_VERSION"
+		printf ',"asset":'
+		json_string "$RULES_ASSET"
+		printf ',"size":'
+		json_string "$RULES_SIZE"
+		if [ "$UPDATE_AVAILABLE" = "1" ]; then
+			printf ',"update_available":true'
+		else
+			printf ',"update_available":false'
+		fi
+		printf '}\n'
+	} > "$RESULT_FILE"
+	cat "$RESULT_FILE"
+	rules_check_cache_store "$RULES_SIGNATURE" "$RESULT_FILE"
+	rm -f "$RESULT_FILE"
 	rm -rf "$CHECK_DIR"
 }
 
@@ -2637,9 +3450,13 @@ emit_rules_update() {
 emit_rules_update_locked() {
 	load_settings
 	require_download_transport || return 1
+	require_commands mktemp || return 1
 	core_progress_reset "update rule subscriptions"
 
-	WORK_DIR="$(mktemp -d "$TMP_ROOT/oxidns-rules-update.XXXXXX")"
+	WORK_DIR="$(mktemp -d "$TMP_ROOT/oxidns-rules-update.XXXXXX")" || {
+		json_error "mktemp_unavailable" "cannot create a temporary rules work directory"
+		return 1
+	}
 	RESOLVE_RC=0
 	rules_resolve_release "$WORK_DIR" || RESOLVE_RC=$?
 	if [ "$RESOLVE_RC" -eq 2 ]; then
@@ -2811,61 +3628,131 @@ emit_rules_restore() {
 }
 
 emit_rules_restore_locked() {
+	load_settings
 	core_progress_reset "restore rules from bundled baseline"
+	if ! require_commands mktemp; then
+		return 1
+	fi
+	if [ -L "$RULES_DIR" ]; then
+		json_detailed_error "rules_dir_symlink" "refusing to restore rules through a symlink" "restore_rules" "dir=$RULES_DIR"
+		return 1
+	fi
 	if [ ! -d "$RULES_BASELINE_DIR" ]; then
 		json_detailed_error "baseline_missing" "the rules baseline is not installed" "restore_rules" "hint: install the oxidns-rules-baseline package"
 		return 1
 	fi
-	mkdir -p "$RULES_DIR" || {
-		json_error "rules_dir_failed" "cannot create $RULES_DIR"
+	if ! mkdir -p "$(dirname "$RULES_DIR")" 2>/dev/null; then
+		json_error "rules_dir_failed" "cannot create the parent of $RULES_DIR"
 		return 1
-	}
+	fi
+	STAGE_DIR="$(mktemp -d "$RULES_DIR.restore.XXXXXX" 2>/dev/null || true)"
+	if [ -z "$STAGE_DIR" ]; then
+		json_error "rules_stage_failed" "cannot create the restore staging directory"
+		return 1
+	fi
+
+	# R2: build a complete set in staging first. Files missing from the baseline
+	# are carried over from the live set so restore can never delete the only
+	# good copy.
 	RESTORED=0
 	for FILE_NAME in $(rules_files); do
-		if [ ! -s "$RULES_BASELINE_DIR/$FILE_NAME" ]; then
-			core_progress_log "warn" "baseline has no $FILE_NAME, skipped"
-			continue
-		fi
-		if cp "$RULES_BASELINE_DIR/$FILE_NAME" "$RULES_DIR/$FILE_NAME"; then
+		if [ -s "$RULES_BASELINE_DIR/$FILE_NAME" ]; then
+			if ! cp "$RULES_BASELINE_DIR/$FILE_NAME" "$STAGE_DIR/$FILE_NAME" 2>/dev/null; then
+				rm -rf "$STAGE_DIR"
+				json_detailed_error "restore_failed" "failed to stage $FILE_NAME from the baseline" "restore_rules" "$FILE_NAME"
+				return 1
+			fi
 			RESTORED=$((RESTORED + 1))
-			core_progress_log "info" "restored $FILE_NAME"
-		else
-			json_detailed_error "restore_failed" "failed to restore $FILE_NAME" "restore_rules" "$FILE_NAME"
-			return 1
+		elif [ -s "$RULES_DIR/$FILE_NAME" ]; then
+			if ! cp "$RULES_DIR/$FILE_NAME" "$STAGE_DIR/$FILE_NAME" 2>/dev/null; then
+				rm -rf "$STAGE_DIR"
+				json_detailed_error "restore_failed" "failed to preserve $FILE_NAME" "restore_rules" "$FILE_NAME"
+				return 1
+			fi
 		fi
 	done
 	BASELINE_VERSION="$(rules_version_of "$RULES_BASELINE_DIR/VERSION")"
 	if [ -n "$BASELINE_VERSION" ]; then
-		printf '%s\n' "$BASELINE_VERSION" > "$RULES_DIR/$RULES_VERSION_FILE"
-	fi
-
-	RESTART_STATUS="not_requested"
-	if service_running; then
-		INIT="$(init_script)"
-		if [ -x "$INIT" ]; then
-			run_init_action "$INIT" restart >/dev/null 2>&1 || true
-			RESTART_STATUS="restarted"
+		if ! printf '%s\n' "$BASELINE_VERSION" > "$STAGE_DIR/$RULES_VERSION_FILE"; then
+			rm -rf "$STAGE_DIR"
+			json_error "restore_failed" "cannot write the installed version file"
+			return 1
 		fi
 	fi
+	if ! rules_validate_stage "$STAGE_DIR"; then
+		rm -rf "$STAGE_DIR"
+		json_detailed_error "rules_validation_failed" "the restored rules failed validation" "restore_rules" "${RULES_VALIDATE_ERROR:-oxidns check failed}"
+		return 1
+	fi
 
+	WAS_RUNNING=0
+	if service_running; then
+		WAS_RUNNING=1
+	fi
+	BACKUP_DIR="$RULES_DIR.backup.$(date +%Y%m%d%H%M%S).$$"
+	rm -rf "$BACKUP_DIR" 2>/dev/null || true
+	if [ -d "$RULES_DIR" ]; then
+		if ! mv "$RULES_DIR" "$BACKUP_DIR" 2>/dev/null; then
+			rm -rf "$STAGE_DIR"
+			json_detailed_error "restore_swap_failed" "cannot move the current rules aside" "restore_rules" "$RULES_DIR"
+			return 1
+		fi
+	fi
+	if ! mv "$STAGE_DIR" "$RULES_DIR" 2>/dev/null; then
+		[ -d "$BACKUP_DIR" ] && mv "$BACKUP_DIR" "$RULES_DIR" 2>/dev/null || true
+		rm -rf "$STAGE_DIR"
+		json_detailed_error "restore_swap_failed" "cannot install the restored rules" "restore_rules" "$RULES_DIR"
+		return 1
+	fi
 	core_progress_log "success" "restored $RESTORED file(s) from baseline $BASELINE_VERSION"
+
+	RESTART_STATUS="not_requested"
+	if [ "$WAS_RUNNING" = "1" ]; then
+		INIT="$(init_script)"
+		if [ -x "$INIT" ]; then
+			core_progress_command "$INIT restart"
+			run_init_action "$INIT" restart >/dev/null 2>&1 || true
+			RUNNING=0
+			for _try in 1 2 3 4 5 6 7 8 9 10; do
+				if service_running; then
+					RUNNING=1
+					break
+				fi
+				sleep 1
+			done
+			if [ "$RUNNING" = "1" ]; then
+				RESTART_STATUS="restarted"
+			else
+				RESTART_STATUS="failed"
+				core_progress_log "error" "service did not come back after restore; rolling back"
+				rm -rf "$RULES_DIR" 2>/dev/null || true
+				if [ -d "$BACKUP_DIR" ]; then
+					mv "$BACKUP_DIR" "$RULES_DIR" 2>/dev/null || true
+				fi
+				run_init_action "$INIT" restart >/dev/null 2>&1 || true
+				json_detailed_error "rules_restart_failed" "the service failed with the restored rules; the previous set was restored" "restart_service" "version=$BASELINE_VERSION"
+				return 1
+			fi
+		fi
+	else
+		RESTART_STATUS="service_stopped"
+	fi
+
+	# Keep a small, timestamped rollback history instead of one fixed .backup.
+	for OLD_BACKUP in $(ls -1d "$RULES_DIR".backup.* 2>/dev/null | sort -r | awk 'NR > 3'); do
+		rm -rf "$OLD_BACKUP" 2>/dev/null || true
+	done
+
 	printf '{"ok":true,"restored":%s,"version":' "$RESTORED"
 	json_string "$BASELINE_VERSION"
 	printf ',"restart":'
 	json_string "$RESTART_STATUS"
+	printf ',"backup":'
+	json_string "$BACKUP_DIR"
 	printf '}\n'
 }
 
-
 load_prewarm_settings() {
-	# Heal the legacy colliding section ID before any UCI access. This function
-	# is reached by both prewarm_read (page load) and prewarm_save (page save).
-	# prewarm_save ends with `uci commit oxidns`, which rewrites the whole file;
-	# on a colliding config libuci keeps only one 'main' section and silently
-	# drops api_pass / config_path / working_dir. Self-healing here makes the
-	# save path safe even when it is the very first action after upgrading from
-	# fde42f8 (no status call, no service restart to trigger the other heals).
-	heal_prewarm_section_id
 	PREWARM_ENABLED=1
 	PREWARM_PROTOCOL=udp
 	PREWARM_SERVER=127.0.0.1
@@ -2921,15 +3808,9 @@ prewarm_input_number() {
 }
 
 prewarm_input_content() {
-	INPUT="$1"
-	if command -v jsonfilter >/dev/null 2>&1; then
-		input_value content "$INPUT"
-		return 0
-	fi
-	# The sed fallback returns the raw JSON string; decode the escapes LuCI
-	# sends for newlines so the saved list is one domain per line.
-	VALUE="$(input_value content "$INPUT")"
-	printf '%b' "$VALUE"
+	# input_value already uses jsonfilter when available and the shared escape
+	# decoder otherwise, so saved newlines/unicode survive either path.
+	input_value content "$1"
 }
 
 prewarm_content_path() {
@@ -2962,6 +3843,20 @@ emit_prewarm_read() {
 		json_string ''
 	fi
 	printf '}\n'
+}
+
+# R6/R12: no `|| true` on uci set; uci_transaction reverts on failure.
+prewarm_save_apply() {
+	if ! uci -q get oxidns.prewarm >/dev/null 2>&1; then
+		NEW_SECTION="$(uci -q add oxidns prewarm)" || return 1
+		uci -q rename "oxidns.$NEW_SECTION=prewarm" || return 1
+	fi
+	uci -q set "oxidns.prewarm.enabled=$ENABLED_VALUE" || return 1
+	uci -q set "oxidns.prewarm.protocol=$PROTOCOL_VALUE" || return 1
+	uci -q set "oxidns.prewarm.server=$SERVER_VALUE" || return 1
+	uci -q set "oxidns.prewarm.port=$PORT_VALUE" || return 1
+	uci -q set "oxidns.prewarm.interval=$INTERVAL_VALUE" || return 1
+	return 0
 }
 
 emit_prewarm_save() {
@@ -3054,22 +3949,14 @@ emit_prewarm_save() {
 		return 1
 	fi
 
-	if ! uci -q get oxidns.prewarm >/dev/null 2>&1; then
-		NEW_SECTION="$(uci -q add oxidns prewarm)" || {
-			rm -f "$TMP_FILE"
-			json_error "uci_write_failed" "cannot add prewarm section"
-			return 1
-		}
-		uci -q rename "oxidns.$NEW_SECTION=prewarm" || true
-	fi
-	uci -q set "oxidns.prewarm.enabled=$ENABLED_VALUE" || true
-	uci -q set "oxidns.prewarm.protocol=$PROTOCOL_VALUE" || true
-	uci -q set "oxidns.prewarm.server=$SERVER_VALUE" || true
-	uci -q set "oxidns.prewarm.port=$PORT_VALUE" || true
-	uci -q set "oxidns.prewarm.interval=$INTERVAL_VALUE" || true
-	if ! uci -q commit oxidns || ! mv -f "$TMP_FILE" "$PREWARM_FILE"; then
+	if ! uci_transaction oxidns prewarm_save_apply; then
 		rm -f "$TMP_FILE"
 		json_error "prewarm_save_failed" "cannot commit prewarm settings"
+		return 1
+	fi
+	if ! mv -f "$TMP_FILE" "$PREWARM_FILE"; then
+		rm -f "$TMP_FILE"
+		json_error "prewarm_save_failed" "cannot install the prewarm list"
 		return 1
 	fi
 
@@ -3093,8 +3980,22 @@ emit_prewarm_run() {
 		json_error "prewarm_unavailable" "prewarm helper is not installed"
 		return 1
 	fi
-	if ! "$PREWARM_BIN" --once >/dev/null 2>&1; then
-		json_error "prewarm_run_failed" "prewarm pass failed"
+	# C3: report missing helper dependencies as structured errors instead of
+	# an empty reply or a generic failure.
+	require_commands mktemp awk sort wc find logger || return 1
+	if ! command -v dig >/dev/null 2>&1 && ! command -v nslookup >/dev/null 2>&1; then
+		json_error "dependency_missing" "required command is not installed: dig or nslookup"
+		return 1
+	fi
+	if ! PREWARM_OUTPUT="$("$PREWARM_BIN" --once 2>&1)"; then
+		case "$PREWARM_OUTPUT" in
+			*dependency_missing*)
+				json_error "dependency_missing" "${PREWARM_OUTPUT:-a prewarm dependency is missing}"
+				;;
+			*)
+				json_error "prewarm_run_failed" "${PREWARM_OUTPUT:-prewarm pass failed}"
+				;;
+		esac
 		return 1
 	fi
 	printf '{"ok":true}\n'
@@ -3188,6 +4089,36 @@ emit_hijack_get() {
 	printf '\n'
 }
 
+# R6/R10: both UCI packages are changed in one transaction. A uci set or
+# commit failure emits an error; a firewall reload failure keeps the committed
+# state and is reported through the explicit `warn` field so the UI can tell
+# the user the rules apply on the next reload/reboot.
+hijack_save_apply() {
+	if [ "$PORT_MODE" = "manual" ]; then
+		uci -q set "oxidns.main.hijack_port_mode=manual" || return 1
+		uci -q set "oxidns.main.hijack_port=$MANUAL_PORT" || return 1
+	else
+		uci_delete_if_present oxidns.main.hijack_port_mode || return 1
+		uci_delete_if_present oxidns.main.hijack_port || return 1
+	fi
+	for SECT in $(hijack_managed_sections); do
+		uci_delete_if_present "firewall.$SECT" || return 1
+	done
+	if [ "$ENABLED" = "1" ]; then
+		if [ -n "$DNS_UDP_PORT" ] && [ "$DNS_UDP_PORT" = "$DNS_TCP_PORT" ]; then
+			hijack_add_section "$HIJACK_SECT_BOTH" "tcp udp" "$DNS_UDP_PORT" || return 1
+		else
+			if [ -n "$DNS_UDP_PORT" ]; then
+				hijack_add_section "$HIJACK_SECT_UDP" "udp" "$DNS_UDP_PORT" || return 1
+			fi
+			if [ -n "$DNS_TCP_PORT" ]; then
+				hijack_add_section "$HIJACK_SECT_TCP" "tcp" "$DNS_TCP_PORT" || return 1
+			fi
+		fi
+	fi
+	return 0
+}
+
 emit_hijack_save() {
 	INPUT="$(cat)"
 	if ! command -v uci >/dev/null 2>&1; then
@@ -3214,26 +4145,11 @@ emit_hijack_save() {
 			json_error "invalid_hijack_port" "hijack port must be a number between 1 and 65535"
 			return 1
 		fi
-		uci -q set "oxidns.main.hijack_port_mode=manual" || {
-			json_error "hijack_save_failed" "failed to save the port mode"; return 1; }
-		uci -q set "oxidns.main.hijack_port=$MANUAL_PORT" || {
-			json_error "hijack_save_failed" "failed to save the hijack port"; return 1; }
-	else
-		uci -q delete oxidns.main.hijack_port_mode >/dev/null 2>&1 || true
-		uci -q delete oxidns.main.hijack_port >/dev/null 2>&1 || true
 	fi
-	if ! uci -q commit oxidns; then
-		json_error "hijack_save_failed" "failed to commit the oxidns settings"
-		return 1
-	fi
-	# Re-read what we just committed. resolve_dns_ports() and emit_hijack_status()
-	# both key off HIJACK_PORT_MODE / HIJACK_PORT, which load_settings() captured
-	# before this call overwrote them. Without the reload, switching auto<->manual
-	# or changing the manual port writes the firewall redirect with the OLD port
-	# and returns stale state; the UI self-corrected on the next 5s poll while
-	# the firewall rule stayed wrong.
-	load_settings
-
+	# Use the requested values directly instead of re-reading committed UCI;
+	# this keeps the whole write in a single transaction.
+	HIJACK_PORT_MODE="$PORT_MODE"
+	HIJACK_PORT="$MANUAL_PORT"
 	DNS_UDP_PORT=""; DNS_TCP_PORT=""
 	if [ "$HIJACK_PORT_MODE" = "manual" ] || [ -r "$CONFIG_PATH" ]; then
 		resolve_dns_ports || true
@@ -3246,28 +4162,13 @@ emit_hijack_save() {
 		fi
 		return 1
 	fi
-	for SECT in $(hijack_managed_sections); do
-		uci -q delete "firewall.$SECT" >/dev/null 2>&1 || true
-	done
-	if [ "$ENABLED" = "1" ]; then
-		if [ -n "$DNS_UDP_PORT" ] && [ "$DNS_UDP_PORT" = "$DNS_TCP_PORT" ]; then
-			hijack_add_section "$HIJACK_SECT_BOTH" "tcp udp" "$DNS_UDP_PORT" || {
-				json_error "hijack_write_failed" "failed to add the firewall redirect section"; return 1; }
-		else
-			if [ -n "$DNS_UDP_PORT" ]; then
-				hijack_add_section "$HIJACK_SECT_UDP" "udp" "$DNS_UDP_PORT" || {
-					json_error "hijack_write_failed" "failed to add the UDP redirect section"; return 1; }
-			fi
-			if [ -n "$DNS_TCP_PORT" ]; then
-				hijack_add_section "$HIJACK_SECT_TCP" "tcp" "$DNS_TCP_PORT" || {
-					json_error "hijack_write_failed" "failed to add the TCP redirect section"; return 1; }
-			fi
-		fi
-	fi
-	if ! uci -q commit firewall; then
-		json_error "hijack_save_failed" "failed to commit firewall changes"
+
+	if ! uci_transaction "oxidns firewall" hijack_save_apply; then
+		json_error "hijack_save_failed" "failed to commit hijack settings"
 		return 1
 	fi
+	# A reload failure is reported explicitly in the warn field; the UCI state
+	# is still valid and can be applied by a later firewall restart.
 	RELOADED=1
 	hijack_firewall_reload || RELOADED=0
 	printf '{"ok":true,'
@@ -3277,46 +4178,194 @@ emit_hijack_save() {
 
 # ===== Geo data (geoip.dat / geosite.dat download + atomic replace) =====
 
+# R3/R4: the running file is only trusted when its pid is alive. A stale pid
+# also allows the matching geo lock to be reclaimed by acquire_dir_lock().
 geo_running() {
-	[ -f "$GEO_RUNNING_FILE" ] || return 1
+	[ -f "$GEO_RUNNING_FILE" ] && [ ! -L "$GEO_RUNNING_FILE" ] || return 1
 	GEO_PID="$(sed -n '1p' "$GEO_RUNNING_FILE" 2>/dev/null || true)"
 	if pid_is_running "$GEO_PID"; then
 		return 0
 	fi
 	rm -f "$GEO_RUNNING_FILE" 2>/dev/null || true
+	LOCK_PID="$(sed -n '1p' "$GEO_LOCK_DIR/pid" 2>/dev/null || true)"
+	if [ -n "$LOCK_PID" ] && [ "$LOCK_PID" = "$GEO_PID" ]; then
+		clear_stale_dir_lock "$GEO_LOCK_DIR" || true
+	fi
 	return 1
 }
 
+# S4: reject URL hosts that could reach the router itself or its private LAN.
 valid_geo_url() {
-	case "$1" in
+	URL_VALUE="$1"
+	case "$URL_VALUE" in
 		http://* | https://*) ;;
 		*) return 1 ;;
 	esac
-	case "$1" in
-		*[[:space:]]* | *"'"* | *'"'* | *\\*) return 1 ;;
+	case "$URL_VALUE" in
+		*[[:space:]]* | *"'"* | *'"'* | *\\* | *'@'*) return 1 ;;
+	esac
+	HOST_PORT="$(printf '%s\n' "$URL_VALUE" | sed -n 's|^[A-Za-z][A-Za-z0-9+.-]*://||p' | sed -n '1p')"
+	HOST_PORT="${HOST_PORT%%/*}"
+	HOST_PORT="${HOST_PORT%%\?*}"
+	HOST_PORT="${HOST_PORT%%\#*}"
+	[ -n "$HOST_PORT" ] || return 1
+	case "$HOST_PORT" in
+		\[*\]) HOST="${HOST_PORT#[}"; HOST="${HOST%]}"; PORT="" ;;
+		*:*)
+			PORT="${HOST_PORT##*:}"
+			HOST="${HOST_PORT%:*}"
+			case "$PORT" in
+				''|*[!0-9]*) return 1 ;;
+			esac
+			if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+				return 1
+			fi
+			;;
+		*) HOST="$HOST_PORT"; PORT="" ;;
+	esac
+	[ -n "$HOST" ] || return 1
+	case "$HOST" in
+		*[!A-Za-z0-9.:_-]*) return 1 ;;
+	esac
+	LOWER_HOST="$(printf '%s' "$HOST" | tr 'A-Z' 'a-z')"
+	case "$LOWER_HOST" in
+		localhost | localhost.* | *.localhost | '0.0.0.0' | '' ) return 1 ;;
+		127.* | 10.* | 192.168.* | 169.254.* | 100.6[4-9].* | 100.[7-9][0-9].* | \
+		100.1[0-2][0-9].* | 100.13[0-1].* | 172.1[6-9].* | 172.2[0-9].* | \
+		172.3[0-1].* | 192.0.0.* | 192.0.2.* | 192.88.99.* | 198.18.* | \
+		198.19.* | 198.51.100.* | 203.0.113.* | 224.* | 225.* | 226.* | \
+		227.* | 228.* | 229.* | 230.* | 231.* | 232.* | 233.* | 234.* | \
+		235.* | 236.* | 237.* | 238.* | 239.* | 240.* | 241.* | 242.* | \
+		243.* | 244.* | 245.* | 246.* | 247.* | 248.* | 249.* | 250.* | \
+		251.* | 252.* | 253.* | 254.* | 255.* ) return 1 ;;
+		::1 | :: | fc* | fd* | fe[89ab]* | ff* | 0:0:0:0:0:0:0:1 ) return 1 ;;
+	esac
+	# An IPv4 literal with a non-canonical/private prefix can resolve back to
+	# loopback in some resolvers; require all four octets for dotted hosts.
+	case "$LOWER_HOST" in
+		*[0-9]*.*[0-9]*.*[0-9]*.*[0-9]*)
+			if ! printf '%s' "$LOWER_HOST" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+				return 1
+			fi
+			;;
 	esac
 	return 0
 }
 
+# S4: only known data directories, no symlinked parents, no traversal.
 valid_geo_dir() {
-	case "$1" in
+	DIR_VALUE="$1"
+	case "$DIR_VALUE" in
 		/*) ;;
 		*) return 1 ;;
 	esac
-	case "$1" in
-		*..* | *'*'* | *"?"*) return 1 ;;
+	case "$DIR_VALUE" in
+		*..* | *//* | *[[:cntrl:]]* | *'*'* | *'?'* | *'['* | *']'* ) return 1 ;;
 	esac
+	while [ "${DIR_VALUE%/}" != "$DIR_VALUE" ]; do
+		DIR_VALUE="${DIR_VALUE%/}"
+	done
+	[ -n "$DIR_VALUE" ] && [ "$DIR_VALUE" != "/" ] || return 1
+	case "$DIR_VALUE" in
+		/usr/share/* | /etc/oxidns/* | /var/lib/oxidns/* | /var/oxidns/* ) ;;
+		*) return 1 ;;
+	esac
+	CHECK_PATH="$DIR_VALUE"
+	CURRENT_PATH=""
+	OLD_IFS="$IFS"
+	IFS='/'
+	set -- $CHECK_PATH
+	IFS="$OLD_IFS"
+	for PART in "$@"; do
+		[ -n "$PART" ] || continue
+		CURRENT_PATH="$CURRENT_PATH/$PART"
+		[ ! -L "$CURRENT_PATH" ] || return 1
+		if [ -e "$CURRENT_PATH" ] && [ ! -d "$CURRENT_PATH" ]; then
+			return 1
+		fi
+	done
 	return 0
+}
+
+# S4: only follow the controlled .current -> .versions link we created.
+geo_current_dir() {
+	[ -n "${EFF_DIR:-}" ] || return 1
+	CURRENT_LINK="$EFF_DIR/.current"
+	[ -L "$CURRENT_LINK" ] || return 1
+	CURRENT_DEST="$(readlink "$CURRENT_LINK" 2>/dev/null || true)"
+	case "$CURRENT_DEST" in
+		.versions/.geo.* | "$EFF_DIR"/.versions/.geo.* ) ;;
+		*) return 1 ;;
+	esac
+	VERSION_PART="${CURRENT_DEST##*/}"
+	case "$VERSION_PART" in
+		'' | *..* | *[!A-Za-z0-9._-]* ) return 1 ;;
+	esac
+	[ -d "$EFF_DIR/.versions/$VERSION_PART" ] || return 1
+	printf '%s\n' "$EFF_DIR/.versions/$VERSION_PART"
+}
+
+# P2: poll-heavy geo pages ask for file hashes repeatedly. Cache by mtime+size
+# so an unchanged multi-megabyte dat file is hashed only once per TTL.
+geo_sha_cached() {
+	HASH_FILE="$1"
+	HASH_SIZE="$2"
+	HASH_MTIME="$3"
+	if ! command -v sha256sum >/dev/null 2>&1; then
+		sha256_file "$HASH_FILE"
+		return 0
+	fi
+	HASH_KEY="$(printf '%s|%s|%s' "$HASH_FILE" "$HASH_SIZE" "$HASH_MTIME" | sha256sum 2>/dev/null | awk '{ print $1 }')"
+	HASH_CACHE="$CORE_PROGRESS_DIR/geo-sha.$HASH_KEY"
+	if [ -f "$HASH_CACHE" ] && [ ! -L "$HASH_CACHE" ]; then
+		CACHED_AGE="$(($(date +%s) - $(stat_mtime "$HASH_CACHE" 2>/dev/null || printf '0')))"
+		if [ "$CACHED_AGE" -ge 0 ] && [ "$CACHED_AGE" -lt "$BUILD_INFO_CACHE_TTL" ]; then
+			sed -n '1p' "$HASH_CACHE" 2>/dev/null
+			return 0
+		fi
+	fi
+	HASH_VALUE="$(sha256_file "$HASH_FILE")"
+	if prepare_core_progress_dir; then
+		HASH_TMP="$(mktemp "$CORE_PROGRESS_DIR/geo-sha.XXXXXX" 2>/dev/null || true)"
+		if [ -n "$HASH_TMP" ]; then
+			if printf '%s\n' "$HASH_VALUE" > "$HASH_TMP" 2>/dev/null; then
+				mv -f "$HASH_TMP" "$HASH_CACHE" 2>/dev/null || rm -f "$HASH_TMP"
+			else
+				rm -f "$HASH_TMP"
+			fi
+		fi
+		# Bound cache growth when repeated downloads create new version paths.
+		for OLD_CACHE in "$CORE_PROGRESS_DIR"/geo-sha.*; do
+			[ -f "$OLD_CACHE" ] && [ ! -L "$OLD_CACHE" ] || continue
+			[ "$OLD_CACHE" = "$HASH_CACHE" ] && continue
+			OLD_CACHE_AGE="$(($(date +%s) - $(stat_mtime "$OLD_CACHE" 2>/dev/null || printf '0')))"
+			if [ "$OLD_CACHE_AGE" -ge "$((BUILD_INFO_CACHE_TTL * 10))" ]; then
+				rm -f "$OLD_CACHE" 2>/dev/null || true
+			fi
+		done
+	fi
+	printf '%s\n' "$HASH_VALUE"
 }
 
 geo_file_json() { # <logical name> <path>
 	GEO_JSON_NAME="$1"; GEO_JSON_PATH="$2"
 	GEO_EXISTS=0; GEO_SIZE=0; GEO_MTIME=""; GEO_SHA=""
-	if [ -f "$GEO_JSON_PATH" ] && [ ! -L "$GEO_JSON_PATH" ]; then
+	GEO_TARGET="$GEO_JSON_PATH"
+	if [ -L "$GEO_JSON_PATH" ]; then
+		GEO_LINK_DEST="$(readlink "$GEO_JSON_PATH" 2>/dev/null || true)"
+		case "$GEO_LINK_DEST" in
+			".current/$GEO_JSON_NAME.dat" | "$EFF_DIR/.current/$GEO_JSON_NAME.dat" ) ;;
+			*) GEO_TARGET="" ;;
+		esac
+		GEO_CURRENT="$(geo_current_dir 2>/dev/null || true)"
+		[ -n "$GEO_CURRENT" ] || GEO_TARGET=""
+		[ -z "$GEO_TARGET" ] || GEO_TARGET="$GEO_CURRENT/$GEO_JSON_NAME.dat"
+	fi
+	if [ -n "$GEO_TARGET" ] && [ -f "$GEO_TARGET" ] && [ ! -L "$GEO_TARGET" ]; then
 		GEO_EXISTS=1
-		GEO_SIZE="$(file_size_bytes "$GEO_JSON_PATH")"
-		GEO_MTIME="$(stat_mtime "$GEO_JSON_PATH")"
-		GEO_SHA="$(sha256_file "$GEO_JSON_PATH")"
+		GEO_SIZE="$(file_size_bytes "$GEO_TARGET")"
+		GEO_MTIME="$(stat_mtime "$GEO_TARGET")"
+		GEO_SHA="$(geo_sha_cached "$GEO_TARGET" "$GEO_SIZE" "$GEO_MTIME")"
 	fi
 	printf '"%s":{"exists":' "$GEO_JSON_NAME"
 	json_bool "$GEO_EXISTS"
@@ -3341,6 +4390,8 @@ emit_geo_get() {
 	printf ',"geoip_url_default":'; json_string "$DEFAULT_GEOIP_URL"
 	printf ',"geosite_url_default":'; json_string "$DEFAULT_GEOSITE_URL"
 	printf ',"geo_dir_default":'; json_string "$DEFAULT_GEO_DIR"
+	printf ',"geoip_sha256":'; json_string "$GEOIP_SHA256"
+	printf ',"geosite_sha256":'; json_string "$GEOSITE_SHA256"
 	printf ',"geoip_url_custom":'; if [ -n "$GEOIP_URL" ]; then json_bool 1; else json_bool 0; fi
 	printf ',"geosite_url_custom":'; if [ -n "$GEOSITE_URL" ]; then json_bool 1; else json_bool 0; fi
 	printf ',"geo_dir_custom":'; if [ -n "$GEO_DIR" ]; then json_bool 1; else json_bool 0; fi
@@ -3351,88 +4402,320 @@ emit_geo_get() {
 	printf '}\n'
 }
 
+# R6/R12: geo settings are committed atomically with rollback on failure.
+geo_save_apply() {
+	uci_delete_if_present oxidns.main.geoip_url || return 1
+	uci_delete_if_present oxidns.main.geosite_url || return 1
+	uci_delete_if_present oxidns.main.geo_dir || return 1
+	if [ "$IP_IN" != "$DEFAULT_GEOIP_URL" ]; then
+		uci -q set "oxidns.main.geoip_url=$IP_IN" || return 1
+	fi
+	if [ "$SITE_IN" != "$DEFAULT_GEOSITE_URL" ]; then
+		uci -q set "oxidns.main.geosite_url=$SITE_IN" || return 1
+	fi
+	if [ "$DIR_IN" != "$DEFAULT_GEO_DIR" ]; then
+		uci -q set "oxidns.main.geo_dir=$DIR_IN" || return 1
+	fi
+	if [ -n "$IP_SHA_IN" ]; then
+		uci -q set "oxidns.main.geoip_sha256=$IP_SHA_IN" || return 1
+	else
+		uci_delete_if_present oxidns.main.geoip_sha256 || return 1
+	fi
+	if [ -n "$SITE_SHA_IN" ]; then
+		uci -q set "oxidns.main.geosite_sha256=$SITE_SHA_IN" || return 1
+	else
+		uci_delete_if_present oxidns.main.geosite_sha256 || return 1
+	fi
+	return 0
+}
+
 emit_geo_save() {
 	INPUT="$(cat)"
 	load_settings
 	IP_IN="$(input_value geoip_url "$INPUT")"
 	SITE_IN="$(input_value geosite_url "$INPUT")"
 	DIR_IN="$(input_value geo_dir "$INPUT")"
+	IP_SHA_IN="$(input_value geoip_sha256 "$INPUT")"
+	SITE_SHA_IN="$(input_value geosite_sha256 "$INPUT")"
 	IP_IN="${IP_IN:-$DEFAULT_GEOIP_URL}"
 	SITE_IN="${SITE_IN:-$DEFAULT_GEOSITE_URL}"
 	DIR_IN="${DIR_IN:-$DEFAULT_GEO_DIR}"
+	if [ -n "$IP_SHA_IN" ] && ! valid_sha256 "$IP_SHA_IN"; then
+		json_error "invalid_geo_settings" "geoip_sha256 must be 64 hex digits"
+		return 1
+	fi
+	if [ -n "$SITE_SHA_IN" ] && ! valid_sha256 "$SITE_SHA_IN"; then
+		json_error "invalid_geo_settings" "geosite_sha256 must be 64 hex digits"
+		return 1
+	fi
 	if ! valid_geo_url "$IP_IN" || ! valid_geo_url "$SITE_IN" || ! valid_geo_dir "$DIR_IN"; then
 		json_error "invalid_geo_settings" "configured geo url or directory is invalid"
 		return 1
 	fi
-	uci -q delete oxidns.main.geoip_url >/dev/null 2>&1 || true
-	uci -q delete oxidns.main.geosite_url >/dev/null 2>&1 || true
-	uci -q delete oxidns.main.geo_dir >/dev/null 2>&1 || true
-	if [ "$IP_IN" != "$DEFAULT_GEOIP_URL" ]; then
-		uci -q set "oxidns.main.geoip_url=$IP_IN" || { json_error "geo_save_failed" "cannot save geoip_url"; return 1; }
+	if ! uci_transaction oxidns geo_save_apply; then
+		json_error "geo_save_failed" "cannot commit geo settings"
+		return 1
 	fi
-	if [ "$SITE_IN" != "$DEFAULT_GEOSITE_URL" ]; then
-		uci -q set "oxidns.main.geosite_url=$SITE_IN" || { json_error "geo_save_failed" "cannot save geosite_url"; return 1; }
-	fi
-	if [ "$DIR_IN" != "$DEFAULT_GEO_DIR" ]; then
-		uci -q set "oxidns.main.geo_dir=$DIR_IN" || { json_error "geo_save_failed" "cannot save geo_dir"; return 1; }
-	fi
-	uci -q commit oxidns || { json_error "geo_save_failed" "cannot commit geo settings"; return 1; }
 	emit_geo_get
+}
+
+geo_reset_apply() {
+	for GEO_KEY in geoip_url geosite_url geo_dir geoip_sha256 geosite_sha256; do
+		uci_delete_if_present "oxidns.main.$GEO_KEY" || return 1
+	done
+	return 0
 }
 
 emit_geo_reset() {
-	load_settings
-	for GEO_KEY in geoip_url geosite_url geo_dir; do
-		uci -q delete "oxidns.main.$GEO_KEY" >/dev/null 2>&1 || true
-	done
-	uci -q commit oxidns || { json_error "geo_reset_failed" "cannot reset geo settings"; return 1; }
+	if ! uci_transaction oxidns geo_reset_apply; then
+		json_error "geo_reset_failed" "cannot reset geo settings"
+		return 1
+	fi
 	emit_geo_get
 }
 
+# S4: replace a symlink without unlinking the live name first. Any regular
+# file is moved into a backup directory outside the staged version, so a later
+# failure can restore the exact prior layout.
+geo_install_link() {
+	LINK_DIR="$1"; LINK_NAME="$2"; LINK_TARGET="$3"
+	LINK_PATH="$LINK_DIR/$LINK_NAME"
+	LINK_TMP="$LINK_DIR/.link.$$.$LINK_NAME"
+	if [ -L "$LINK_PATH" ]; then
+		# A controlled link automatically follows the .current swap. Never
+		# accept a pre-existing link that could point outside the data dir.
+		case "$(readlink "$LINK_PATH" 2>/dev/null || true)" in
+			".current/$LINK_NAME" | "$LINK_DIR/.current/$LINK_NAME") return 0 ;;
+			*)
+				core_progress_log "error" "refusing to replace the unexpected symlink $LINK_PATH"
+				return 1
+				;;
+		esac
+	fi
+	LINK_MOVED=0
+	if [ -e "$LINK_PATH" ]; then
+		if ! mv "$LINK_PATH" "$GEO_BACKUP_DIR/$LINK_NAME" 2>/dev/null; then
+			core_progress_log "error" "failed to preserve existing $LINK_NAME"
+			return 1
+		fi
+		LINK_MOVED=1
+	fi
+	[ ! -e "$LINK_TMP" ] && [ ! -L "$LINK_TMP" ] || return 1
+	if ! ln -s "$LINK_TARGET" "$LINK_TMP" 2>/dev/null; then
+		[ "$LINK_MOVED" = "1" ] && mv -f "$GEO_BACKUP_DIR/$LINK_NAME" "$LINK_PATH" 2>/dev/null || true
+		core_progress_log "error" "cannot create the $LINK_NAME symlink"
+		return 1
+	fi
+	if ! mv -f "$LINK_TMP" "$LINK_PATH" 2>/dev/null; then
+		rm -f "$LINK_TMP" 2>/dev/null || true
+		[ "$LINK_MOVED" = "1" ] && mv -f "$GEO_BACKUP_DIR/$LINK_NAME" "$LINK_PATH" 2>/dev/null || true
+		core_progress_log "error" "cannot install the $LINK_NAME symlink"
+		return 1
+	fi
+	GEO_LINK_INSTALLED="$GEO_LINK_INSTALLED $LINK_NAME"
+	return 0
+}
+
+# Roll back the single atomic publication point and any top-level links that
+# were replaced. The backup directory lives beside .versions, not inside the
+# staged version, so a failed swap cannot discard the previous live files.
+geo_restore_current_link() {
+	RESTORE_TMP="$GEO_JOB_DIR/.current.restore.$$"
+	rm -f "$RESTORE_TMP" 2>/dev/null || true
+	if [ -z "$GEO_PREVIOUS_CURRENT" ]; then
+		rm -f "$GEO_JOB_DIR/.current" 2>/dev/null || true
+		return 0
+	fi
+	if ! ln -s "$GEO_PREVIOUS_CURRENT" "$RESTORE_TMP" 2>/dev/null; then
+		return 1
+	fi
+	if ! mv -f "$RESTORE_TMP" "$GEO_JOB_DIR/.current" 2>/dev/null; then
+		rm -f "$RESTORE_TMP" 2>/dev/null || true
+		return 1
+	fi
+	return 0
+}
+
+geo_rollback_publication() {
+	for LINK_NAME in geoip.dat geosite.dat; do
+		LINK_PATH="$GEO_JOB_DIR/$LINK_NAME"
+		case " $GEO_LINK_INSTALLED " in
+			*" $LINK_NAME "*) rm -f "$LINK_PATH" 2>/dev/null || true ;;
+		esac
+		if [ -f "$GEO_BACKUP_DIR/$LINK_NAME" ]; then
+			if ! mv -f "$GEO_BACKUP_DIR/$LINK_NAME" "$LINK_PATH" 2>/dev/null; then
+				core_progress_log "error" "cannot restore the previous $LINK_NAME"
+			fi
+		fi
+	done
+	if [ "$GEO_CURRENT_SWAPPED" = "1" ]; then
+		geo_restore_current_link || core_progress_log "error" "cannot restore the previous .current link"
+	fi
+	return 0
+}
+
+# S4/R4/R7: download into a staged version directory, verify both files and
+# hashes, then swap a single .current symlink. The job cleans up its own lock
+# and running file only after verifying the pid it was given.
 run_geo_download_job() {
-	GEO_JOB_DIR="$1"; GEO_JOB_IP_URL="$2"; GEO_JOB_SITE_URL="$3"; GEO_JOB_RESTART="$4"
+	GEO_JOB_DIR="$1"; GEO_JOB_IP_URL="$2"; GEO_JOB_SITE_URL="$3"
+	GEO_JOB_RESTART="$4"
 	set +e
 	core_progress_log "info" "geo data update started (dir=$GEO_JOB_DIR)"
-	GEOIP_TMP="$GEO_JOB_DIR/.geoip.dat.new.$$"
-	GEOSITE_TMP="$GEO_JOB_DIR/.geosite.dat.new.$$"
-	rm -f "$GEOIP_TMP" "$GEOSITE_TMP"
+
+	# The parent writes this pid just after forking; read it here instead of
+	# relying on variables changed after the subshell was created.
+	GEO_EXPECTED_PID=""
+	GEO_WAIT=0
+	while :; do
+		GEO_EXPECTED_PID="$(sed -n '1p' "$GEO_RUNNING_FILE" 2>/dev/null || true)"
+		pid_is_running "$GEO_EXPECTED_PID" && break
+		GEO_WAIT=$((GEO_WAIT + 1))
+		[ "$GEO_WAIT" -le 10 ] || break
+		sleep 1
+	done
+
+	if ! mkdir -p "$GEO_JOB_DIR/.versions" 2>/dev/null || [ -L "$GEO_JOB_DIR/.versions" ]; then
+		core_progress_log "error" "cannot prepare the geo version directory"
+		return 1
+	fi
+	VERSION_DIR="$(mktemp -d "$GEO_JOB_DIR/.versions/.geo.XXXXXX" 2>/dev/null || true)"
+	if [ -z "$VERSION_DIR" ]; then
+		core_progress_log "error" "cannot create the geo staging directory"
+		return 1
+	fi
+	chmod 755 "$VERSION_DIR" 2>/dev/null || true
+	GEO_BACKUP_DIR="$(mktemp -d "$GEO_JOB_DIR/.legacy.XXXXXX" 2>/dev/null || true)"
+	if [ -z "$GEO_BACKUP_DIR" ]; then
+		rm -rf "$VERSION_DIR" 2>/dev/null || true
+		core_progress_log "error" "cannot create the geo backup directory"
+		return 1
+	fi
+
+	GEO_PREVIOUS_CURRENT=""
+	GEO_CURRENT_SWAPPED=0
+	GEO_LINK_INSTALLED=""
+	if [ -L "$GEO_JOB_DIR/.current" ]; then
+		GEO_PREVIOUS_CURRENT="$(readlink "$GEO_JOB_DIR/.current" 2>/dev/null || true)"
+		case "$GEO_PREVIOUS_CURRENT" in
+			.versions/.geo.*) ;;
+			*)
+				core_progress_log "error" "refusing to replace an unexpected .current link"
+				rm -rf "$VERSION_DIR" "$GEO_BACKUP_DIR" 2>/dev/null || true
+				return 1
+				;;
+		esac
+	elif [ -e "$GEO_JOB_DIR/.current" ]; then
+		core_progress_log "error" "refusing to replace a non-symlink .current entry"
+		rm -rf "$VERSION_DIR" "$GEO_BACKUP_DIR" 2>/dev/null || true
+		return 1
+	fi
+
 	GEO_FAILED=0
 	core_progress_command "download geoip.dat <- $GEO_JOB_IP_URL"
-	download_file "$GEO_JOB_IP_URL" "$GEOIP_TMP" || GEO_FAILED=1
+	download_file "$GEO_JOB_IP_URL" "$VERSION_DIR/.geoip.download" || GEO_FAILED=1
 	if [ "$GEO_FAILED" = "0" ]; then
 		core_progress_command "download geosite.dat <- $GEO_JOB_SITE_URL"
-		download_file "$GEO_JOB_SITE_URL" "$GEOSITE_TMP" || GEO_FAILED=1
+		download_file "$GEO_JOB_SITE_URL" "$VERSION_DIR/.geosite.download" || GEO_FAILED=1
 	fi
+
 	if [ "$GEO_FAILED" = "0" ]; then
-		GEO_IP_SIZE="$(file_size_bytes "$GEOIP_TMP")"
-		GEO_SITE_SIZE="$(file_size_bytes "$GEOSITE_TMP")"
-		if [ "$GEO_IP_SIZE" -le 0 ] || [ "$GEO_SITE_SIZE" -le 0 ]; then
+		for GEO_KIND in geoip geosite; do
+			GEO_FILE="$VERSION_DIR/.$GEO_KIND.download"
+			GEO_SIZE="$(file_size_bytes "$GEO_FILE" 2>/dev/null || printf '0')"
+			if [ "$GEO_SIZE" -le 0 ]; then
+				GEO_FAILED=1
+				core_progress_log "error" "downloaded $GEO_KIND.dat is empty"
+				break
+			fi
+			GEO_PIN=""
+			if [ "$GEO_KIND" = "geoip" ]; then GEO_PIN="$GEOIP_SHA256"; else GEO_PIN="$GEOSITE_SHA256"; fi
+			if [ -n "$GEO_PIN" ]; then
+				GEO_ACTUAL="$(sha256_file "$GEO_FILE")"
+				if [ "$GEO_ACTUAL" != "$GEO_PIN" ]; then
+					GEO_FAILED=1
+					core_progress_log "error" "$GEO_KIND.dat sha256 mismatch (expected $GEO_PIN, got $GEO_ACTUAL)"
+					break
+				fi
+				core_progress_log "info" "$GEO_KIND.dat sha256 verified"
+			fi
+		done
+	fi
+
+	if [ "$GEO_FAILED" = "0" ]; then
+		if ! mv "$VERSION_DIR/.geoip.download" "$VERSION_DIR/geoip.dat" ||
+			! mv "$VERSION_DIR/.geosite.download" "$VERSION_DIR/geosite.dat"; then
 			GEO_FAILED=1
-			core_progress_log "error" "downloaded file is empty (geoip=$GEO_IP_SIZE geosite=$GEO_SITE_SIZE)"
+			core_progress_log "error" "cannot finalize the staged geo files"
 		fi
 	fi
+
 	if [ "$GEO_FAILED" = "0" ]; then
-		core_progress_command "install into $GEO_JOB_DIR (atomic mv)"
-		chmod 644 "$GEOIP_TMP" "$GEOSITE_TMP" 2>/dev/null || true
-		if mv -f "$GEOIP_TMP" "$GEO_JOB_DIR/geoip.dat" && mv -f "$GEOSITE_TMP" "$GEO_JOB_DIR/geosite.dat"; then
-			core_progress_log "success" "installed: geoip.dat=$GEO_IP_SIZE bytes, geosite.dat=$GEO_SITE_SIZE bytes"
+		chmod 644 "$VERSION_DIR/geoip.dat" "$VERSION_DIR/geosite.dat" 2>/dev/null || true
+		NEW_LINK="$GEO_JOB_DIR/.current.new.$$"
+		rm -f "$NEW_LINK" 2>/dev/null || true
+		if ! ln -s ".versions/${VERSION_DIR##*/}" "$NEW_LINK" 2>/dev/null; then
+			GEO_FAILED=1
+			core_progress_log "error" "cannot create the .current symlink"
+		elif ! mv -f "$NEW_LINK" "$GEO_JOB_DIR/.current" 2>/dev/null; then
+			rm -f "$NEW_LINK" 2>/dev/null || true
+			GEO_FAILED=1
+			core_progress_log "error" "cannot activate the new geo version"
 		else
-			GEO_FAILED=1
-			core_progress_log "error" "failed to move downloaded files into $GEO_JOB_DIR"
+			GEO_CURRENT_SWAPPED=1
 		fi
 	fi
+
+	if [ "$GEO_FAILED" = "0" ]; then
+		geo_install_link "$GEO_JOB_DIR" geoip.dat ".current/geoip.dat" || GEO_FAILED=1
+	fi
+	if [ "$GEO_FAILED" = "0" ]; then
+		geo_install_link "$GEO_JOB_DIR" geosite.dat ".current/geosite.dat" || GEO_FAILED=1
+	fi
+
 	if [ "$GEO_FAILED" != "0" ]; then
-		rm -f "$GEOIP_TMP" "$GEOSITE_TMP"
-		core_progress_log "error" "geo data update failed (existing files are unchanged)"
+		if [ "$GEO_CURRENT_SWAPPED" = "1" ] || [ -n "$GEO_LINK_INSTALLED" ]; then
+			geo_rollback_publication || true
+		fi
+		rm -rf "$VERSION_DIR" "$GEO_BACKUP_DIR" 2>/dev/null || true
+		core_progress_log "error" "geo data update failed (previous geo files were restored)"
 	else
+		rm -rf "$GEO_BACKUP_DIR" 2>/dev/null || true
+		GEO_IP_SIZE="$(file_size_bytes "$VERSION_DIR/geoip.dat")"
+		GEO_SITE_SIZE="$(file_size_bytes "$VERSION_DIR/geosite.dat")"
+		core_progress_log "success" "installed geoip.dat=$GEO_IP_SIZE bytes, geosite.dat=$GEO_SITE_SIZE bytes"
+		# Keep the three newest staged versions; never delete the active one.
+		ACTIVE_VERSION="$(geo_current_dir 2>/dev/null || true)"
+		for OLD_VERSION in $(ls -1d "$GEO_JOB_DIR"/.versions/.geo.* 2>/dev/null | sort -r | awk 'NR > 3'); do
+			[ -n "$OLD_VERSION" ] && [ "$OLD_VERSION" != "$ACTIVE_VERSION" ] || continue
+			rm -rf "$OLD_VERSION" 2>/dev/null || true
+		done
 		if [ "$GEO_JOB_RESTART" = "1" ] && service_running; then
 			GEO_INIT="$(init_script)"
-			core_progress_command "$GEO_INIT restart"
-			"$GEO_INIT" restart >/dev/null 2>&1
-			core_progress_log "info" "oxidns restarted to pick up the new geo data"
+			if [ -x "$GEO_INIT" ]; then
+				core_progress_command "$GEO_INIT restart"
+				run_init_action "$GEO_INIT" restart >/dev/null 2>&1 || true
+				GEO_RUNNING=0
+				for _try in 1 2 3 4 5 6 7 8 9 10; do
+					if service_running; then GEO_RUNNING=1; break; fi
+					sleep 1
+				done
+				if [ "$GEO_RUNNING" = "1" ]; then
+					core_progress_log "info" "oxidns restarted to pick up the new geo data"
+				else
+					core_progress_log "error" "service did not come back after the geo data update"
+				fi
+			fi
 		fi
 		core_progress_log "success" "geo data update finished"
 	fi
+}
+
+geo_job_cleanup() {
+	if [ "$(sed -n '1p' "$GEO_RUNNING_FILE" 2>/dev/null || true)" = "$GEO_EXPECTED_PID" ]; then
+		rm -f "$GEO_RUNNING_FILE" 2>/dev/null || true
+	fi
+	release_dir_lock "$GEO_LOCK_DIR" "$GEO_EXPECTED_PID"
 }
 
 emit_geo_download() {
@@ -3449,23 +4732,52 @@ emit_geo_download() {
 		json_error "invalid_geo_settings" "configured geo url or directory is invalid"
 		return 1
 	fi
-	RESTART="$(input_bool restart "$INPUT")"
-	if ! mkdir -p "$EFF_DIR" 2>/dev/null; then
-		json_error "geo_dir_create_failed" "cannot create directory $EFF_DIR"
+	if [ -n "$GEOIP_SHA256" ] && ! valid_sha256 "$GEOIP_SHA256"; then
+		json_error "invalid_geo_settings" "geoip_sha256 must be 64 hex digits"
 		return 1
 	fi
-	require_download_transport || return 1
+	if [ -n "$GEOSITE_SHA256" ] && ! valid_sha256 "$GEOSITE_SHA256"; then
+		json_error "invalid_geo_settings" "geosite_sha256 must be 64 hex digits"
+		return 1
+	fi
+	RESTART="$(input_bool restart "$INPUT")"
+	if ! require_commands mktemp readlink ln mv sha256sum; then
+		return 1
+	fi
+	if ! mkdir -p "$EFF_DIR/.versions" 2>/dev/null || [ -L "$EFF_DIR/.versions" ]; then
+		json_error "geo_dir_create_failed" "cannot create directory $EFF_DIR/.versions"
+		return 1
+	fi
+	if ! acquire_dir_lock "$GEO_LOCK_DIR"; then
+		json_error "geo_download_busy" "another geo download is already running"
+		return 1
+	fi
+	require_download_transport || {
+		release_dir_lock "$GEO_LOCK_DIR"
+		return 1
+	}
 	PROGRESS_LOG_FILE="$GEO_PROGRESS_LOG"
 	prepare_core_progress_file 1 || true
 	core_progress_log "info" "geo data update requested"
 	(
 		PROGRESS_LOG_FILE="$GEO_PROGRESS_LOG"
 		run_geo_download_job "$EFF_DIR" "$EFF_IP" "$EFF_SITE" "$RESTART"
-		rm -f "$GEO_RUNNING_FILE"
+		geo_job_cleanup
 	) >/dev/null 2>&1 </dev/null &
 	GEO_CHILD_PID="$!"
-	printf '%s\n' "$GEO_CHILD_PID" > "$GEO_RUNNING_FILE" 2>/dev/null || true
-	chmod 600 "$GEO_RUNNING_FILE" 2>/dev/null || true
+	GEO_EXPECTED_PID="$GEO_CHILD_PID"
+	if ! printf '%s\n' "$GEO_CHILD_PID" > "$GEO_RUNNING_FILE" 2>/dev/null ||
+		! printf '%s\n' "$GEO_CHILD_PID" > "$GEO_LOCK_DIR/pid" 2>/dev/null ||
+		[ "$(sed -n '1p' "$GEO_LOCK_DIR/pid" 2>/dev/null || true)" != "$GEO_CHILD_PID" ]; then
+		kill "$GEO_CHILD_PID" 2>/dev/null || true
+		# The lock may still hold the parent pid if the child-pid write failed.
+		release_dir_lock "$GEO_LOCK_DIR" "$$"
+		release_dir_lock "$GEO_LOCK_DIR" "$GEO_CHILD_PID"
+		rm -f "$GEO_RUNNING_FILE" 2>/dev/null || true
+		json_error "geo_start_failed" "cannot record the geo download process id"
+		return 1
+	fi
+	chmod 600 "$GEO_RUNNING_FILE" "$GEO_LOCK_DIR/pid" 2>/dev/null || true
 	printf '{"ok":true,"started":true,"running":true}\n'
 }
 
@@ -3475,6 +4787,8 @@ emit_geo_progress() {
 		printf '{"ok":true,"text":""}\n'
 		return 0
 	fi
+	load_settings
+	EFF_DIR="${GEO_DIR:-$DEFAULT_GEO_DIR}"
 	printf '{"ok":true,"running":'
 	geo_running && json_bool 1 || json_bool 0
 	printf ',"text":'
@@ -3509,12 +4823,11 @@ case "${1:-}" in
 		printf '"config_validate":{"content":"string"},'
 		printf '"config_save":{"content":"string","base_mtime":"string","restart":"boolean"},'
 		printf '"settings_read":{},'
-		printf '"settings_save":{"core_repository":"string","core_bundle":"string","config_path":"string","working_dir":"string","download_proxy":"string","github_token":"string","clear_download_proxy":"boolean","clear_github_token":"boolean","log_syslog":"string","persist_core":"string"},'
-		printf '"settings_save":{"core_repository":"string","core_bundle":"string","config_path":"string","working_dir":"string","download_proxy":"string","github_token":"string","clear_download_proxy":"boolean","clear_github_token":"boolean","log_syslog":"string","persist_core":"string"},'
+		printf '"settings_save":{"core_repository":"string","core_bundle":"string","config_path":"string","working_dir":"string","download_proxy":"string","github_token":"string","clear_download_proxy":"boolean","clear_github_token":"boolean","log_syslog":"string","persist_core":"string","allow_core_upload":"string"},'
 		printf '"hijack_get":{},'
 		printf '"hijack_save":{"enabled":"boolean","port_mode":"string","port":"number"},'
 		printf '"geo_get":{},'
-		printf '"geo_save":{"geoip_url":"string","geosite_url":"string","geo_dir":"string"},'
+		printf '"geo_save":{"geoip_url":"string","geosite_url":"string","geo_dir":"string","geoip_sha256":"string","geosite_sha256":"string"},'
 		printf '"geo_reset":{},'
 		printf '"geo_download":{"restart":"boolean"},'
 		printf '"geo_progress":{},'
@@ -3623,13 +4936,13 @@ case "${1:-}" in
 				emit_logs_recent
 				;;
 			*)
-				printf '{"ok":false,"error":"unknown method"}\n'
+				json_error "unknown_method" "unknown RPC method"
 				exit 1
 				;;
 		esac
 		;;
 	*)
-		printf '{"ok":false,"error":"usage: luci.oxidns list|call <method>"}\n'
+		json_error "usage" "usage: luci.oxidns list|call <method>"
 		exit 1
 		;;
 esac

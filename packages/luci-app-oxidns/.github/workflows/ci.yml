@@ -1,0 +1,66 @@
+name: CI
+
+# Pull requests and pushes to the default branches run the local validation
+# suite. No packages are published here; release.yml owns publication.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Static, service and package checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: Static checks
+        run: scripts/check.sh
+
+      - name: Service restart checks
+        run: scripts/service-check.sh
+
+      - name: Integration checks
+        run: scripts/integration-check.sh
+
+      - name: Resolve package version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^PKG_VERSION:=//p' Makefile | head -n 1)"
+          case "$version" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "invalid PKG_VERSION in Makefile: $version" >&2; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Release package checks
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: scripts/release-check.sh "$VERSION" dist
+
+      - name: Upload quick packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: luci-app-oxidns-quick-packages
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7

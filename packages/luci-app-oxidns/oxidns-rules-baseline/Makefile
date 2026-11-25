@@ -1,7 +1,7 @@
 #
 # Copyright (C) 2026 NetForgeCN
 #
-# This is free software, licensed under the GNU General Public License v3.
+# This is free software, licensed under the GNU General Public License v3 or later.
 # See /LICENSE for more information.
 #
 # Ships a baseline copy of every rule subscription used by OxiDNS so a fresh
@@ -29,7 +29,9 @@ PKG_VERSION:=2026.11.24.0419
 PKG_RELEASE:=5
 PKGARCH:=all
 
-PKG_LICENSE:=GPL-3.0-or-later MIT 0BSD
+# SPDX expression: the bundled lists are GPL-3.0-or-later (AdGuard), MIT
+# (anti-AD, neoDevHost), 0BSD (AdRules) and WTFPL (dnsmasq-china-list).
+PKG_LICENSE:=GPL-3.0-or-later AND MIT AND 0BSD AND WTFPL
 PKG_LICENSE_FILES:=LICENSES/AdGuardSDNSFilter.LICENSE LICENSES/anti-AD.LICENSE \
 	LICENSES/AdRules.LICENSE LICENSES/neodevhost.LICENSE \
 	LICENSES/dnsmasq-china-list.LICENSE
@@ -75,9 +77,8 @@ endef
 
 define Package/oxidns-rules-baseline/install
 	$(INSTALL_DIR) $(1)/usr/share/oxidns/rules-baseline
-	# Copy only the five lists OxiDNS actually loads. The pinned release asset
-	# may still be an older seven-file archive, so installing src/. verbatim
-	# would ship redundant lists that are neither seeded nor validated.
+	# Install only the files that are shipped and validated: the five lists
+	# OxiDNS loads, plus the manifest/checksum/version metadata and licenses.
 	$(INSTALL_DATA) \
 		$(PKG_BUILD_DIR)/src/adguard-hostlist.txt \
 		$(PKG_BUILD_DIR)/src/anti-ad-domains.txt \

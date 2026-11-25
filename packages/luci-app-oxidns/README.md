@@ -36,6 +36,8 @@
 | `Geo Data` | geoip.dat / geosite.dat 状态、下载地址、目录、在线更新 |
 | `Prewarm` | 预热开关、域名清单、目标地址与周期、手动执行 |
 
+> 安全提示：上传内核默认关闭。需要在 `Settings` 页勾选“允许手动上传内核”，并且登录用户具备 `luci-app-oxidns-core-upload` ACL 组权限（默认 root 账号具备）；上传的二进制不会在校验阶段执行，仅作为服务内核运行。`Geo Data` 页可填写可选 SHA-256 校验值，下载内容校验失败会保留现有数据。
+
 ## 快速开始
 
 1. 按下面的“构建与安装”把插件装进固件或路由器。
@@ -60,7 +62,7 @@
 | 启用 | 开 |
 | 目标 | `udp://127.0.0.1:5333` |
 | 周期 | 3000 秒（约 50 分钟） |
-| 清单 | 包内默认 89 个域名，可在页面增删 |
+| 清单 | 包内默认 75 个域名，可在页面增删 |
 | 并发 | 4 |
 | 单次查询超时 / 重试 | 2 秒 / 1 次 |
 
@@ -137,42 +139,55 @@ make package/luci-app-oxidns/compile V=s
 
 `oxidns-core` 和 `oxidns-rules-baseline` 是硬依赖，选中插件会一起选中。产物在 `bin/packages/<架构>/`。
 
-支持 x86_64、aarch64、i386、ARM hard-float（cortex 映射 armv7，其余映射 armv6）。MIPS 等未发布 musl 内核的架构可不选 `oxidns-core`，再用页面上传内核。
+支持 x86_64、aarch64、i386、ARM hard-float（cortex 映射 armv7，其余映射 armv6）；soft-float ARM 不能直接使用官方 hard-float（eabihf）内核。MIPS 等未发布 musl 内核的架构**无法用 buildroot 打包内置内核**（`oxidns-core` 是硬依赖）；可以走下面的“快速打包”不嵌入内核，再从 `Core` 页上传适配的内核。
 
 ### 方式二：快速打包
 
-需要 `node`、`tar`、`gzip`、`sha256sum`：
+需要 `node` 22、`tar`、`gzip` 以及 `sha256sum`（macOS 用 `shasum -a 256`）：
 
 ```sh
 git clone https://github.com/NetForgeCN/luci-app-oxidns.git
 cd luci-app-oxidns
 
-# 只打插件，内核到页面安装
+# 只打插件，内核到页面安装；版本号默认读取根目录 Makefile
 ./scripts/build-luci-package.sh 0.2.0 dist
 
-# 内置内核 + 规则基线（按路由器架构选 release 资产）
-curl -LO https://github.com/svenshi/oxidns/releases/download/v1.7.1/oxidns-x86_64-unknown-linux-musl.tar.gz
-curl -LO https://github.com/NetForgeCN/luci-app-oxidns/releases/download/rules-v2026.11.24.0419/oxidns-rules-baseline-2026.11.24.0419.tar.gz
+# 内置内核 + 规则基线（按路由器架构选 release 资产），先下载再校验
+curl -fL -O https://github.com/svenshi/oxidns/releases/download/v1.7.1/oxidns-x86_64-unknown-linux-musl.tar.gz
+curl -fL -O https://github.com/NetForgeCN/luci-app-oxidns/releases/download/rules-v2026.11.24.0419/oxidns-rules-baseline-2026.11.24.0419.tar.gz
+cat > sha256sums.txt <<'EOF'
+6c82984e477d70d0c9259a6c7997496e248c78a384b2b7585908bba7f4af854c  oxidns-x86_64-unknown-linux-musl.tar.gz
+1084a9aa8a7986c6159fbeba78433ff64c26567bfe0f782822fc3898023b2a6a  oxidns-rules-baseline-2026.11.24.0419.tar.gz
+EOF
+sha256sum -c sha256sums.txt
 ./scripts/build-luci-package.sh 0.2.0 dist-embedded \
 	oxidns-x86_64-unknown-linux-musl.tar.gz \
-	oxidns-rules-baseline-2026.11.24.0419.tar.gz
+	oxidns-rules-baseline-2026.11.24.0419.tar.gz \
+	6c82984e477d70d0c9259a6c7997496e248c78a384b2b7585908bba7f4af854c \
+	1084a9aa8a7986c6159fbeba78433ff64c26567bfe0f782822fc3898023b2a6a
 ```
 
-安装：
+脚本强制要求这两个归档的 SHA256，校验失败或归档里含绝对路径、`..`、链接、设备文件时立即退出。升级内核或基线版本时，请同步更新 `oxidns-core/Makefile` / `oxidns-rules-baseline/Makefile` 中的哈希和上面的校验值。
+
+安装（本地包未签名，先校验构建脚本生成的 `sha256sums.txt` 再安装）：
 
 ```sh
+sha256sum -c sha256sums.txt
 opkg install luci-app-oxidns_*.ipk
 opkg install luci-i18n-oxidns-zh-cn_*.ipk
-# apk 系统：
-apk add --allow-untrusted ./luci-app-oxidns_*.apk
+# apk 系统：校验通过后安装
+apk add ./luci-app-oxidns_*.apk ./luci-i18n-oxidns-zh-cn_*.apk
 ```
+
+若 apk 因本地包未签名而拒绝安装，请仅在对 `sha256sums.txt` 校验通过之后使用 `--allow-untrusted`。
 
 ## 持久化与升级
 
-- 内核和 WebUI 放在 `/etc/oxidns/core/`，运行路径是符号链接；
+- 内核和 WebUI 放在持久区 `/etc/oxidns/core/`，`/usr/bin/oxidns`、`/usr/share/oxidns/webui` 只是指向它的符号链接；
+- LuCI 页面、rpcd 后端和 `/etc/init.d/oxidns` 由软件包安装在 `/usr`，刷固件时会被新固件中的版本覆盖；配置、规则和内核留在 `/etc`；
 - `/etc/oxidns`、`/etc/config/oxidns` 加入 `/etc/sysupgrade.conf`，配置跨固件升级保留；
 - 开机时自动补齐缺失的符号链接和规则文件；
-- 升级固件时勾选“保留配置”，刷完重装一次插件即可恢复服务；
+- 升级固件时勾选“保留配置”，刷完需要重新安装一次插件，才能恢复 `/usr` 下的页面、rpcd 与 init 脚本（持久的内核/配置无需再次下载）；
 - 内核升级用 `Core -> Check Update`，规则升级用 `Rules` 页，二者互不影响。
 
 ## 默认路径

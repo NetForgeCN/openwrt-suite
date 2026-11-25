@@ -7,7 +7,7 @@ name: rules-baseline
 # The device side (LuCI "Rules" page) only ever talks to this repository's
 # releases, so jsDelivr/GitHub availability of the upstream projects no longer
 # affects routers. Releases are only published when the rule data actually
-# changed (CONTENT-SHA256 differs from the previous release), so devices are not
+# changed (CONTENT-SHA256 differs from a previous release), so devices are not
 # woken up for a byte-identical rebuild. Versions carry a UTC timestamp because
 # a published version is immutable: the package Makefile pins its SHA256, so an
 # asset must never be replaced in place.
@@ -31,24 +31,32 @@ on:
         default: false
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: rules-baseline
   cancel-in-progress: false
 
 jobs:
-  build-and-publish:
+  build:
+    name: Build baseline
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
 
       - name: Resolve version
         id: version
+        shell: bash
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
+          set -euo pipefail
           version="${INPUT_VERSION:-}"
           [ -n "$version" ] || version="$(date -u +%Y.%m.%d.%H%M)"
           case "$version" in
@@ -65,56 +73,21 @@ jobs:
           chmod +x scripts/build-rules-baseline.sh
           ./scripts/build-rules-baseline.sh "$VERSION"
 
-      - name: Publish release when the rule content changed
-        id: publish
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.version.outputs.version }}
-          FORCE: ${{ inputs.force }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -eu
-          content="$(cat dist/CONTENT-SHA256)"
-          asset="dist/oxidns-rules-baseline-${VERSION}.tar.gz"
-          previous="$(gh release list --limit 100 --json tagName --jq '.[].tagName' \
-            | grep '^rules-v' | LC_ALL=C sort | tail -n 1 || true)"
-          if [ -n "$previous" ]; then
-            previous_content="$(gh release view "$previous" --json body --jq '.body' \
-              | sed -n 's/^content-sha256: //p' | head -n 1)"
-            echo "previous release: $previous (content $previous_content)"
-            if [ "$previous_content" = "$content" ] && [ "${FORCE:-false}" != "true" ]; then
-              echo "rule content unchanged, no release published"
-              echo "published=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          fi
-          tag="rules-v${VERSION}"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "release $tag already exists; a published version is immutable, bump the version instead" >&2
-            exit 1
-          fi
-          notes="$(mktemp)"
-          {
-            echo "content-sha256: ${content}"
-            echo
-            echo "Bundled OxiDNS rule baseline, built by scripts/build-rules-baseline.sh."
-            echo
-            echo "| file | lines | sha256 |"
-            echo "| --- | --- | --- |"
-            while read -r sha name; do
-              lines="$(wc -l < "dist/oxidns-rules-baseline/$name" | tr -d ' ')"
-              printf '| %s | %s | %s |\n' "$name" "$lines" "${sha:0:12}…"
-            done < "dist/oxidns-rules-baseline/SHA256SUMS"
-            echo
-            echo "Archive sha256: $(cat "$asset.sha256")"
-          } > "$notes"
-          gh release create "$tag" "$asset" \
-            --title "OxiDNS rule baseline ${VERSION}" \
-            --notes-file "$notes"
-          echo "published=true" >> "$GITHUB_OUTPUT"
+      - name: Upload baseline artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: rules-baseline
+          path: |
+            dist/oxidns-rules-baseline-${{ steps.version.outputs.version }}.tar.gz
+            dist/oxidns-rules-baseline-${{ steps.version.outputs.version }}.tar.gz.sha256
+            dist/CONTENT-SHA256
+            dist/oxidns-rules-baseline/
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Summary
         if: always()
+        shell: bash
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -133,5 +106,119 @@ jobs:
               echo "PKG_VERSION:=${VERSION}"
               echo "PKG_HASH:=$(cat "dist/oxidns-rules-baseline-${VERSION}.tar.gz.sha256")"
               echo '```'
+              echo
+              echo "Publish tag: \`rules-v${VERSION}\`"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Publish baseline
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Download baseline artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: rules-baseline
+          path: dist
+
+      - name: Decide whether to publish
+        id: decide
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build.outputs.version }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          content="$(cat dist/CONTENT-SHA256)"
+          asset="dist/oxidns-rules-baseline-${VERSION}.tar.gz"
+          [ -s "$asset" ] && [ -s "$asset.sha256" ] || {
+            echo "baseline artifact is incomplete" >&2
+            exit 1
+          }
+
+          # Scan every release: content equality is checked against the whole
+          # history, not just the latest tag. gh --paginate avoids a 100-release
+          # blind spot on active repositories.
+          gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+            --jq '.[] | [.tag_name, (.body // "")] | @tsv' > releases.tsv
+
+          tag="rules-v${VERSION}"
+          same_content=0
+          while IFS=$'\t' read -r existing_tag body; do
+            case "$existing_tag" in
+              rules-v*) ;;
+              *) continue ;;
+            esac
+            if [ "$existing_tag" = "$tag" ]; then
+              echo "release $tag already exists; a published version is immutable" >&2
+              exit 1
+            fi
+            if [ "$(printf '%s\n' "$body" | sed -n 's/^content-sha256: //p' | head -n 1)" = "$content" ]; then
+              same_content=1
+            fi
+          done < releases.tsv
+
+          # Version strings have fixed-width components, so LC_ALL=C compare is
+          # sufficient. Never publish an older baseline over a newer one.
+          newest="$(awk '{print $1}' releases.tsv | sed -n 's/^rules-v//p' | LC_ALL=C sort -r | head -n 1 || true)"
+          if [ -n "$newest" ] && [ "$newest" != "$VERSION" ] &&
+             [ "$(printf '%s\n%s\n' "$newest" "$VERSION" | LC_ALL=C sort -r | head -n 1)" = "$newest" ]; then
+            echo "a newer baseline ($newest) already exists; use a newer version" >&2
+            exit 1
+          fi
+
+          if [ "$same_content" -eq 1 ] && [ "${FORCE:-false}" != "true" ]; then
+            echo "rule content unchanged, no release published"
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          notes="$(mktemp)"
+          {
+            echo "content-sha256: ${content}"
+            echo
+            echo "Bundled OxiDNS rule baseline, built by scripts/build-rules-baseline.sh."
+            echo
+            echo "| file | lines | sha256 |"
+            echo "| --- | --- | --- |"
+            while read -r sha name; do
+              lines="$(wc -l < "dist/oxidns-rules-baseline/$name" | tr -d ' ')"
+              printf '| %s | %s | %s |\n' "$name" "$lines" "${sha:0:12}…"
+            done < dist/oxidns-rules-baseline/SHA256SUMS
+            echo
+            echo "Archive sha256: $(cat "$asset.sha256")"
+          } > "$notes"
+
+          echo "published=true" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "notes=$notes" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        if: steps.decide.outputs.published == 'true'
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ steps.decide.outputs.tag }}
+          name: OxiDNS rule baseline ${{ needs.build.outputs.version }}
+          body_path: ${{ steps.decide.outputs.notes }}
+          files: |
+            dist/oxidns-rules-baseline-${{ needs.build.outputs.version }}.tar.gz
+            dist/oxidns-rules-baseline-${{ needs.build.outputs.version }}.tar.gz.sha256
+          generate_release_notes: false
+
+      - name: Summary
+        if: always()
+        shell: bash
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          PUBLISHED: ${{ steps.decide.outputs.published }}
+        run: |
+          printf '\n- published: `%s`\n' "${PUBLISHED:-false}" >> "$GITHUB_STEP_SUMMARY"

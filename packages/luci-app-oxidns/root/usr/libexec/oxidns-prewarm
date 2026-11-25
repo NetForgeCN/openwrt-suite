@@ -10,17 +10,51 @@ PREWARM_DEFAULT_FILE="${PREWARM_DEFAULT_FILE:-/usr/share/oxidns/prewarm.default.
 PREWARM_CONCURRENCY="${PREWARM_CONCURRENCY:-4}"
 PREWARM_QUERY_TIMEOUT="${PREWARM_QUERY_TIMEOUT:-2}"
 PREWARM_RETRIES="${PREWARM_RETRIES:-1}"
-PREWARM_TMP_DIR="${PREWARM_TMP_DIR:-/tmp}"
+TMP_ROOT="${TMPDIR:-/tmp}"
+
+case "$PREWARM_QUERY_TIMEOUT" in
+	''|*[!0-9]*) PREWARM_QUERY_TIMEOUT=2 ;;
+	*)
+		if [ "$PREWARM_QUERY_TIMEOUT" -lt 1 ] || [ "$PREWARM_QUERY_TIMEOUT" -gt 60 ]; then
+			PREWARM_QUERY_TIMEOUT=2
+		fi
+		;;
+esac
+case "$PREWARM_RETRIES" in
+	''|*[!0-9]*) PREWARM_RETRIES=1 ;;
+	*)
+		if [ "$PREWARM_RETRIES" -lt 0 ] || [ "$PREWARM_RETRIES" -gt 5 ]; then
+			PREWARM_RETRIES=1
+		fi
+		;;
+esac
 
 ENABLED=1
 PROTOCOL=udp
 SERVER=127.0.0.1
 PORT=5333
 INTERVAL=3000
+WORK_DIR=""
 
 log() {
 	logger -t oxidns-prewarm "$*" 2>/dev/null || true
 }
+
+fail() {
+	MESSAGE="$1"
+	FAIL_CODE="${2:-1}"
+	log "$MESSAGE"
+	printf '%s\n' "$MESSAGE" >&2
+	exit "$FAIL_CODE"
+}
+
+cleanup() {
+	[ -n "$WORK_DIR" ] || return 0
+	rm -rf "$WORK_DIR" 2>/dev/null || true
+	WORK_DIR=""
+}
+
+trap cleanup EXIT HUP INT TERM
 
 load_settings() {
 	ENABLED=1
@@ -70,7 +104,8 @@ load_settings() {
 }
 
 seed_file() {
-	[ -s "$PREWARM_FILE" ] && return 0
+	[ -s "$PREWARM_FILE" ] && [ ! -L "$PREWARM_FILE" ] && return 0
+	[ ! -L "$PREWARM_DIR" ] || return 1
 	mkdir -p "$PREWARM_DIR" 2>/dev/null || return 1
 	[ -s "$PREWARM_DEFAULT_FILE" ] || return 1
 	if cp "$PREWARM_DEFAULT_FILE" "$PREWARM_FILE" 2>/dev/null; then
@@ -95,96 +130,145 @@ build_jobs() {
 	' "$PREWARM_FILE" 2>/dev/null | sort -u | awk '{ print "A " $0; print "AAAA " $0 }'
 }
 
+# C2: BusyBox builds differ on the custom-port option. Prefer nslookup on
+# stock OpenWrt, detect -port/-p from its usage text, and fall back to dig if
+# nslookup cannot set the port. Probe stderr is kept for diagnostics.
+detect_query_tool() {
+	QUERY_TOOL=""
+	NSLOOKUP_PORT_FLAG=""
+	if command -v nslookup >/dev/null 2>&1; then
+		QUERY_TOOL=nslookup
+		USAGE_TEXT="$(nslookup --help 2>&1 || true)"
+		[ -n "$USAGE_TEXT" ] || USAGE_TEXT="$(nslookup -help 2>&1 || true)"
+		case "$USAGE_TEXT" in
+			*'-port'*) NSLOOKUP_PORT_FLAG='-port' ;;
+			*'-p '* | *'-p='*) NSLOOKUP_PORT_FLAG='-p' ;;
+			*)
+				if command -v dig >/dev/null 2>&1; then
+					QUERY_TOOL=dig
+				else
+					PROBE_ERR="$WORK_DIR/nslookup-probe.err"
+					nslookup -type=A -port="$PORT" "$SERVER" "$SERVER" >/dev/null 2>"$PROBE_ERR" || true
+					PROBE_TEXT="$(sed -n '1,2p' "$PROBE_ERR" 2>/dev/null | tr '\n' ' ')"
+					fail "dependency_missing: nslookup does not support a custom DNS port: ${PROBE_TEXT:-unknown}" 2
+				fi
+				;;
+		esac
+	elif command -v dig >/dev/null 2>&1; then
+		QUERY_TOOL=dig
+	else
+		fail "dependency_missing: neither dig nor nslookup is installed" 2
+	fi
+}
+
+run_query_job() {
+	qtype="$1"
+	name="$2"
+	err_file="$3"
+	if [ "$QUERY_TOOL" = "dig" ]; then
+		tcp_flag=""
+		[ "$PROTOCOL" = "tcp" ] && tcp_flag="+tcp"
+		dig +time="$PREWARM_QUERY_TIMEOUT" +tries="$PREWARM_RETRIES" \
+			@"$SERVER" -p "$PORT" $tcp_flag "$qtype" "$name" \
+			>/dev/null 2>"$err_file"
+	elif [ "$NSLOOKUP_PORT_FLAG" = "-p" ]; then
+		nslookup -type="$qtype" -p "$PORT" "$name" "$SERVER" \
+			>/dev/null 2>"$err_file"
+	else
+		nslookup -type="$qtype" "-port=$PORT" "$name" "$SERVER" \
+			>/dev/null 2>"$err_file"
+	fi
+}
+
+# P3/P4: one worker per bounded queue. A slow domain only blocks its own
+# worker instead of holding up the whole batch, and only one aggregate line is
+# logged per pass.
+run_worker() {
+	queue_file="$1"
+	while read -r job_id qtype name; do
+		[ -n "$job_id" ] && [ -n "$qtype" ] && [ -n "$name" ] || continue
+		ERR_FILE="$WORK_DIR/err.$job_id"
+		if run_query_job "$qtype" "$name" "$ERR_FILE"; then
+			: > "$WORK_DIR/results/ok.$job_id"
+		else
+			: > "$WORK_DIR/results/failed.$job_id"
+		fi
+	done < "$queue_file"
+}
+
 run_pass() {
 	if ! seed_file; then
-		log "domain list unavailable: $PREWARM_FILE"
-		return 1
+		fail "domain list unavailable: $PREWARM_FILE" 1
 	fi
 
-	JOBS_FILE="$PREWARM_TMP_DIR/oxidns-prewarm.jobs.$$"
+	if ! command -v mktemp >/dev/null 2>&1; then
+		fail "dependency_missing: mktemp is not installed" 2
+	fi
+	for REQUIRED_CMD in awk sort wc find rm sed tr chmod date sleep mkdir logger; do
+		if ! command -v "$REQUIRED_CMD" >/dev/null 2>&1; then
+			fail "dependency_missing: $REQUIRED_CMD is not installed" 2
+		fi
+	done
+	WORK_DIR="$(mktemp -d "$TMP_ROOT/oxidns-prewarm.XXXXXX" 2>/dev/null || true)"
+	[ -n "$WORK_DIR" ] || fail "cannot create a private temporary directory" 1
+	chmod 700 "$WORK_DIR" 2>/dev/null || true
+	mkdir -p "$WORK_DIR/results" 2>/dev/null || fail "cannot create the result directory" 1
+
+	JOBS_FILE="$WORK_DIR/jobs"
 	if ! build_jobs > "$JOBS_FILE"; then
-		rm -f "$JOBS_FILE"
-		return 1
+		fail "cannot build the prewarm job list" 1
 	fi
 	JOB_COUNT="$(wc -l < "$JOBS_FILE" 2>/dev/null || printf '0')"
+	case "$JOB_COUNT" in
+		''|*[!0-9]*) JOB_COUNT=0 ;;
+	esac
 	if [ "$JOB_COUNT" -eq 0 ]; then
-		rm -f "$JOBS_FILE"
 		log "domain list is empty"
 		return 0
 	fi
 
-	export PREWARM_SERVER="$SERVER" PREWARM_PORT="$PORT" PREWARM_PROTOCOL="$PROTOCOL"
-	export PREWARM_QUERY_TIMEOUT="$PREWARM_QUERY_TIMEOUT" PREWARM_RETRIES="$PREWARM_RETRIES"
+	case "$PREWARM_CONCURRENCY" in
+		''|*[!0-9]*) WORKERS=4 ;;
+		*)
+			WORKERS="$PREWARM_CONCURRENCY"
+			if [ "$WORKERS" -lt 1 ] || [ "$WORKERS" -gt 32 ]; then
+				WORKERS=4
+			fi
+			;;
+	esac
+	[ "$WORKERS" -le "$JOB_COUNT" ] || WORKERS="$JOB_COUNT"
 
-	# BusyBox's xargs lacks a parallel flag. Spawn background jobs in bounded
-	# batches and wait for each batch, so concurrency works on stock OpenWrt
-	# without GNU findutils. Each job writes a result marker for an exact count.
-	if command -v dig >/dev/null 2>&1; then
-		QUERY_TOOL=dig
-	elif command -v nslookup >/dev/null 2>&1; then
-		QUERY_TOOL=nslookup
-	else
-		log "no dig or nslookup available"
-		rm -f "$JOBS_FILE"
-		return 1
+	detect_query_tool
+
+	if ! awk -v workers="$WORKERS" -v dir="$WORK_DIR" '
+		{
+			idx = (NR - 1) % workers + 1;
+			print NR, $1, $2 > (dir "/queue." idx);
+		}
+	' "$JOBS_FILE"; then
+		fail "cannot split the prewarm job list" 1
 	fi
-	export QUERY_TOOL
 
-	RESULT_DIR="$PREWARM_TMP_DIR/oxidns-prewarm.results.$$"
-	mkdir -p "$RESULT_DIR" 2>/dev/null || RESULT_DIR=""
-	OK_COUNT=0
-	FAILED_COUNT=0
+	worker_idx=1
+	while [ "$worker_idx" -le "$WORKERS" ]; do
+		run_worker "$WORK_DIR/queue.$worker_idx" &
+		worker_idx=$((worker_idx + 1))
+	done
+	wait
 
-	run_query_job() {
-		qtype="$1"
-		name="$2"
-		if [ "$QUERY_TOOL" = "dig" ]; then
-			tcp_flag=""
-			[ "$PREWARM_PROTOCOL" = "tcp" ] && tcp_flag="+tcp"
-			dig +time="$PREWARM_QUERY_TIMEOUT" +tries="$PREWARM_RETRIES" \
-				@"$PREWARM_SERVER" -p "$PREWARM_PORT" $tcp_flag "$qtype" "$name" \
-				>/dev/null 2>&1
-		else
-			nslookup -type="$qtype" -port="$PREWARM_PORT" "$name" "$PREWARM_SERVER" \
-				>/dev/null 2>&1
-		fi
-	}
+	FAILED_COUNT="$(find "$WORK_DIR/results" -type f -name 'failed.*' 2>/dev/null | wc -l | tr -d ' ')"
+	OK_COUNT="$(find "$WORK_DIR/results" -type f -name 'ok.*' 2>/dev/null | wc -l | tr -d ' ')"
+	case "$FAILED_COUNT" in ''|*[!0-9]*) FAILED_COUNT=0 ;; esac
+	case "$OK_COUNT" in ''|*[!0-9]*) OK_COUNT=0 ;; esac
 
-	run_one_job() {
-		id="$1"
-		qtype="$2"
-		name="$3"
-		if run_query_job "$qtype" "$name"; then
-			logger -t oxidns-prewarm "query ok: $qtype $name"
-		else
-			logger -t oxidns-prewarm "query failed: $qtype $name"
-			[ -n "$RESULT_DIR" ] && : > "$RESULT_DIR/failed.$id"
-		fi
-	}
-
-	pending=0
-	job_id=0
-	while read -r qtype name; do
-		[ -n "$qtype" ] && [ -n "$name" ] || continue
-		job_id=$((job_id + 1))
-		run_one_job "$job_id" "$qtype" "$name" &
-		pending=$((pending + 1))
-		if [ "$pending" -ge "$PREWARM_CONCURRENCY" ]; then
-			wait
-			pending=0
-		fi
-	done < "$JOBS_FILE"
-	[ "$pending" -gt 0 ] && wait
-
-	if [ -n "$RESULT_DIR" ]; then
-		FAILED_COUNT="$(find "$RESULT_DIR" -type f 2>/dev/null | wc -l | tr -d ' ')"
-		rm -rf "$RESULT_DIR"
-	fi
-	OK_COUNT=$((JOB_COUNT - FAILED_COUNT))
-	[ "$OK_COUNT" -lt 0 ] && OK_COUNT=0
-
-	rm -f "$JOBS_FILE"
-	log "refreshed $OK_COUNT/$JOB_COUNT queries via $PROTOCOL $SERVER:$PORT (failed=$FAILED_COUNT)"
+	# Keep diagnostics bounded: at most three distinct first lines.
+	ERROR_SAMPLE="$(for ERR_FILE in "$WORK_DIR"/err.*; do
+		[ -s "$ERR_FILE" ] || continue
+		sed -n '1,2p' "$ERR_FILE"
+	done 2>/dev/null | awk '{ print substr($0, 1, 160) }' | sort -u | sed -n '1,3p' | tr '\n' ';')"
+	log "refreshed $OK_COUNT/$JOB_COUNT queries via $PROTOCOL $SERVER:$PORT (failed=$FAILED_COUNT, tool=$QUERY_TOOL)${ERROR_SAMPLE:+} errors=$ERROR_SAMPLE"
+	rm -rf "$WORK_DIR" 2>/dev/null || true
+	WORK_DIR=""
 	return 0
 }
 

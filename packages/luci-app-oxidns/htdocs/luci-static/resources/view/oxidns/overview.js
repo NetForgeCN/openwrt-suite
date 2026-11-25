@@ -18,8 +18,154 @@ var serviceCalls = {
 	disable: rpc.declare({ object: 'luci.oxidns', method: 'service_disable', expect: {} })
 };
 
+var SERVICE_LABELS = {
+	start: _('Start'),
+	stop: _('Stop'),
+	restart: _('Restart'),
+	enable: _('Enable'),
+	disable: _('Disable')
+};
+
+var BACKEND_ERRORS = {
+	service_failed: _('The service action failed.'),
+	service_unavailable: _('The init script is not available.'),
+	rpc_unavailable: _('The LuCI backend is unavailable.')
+};
+
 var statusState = {};
 var serviceActionsKey = null;
+var viewRoot = null;
+var pollFn = null;
+var viewObserver = null;
+var cleanupTasks = [];
+var retryTimer = null;
+var retryCount = 0;
+
+function isAttached(node) {
+	return !!(node && document.body && typeof document.body.contains === 'function' && document.body.contains(node));
+}
+
+function addCleanup(fn) {
+	if (typeof fn === 'function' && cleanupTasks.indexOf(fn) < 0)
+		cleanupTasks.push(fn);
+}
+
+function runCleanup() {
+	var tasks = cleanupTasks.slice();
+	cleanupTasks = [];
+
+	for (var i = 0; i < tasks.length; i++) {
+		try { tasks[i](); } catch (e) {}
+	}
+}
+
+function watchView(root) {
+	viewRoot = root || null;
+
+	if (viewObserver) {
+		try { viewObserver.disconnect(); } catch (e) {}
+		viewObserver = null;
+	}
+
+	var vp = document.getElementById('view');
+	if (!vp || typeof MutationObserver !== 'function')
+		return;
+
+	viewObserver = new MutationObserver(function() {
+		if (viewRoot && !isAttached(viewRoot)) {
+			try { viewObserver.disconnect(); } catch (e) {}
+			viewObserver = null;
+			runCleanup();
+		}
+	});
+	viewObserver.observe(vp, { childList: true, subtree: false });
+}
+
+function unregisterPoll() {
+	if (pollFn && typeof poll.remove === 'function')
+		poll.remove(pollFn);
+	pollFn = null;
+}
+
+function cancelRetry() {
+	if (retryTimer !== null) {
+		window.clearTimeout(retryTimer);
+		retryTimer = null;
+	}
+	retryCount = 0;
+}
+
+function showRefreshError(message) {
+	var node = document.getElementById('oxidns-overview-error');
+	if (!node)
+		return;
+	node.textContent = message || '';
+	node.style.display = message ? 'block' : 'none';
+}
+
+function backendMessage(err, fallback) {
+	var code = err && err.code;
+
+	if (code && BACKEND_ERRORS[code])
+		return BACKEND_ERRORS[code];
+
+	return fallback || _('Operation failed');
+}
+
+function scheduleRetry() {
+	cancelRetry();
+	if (retryCount >= 4) {
+		showRefreshError(_('Could not refresh OxiDNS status. Use Refresh to try again.'));
+		return;
+	}
+
+	retryCount++;
+	showRefreshError(_('Could not refresh OxiDNS status. Retrying...'));
+	retryTimer = window.setTimeout(function() {
+		retryTimer = null;
+		if (isAttached(viewRoot))
+			refreshStatus();
+	}, Math.min(30000, 1000 * Math.pow(2, retryCount)));
+}
+
+function focusModal() {
+	window.setTimeout(function() {
+		var modal = document.getElementById('modal') || document.querySelector('.modal');
+		if (!modal)
+			return;
+
+		var target = modal.querySelector('[autofocus], button:not([disabled]), input:not([disabled]), select, textarea');
+		if (target && typeof target.focus === 'function')
+			target.focus();
+	}, 0);
+}
+
+function confirmAction(title, message, onConfirm) {
+	ui.showModal(title, [
+		E('p', {}, message),
+		E('div', { 'class': 'right', 'style': 'margin-top: 1em;' }, [
+			E('button', {
+				'type': 'button',
+				'class': 'btn cbi-button cbi-button-neutral',
+				'click': function(ev) {
+					ev.preventDefault();
+					ui.hideModal();
+				}
+			}, _('Cancel')),
+			' ',
+			E('button', {
+				'type': 'button',
+				'class': 'btn cbi-button cbi-button-positive',
+				'click': function(ev) {
+					ev.preventDefault();
+					ui.hideModal();
+					return onConfirm();
+				}
+			}, _('Confirm'))
+		])
+	]);
+	focusModal();
+}
 
 function valueOrDash(value) {
 	if (value === null || value === undefined || value === '')
@@ -45,7 +191,8 @@ function coreInstalled(status) {
 
 function statusBadge(text, good) {
 	return E('span', {
-		'class': good ? 'label label-success' : 'label label-warning'
+		'class': good ? 'label label-success' : 'label label-warning',
+		'aria-live': 'polite'
 	}, text);
 }
 
@@ -74,6 +221,10 @@ function browserWebuiUrl(status) {
 
 	try {
 		var url = new URL(raw, window.location.href);
+		/* 只接受 http/https，拒绝 javascript: 等伪协议 */
+		if (url.protocol !== 'http:' && url.protocol !== 'https:')
+			return '';
+
 		if (!(status && status.webui && status.webui.local_only) && localServiceHost(url.hostname) && window.location.hostname)
 			url.hostname = window.location.hostname;
 		url.pathname = url.pathname || '/';
@@ -81,7 +232,7 @@ function browserWebuiUrl(status) {
 		url.hash = '';
 		return url.toString();
 	} catch (e) {
-		return raw;
+		return '';
 	}
 }
 
@@ -119,7 +270,7 @@ function webuiButton(status) {
 		'class': 'btn cbi-button cbi-button-action',
 		'href': url,
 		'target': '_blank',
-		'rel': 'noopener'
+		'rel': 'noopener noreferrer'
 	}, _('Open WebUI'));
 }
 
@@ -192,8 +343,19 @@ function blockedActionMessage(action, status) {
 }
 
 function refreshStatus() {
-	return L.resolveDefault(callStatus(), {}).then(function(status) {
-		statusState = status || {};
+	if (!isAttached(viewRoot)) {
+		unregisterPoll();
+		return Promise.resolve();
+	}
+
+	/* 不用 L.resolveDefault：它吞掉错误，导致界面停留在旧状态且没有提示 */
+	return Promise.resolve(callStatus()).then(function(status) {
+		if (!status || status.ok === false)
+			throw status || { code: 'rpc_unavailable' };
+
+		statusState = status;
+		cancelRetry();
+		showRefreshError('');
 
 		var fields = {
 			'oxidns-backend-status': backendStatusBadge(statusState),
@@ -208,11 +370,16 @@ function refreshStatus() {
 
 		Object.keys(fields).forEach(function(id) {
 			var node = document.getElementById(id);
-			if (node)
+			if (node && isAttached(viewRoot))
 				setNodeContent(node, fields[id]);
 		});
 
-		updateServiceActions(statusState);
+		if (isAttached(viewRoot))
+			updateServiceActions(statusState);
+	}).catch(function(err) {
+		/* 保留最后一次成功的状态，只提示错误并按指数退避重试 */
+		scheduleRetry();
+		console.warn('oxidns status refresh:', err);
 	});
 }
 
@@ -230,11 +397,12 @@ function handleServiceAction(action) {
 	ui.showModal(_('OxiDNS'), [
 		E('p', {}, _('Applying service action...'))
 	]);
+	focusModal();
 
-	return L.resolveDefault(call(), null).then(function(result) {
+	return Promise.resolve(call()).then(function(result) {
 		ui.hideModal();
 		if (!result || result.ok === false) {
-			ui.addNotification(null, E('p', {}, (result && (result.message || result.error)) || _('Service action failed')), 'danger');
+			ui.addNotification(null, E('p', {}, backendMessage(result, _('Service action failed'))), 'danger');
 			return;
 		}
 		return refreshStatus().then(function() {
@@ -242,17 +410,21 @@ function handleServiceAction(action) {
 		});
 	}).catch(function(err) {
 		ui.hideModal();
-		ui.addNotification(null, E('p', {}, err.message || String(err)), 'danger');
+		ui.addNotification(null, E('p', {}, backendMessage(err, _('Service action failed'))), 'danger');
 	});
 }
 
 function actionButton(label, action, style, id) {
 	var attrs = {
 		'id': id,
+		'type': 'button',
 		'class': 'btn cbi-button cbi-button-%s'.format(style || 'neutral'),
 		'click': function(ev) {
 			ev.preventDefault();
-			return handleServiceAction(action);
+			var name = SERVICE_LABELS[action] || action;
+			return confirmAction(_('OxiDNS'), _('Apply the %s service action?').format(name), function() {
+				return handleServiceAction(action);
+			});
 		}
 	};
 
@@ -262,8 +434,8 @@ function actionButton(label, action, style, id) {
 function disabledActionButton(label, hint, id) {
 	return E('button', {
 		'id': id,
-		'class': 'btn cbi-button cbi-button-neutral',
 		'type': 'button',
+		'class': 'btn cbi-button cbi-button-neutral',
 		'disabled': 'disabled',
 		'title': hint
 	}, label);
@@ -329,14 +501,21 @@ function updateServiceActions(status) {
 
 return view.extend({
 	load: function() {
-		return L.resolveDefault(callStatus(), {
-			ok: false,
-			error: _('Unable to query OxiDNS status')
+		return Promise.resolve(callStatus()).catch(function(err) {
+			console.warn('oxidns status load:', err);
+			return {
+				ok: false,
+				error: _('Unable to query OxiDNS status')
+			};
 		});
 	},
 
 	render: function(status) {
-		statusState = status || {};
+		status = status || {};
+		statusState = status;
+
+		addCleanup(unregisterPoll);
+		addCleanup(cancelRetry);
 
 		var rows = [
 			renderRow(_('LuCI backend'), backendStatusBadge(status), 'oxidns-backend-status'),
@@ -353,9 +532,8 @@ return view.extend({
 			rows.push(renderRow(_('Error'), status.error));
 
 		serviceActionsKey = serviceActionStateKey(statusState);
-		poll.add(refreshStatus, 5);
 
-		return E('div', { 'class': 'cbi-map' }, [
+		var map = E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, _('OxiDNS')),
 			E('div', { 'class': 'cbi-map-descr' },
 				_('Manage the OxiDNS runtime, service, configuration, and logs from LuCI.')),
@@ -372,8 +550,22 @@ return view.extend({
 					'class': 'cbi-button-row',
 					'style': 'display: flex; flex-wrap: wrap; gap: .5em;'
 				}, serviceActionButtons(statusState))
-			])
+			]),
+			E('div', {
+				'id': 'oxidns-overview-error',
+				'class': 'alert-message error',
+				'aria-live': 'polite',
+				'style': 'margin-top: 1em; display: none;'
+			})
 		]);
+
+		watchView(map);
+
+		/* poll 是全局对象：必须保存函数引用并在视图卸载时 poll.remove */
+		pollFn = refreshStatus;
+		poll.add(pollFn, 5);
+
+		return map;
 	},
 
 	handleSaveApply: null,

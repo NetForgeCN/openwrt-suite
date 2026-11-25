@@ -1,0 +1,203 @@
+name: Release
+
+# Builds the OpenWrt packages once from a version tag and publishes them.
+# Static validation and the local quick-packaging path are checked first; the
+# apk artifacts are produced by the official OpenWrt SDK so they pass apk-tools
+# 3 indexing exactly like the packages in the upstream feeds.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to package (vX.Y.Z); must match the root Makefile'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Toolchain only; the app is PKGARCH=all and produces architecture-neutral
+  # packages. Matching the SDK used by the target release keeps apk format and
+  # dependency metadata compatible with ImageBuilder.
+  SDK_ARCH: x86_64-25.12.6
+  FEED_NAME: oxidns
+  BUILD_PACKAGES: luci-app-oxidns
+
+jobs:
+  validate:
+    name: Validate and build quick packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            version="$INPUT_VERSION"
+          else
+            version="$REF_NAME"
+          fi
+          case "$version" in
+            v*) ;;
+            *) version="v$version" ;;
+          esac
+          expected="$(sed -n 's/^PKG_VERSION:=//p' Makefile | head -n 1)"
+          if [ "${version#v}" != "$expected" ]; then
+            echo "version $version does not match PKG_VERSION $expected in Makefile" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Run release checks
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: scripts/release-check.sh "$VERSION" dist-quick
+
+      - name: Upload quick packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: luci-app-oxidns-quick
+          path: dist-quick/*
+          if-no-files-found: error
+          retention-days: 7
+
+  build-sdk:
+    name: Build SDK packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup /usr/share/dotnet /usr/share/swift
+          df -h / | tail -n 1
+
+      # The repository is flat, so it must be checked out into a subdirectory
+      # to become a valid feed: the SDK feed scanner ignores the feed root's own
+      # Makefile and only finds package directories below it.
+      - name: Checkout as feed
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: luci-app-oxidns
+
+      - name: Build with OpenWrt SDK
+        uses: openwrt/gh-action-sdk@7fc2640243284ecc44f4a9c3f749a61746ee02cb # v11
+        env:
+          ARCH: ${{ env.SDK_ARCH }}
+          FEEDNAME: ${{ env.FEED_NAME }}
+          PACKAGES: ${{ env.BUILD_PACKAGES }}
+          FEED_DIR: ${{ github.workspace }}
+          V: s
+          # make package/index runs apk mkndx + apk adbdump inside the SDK; it
+          # rejects malformed apk archives before they can be published.
+          INDEX: '1'
+
+      - name: Collect SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist-sdk
+          find bin/packages -type f \
+            \( -name 'luci-app-oxidns-*.apk' -o -name 'luci-i18n-oxidns-*.apk' \) \
+            -exec cp -v {} dist-sdk/ \;
+          ls -l dist-sdk/
+          if ! ls dist-sdk/luci-app-oxidns-*.apk >/dev/null 2>&1; then
+            echo "SDK did not produce a luci-app-oxidns apk" >&2
+            exit 1
+          fi
+          if ! ls dist-sdk/luci-i18n-oxidns-*.apk >/dev/null 2>&1; then
+            echo "SDK did not produce the Simplified Chinese apk" >&2
+            exit 1
+          fi
+
+      - name: Upload SDK packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: luci-app-oxidns-sdk
+          path: dist-sdk/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish release
+    needs:
+      - validate
+      - build-sdk
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Download quick packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: luci-app-oxidns-quick
+          path: quick
+
+      - name: Download SDK packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: luci-app-oxidns-sdk
+          path: sdk
+
+      - name: Assemble release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp quick/* dist/
+          cp sdk/*.apk dist/
+          # Rebuild the checksum file so it covers both build paths.
+          (cd dist && sha256sum ./*.ipk ./*.apk > sha256sums.txt)
+          cat dist/sha256sums.txt
+
+      - name: Reject an existing tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$GH_REPO/tags?per_page=100" --jq '.[].name' > tags.txt
+          if grep -Fxq "$VERSION" tags.txt; then
+            echo "tag $VERSION already exists; a published version is immutable" >&2
+            exit 1
+          fi
+          echo "tag $VERSION is available"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ needs.validate.outputs.version }}
+          name: OxiDNS LuCI ${{ needs.validate.outputs.version }}
+          files: |
+            dist/*.ipk
+            dist/*.apk
+            dist/sha256sums.txt
+          generate_release_notes: true

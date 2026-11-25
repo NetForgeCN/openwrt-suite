@@ -1,29 +1,12 @@
 'use strict';
 'require view';
 'require rpc';
+'require request';
 'require ui';
 
 var callRulesStatus = rpc.declare({
 	object: 'luci.oxidns',
 	method: 'rules_status',
-	expect: {}
-});
-
-var callRulesCheck = rpc.declare({
-	object: 'luci.oxidns',
-	method: 'rules_check',
-	expect: {}
-});
-
-var callRulesUpdate = rpc.declare({
-	object: 'luci.oxidns',
-	method: 'rules_update',
-	expect: {}
-});
-
-var callRulesRestore = rpc.declare({
-	object: 'luci.oxidns',
-	method: 'rules_restore',
 	expect: {}
 });
 
@@ -33,7 +16,133 @@ var callProgress = rpc.declare({
 	expect: {}
 });
 
+/* Long calls get their own HTTP timeout without touching L.env.rpctimeout */
+var RULES_RPC = {
+	check: { object: 'luci.oxidns', method: 'rules_check' },
+	update: { object: 'luci.oxidns', method: 'rules_update' },
+	restore: { object: 'luci.oxidns', method: 'rules_restore' }
+};
+
+var BACKEND_ERRORS = {
+	rules_download_failed: _('Failed to download the rules archive.'),
+	rules_save_failed: _('Failed to install the downloaded rules.'),
+	rules_restore_failed: _('Failed to restore the bundled rules.'),
+	rpc_unavailable: _('The LuCI backend is unavailable.'),
+	operation_cancelled: _('The operation was cancelled in the browser. The device may still be working; check the status before retrying.')
+};
+
 var statusState = {};
+var viewRoot = null;
+var viewObserver = null;
+var cleanupTasks = [];
+var retryTimer = null;
+var retryCount = 0;
+var progressState = { generation: 0, timer: null, failures: 0, lastText: null, lastSig: '' };
+var fileSig = '';
+
+function isAttached(node) {
+	return !!(node && document.body && typeof document.body.contains === 'function' && document.body.contains(node));
+}
+
+function addCleanup(fn) {
+	if (typeof fn === 'function' && cleanupTasks.indexOf(fn) < 0)
+		cleanupTasks.push(fn);
+}
+
+function runCleanup() {
+	var tasks = cleanupTasks.slice();
+	cleanupTasks = [];
+
+	for (var i = 0; i < tasks.length; i++) {
+		try { tasks[i](); } catch (e) {}
+	}
+}
+
+function watchView(root) {
+	viewRoot = root || null;
+
+	if (viewObserver) {
+		try { viewObserver.disconnect(); } catch (e) {}
+		viewObserver = null;
+	}
+
+	var vp = document.getElementById('view');
+	if (!vp || typeof MutationObserver !== 'function')
+		return;
+
+	viewObserver = new MutationObserver(function() {
+		if (viewRoot && !isAttached(viewRoot)) {
+			try { viewObserver.disconnect(); } catch (e) {}
+			viewObserver = null;
+			runCleanup();
+		}
+	});
+	viewObserver.observe(vp, { childList: true, subtree: false });
+}
+
+function cancelRetry() {
+	if (retryTimer !== null) {
+		window.clearTimeout(retryTimer);
+		retryTimer = null;
+	}
+	retryCount = 0;
+}
+
+function backendMessage(err, fallback) {
+	var code = err && err.code;
+	if (code && BACKEND_ERRORS[code])
+		return BACKEND_ERRORS[code];
+	return fallback || _('Operation failed');
+}
+
+function showRefreshError(message) {
+	var node = document.getElementById('oxidns-rules-error');
+	if (!node)
+		return;
+	node.textContent = message || '';
+	node.style.display = message ? 'block' : 'none';
+}
+
+function focusModal() {
+	window.setTimeout(function() {
+		var modal = document.getElementById('modal') || document.querySelector('.modal');
+		if (!modal)
+			return;
+
+		var target = modal.querySelector('[autofocus], button:not([disabled]), input:not([disabled]), select, textarea');
+		if (target && typeof target.focus === 'function')
+			target.focus();
+	}, 0);
+}
+
+function callLongRpc(desc, seconds) {
+	var params = {};
+
+	return new Promise(function(resolve, reject) {
+		var msg = {
+			jsonrpc: '2.0',
+			id: 'oxidns-' + Date.now() + '-' + Math.floor(Math.random() * 1000000),
+			method: 'call',
+			params: [ rpc.getSessionID(), desc.object, desc.method, params ]
+		};
+		var req = {
+			object: desc.object,
+			method: desc.method,
+			expect: {},
+			resolve: resolve,
+			reject: reject
+		};
+
+		request.post(rpc.getBaseURL(), msg, {
+			timeout: seconds * 1000,
+			credentials: true
+		}).then(function(res) {
+			rpc.parseCallReply(req, res);
+		}, function(err) {
+			reject(err);
+		});
+	});
+}
 
 function valueOrDash(value) {
 	if (value === null || value === undefined || value === '')
@@ -52,29 +161,6 @@ function formatBytes(bytes) {
 	return '%.1f MiB'.format(size / 1048576);
 }
 
-function callWithRpcTimeout(call, seconds) {
-	if (!seconds)
-		return call();
-
-	var previousTimeout = L.env.rpctimeout;
-	L.env.rpctimeout = seconds;
-
-	var restore = function() {
-		if (previousTimeout === undefined)
-			delete L.env.rpctimeout;
-		else
-			L.env.rpctimeout = previousTimeout;
-	};
-
-	return call().then(function(result) {
-		restore();
-		return result;
-	}, function(err) {
-		restore();
-		throw err;
-	});
-}
-
 function renderRow(label, value, id) {
 	var valueAttrs = { 'class': 'td left' };
 	if (id)
@@ -87,19 +173,17 @@ function renderRow(label, value, id) {
 }
 
 function renderRulesError(result) {
-	var message = (result && (result.message || result.error)) || _('Rule operation failed');
+	var message = backendMessage(result, _('Rule operation failed'));
 	var detail = result && (result.detail || result.details);
 	var children = [
-		E('p', {}, E('strong', {}, _('Rule operation failed')))
+		E('p', {}, E('strong', {}, _('Rule operation failed'))),
+		E('p', {}, message)
 	];
 
 	if (detail)
 		children.push(E('p', { 'class': 'small' }, detail));
 	if (result && result.code)
 		children.push(E('p', { 'class': 'small' }, _('Error code') + ': ' + result.code));
-
-	if (!detail && !(result && result.code))
-		children.push(E('p', {}, message));
 
 	return E('div', {}, children);
 }
@@ -124,9 +208,11 @@ function replaceContent(node, content) {
 	}
 }
 
-function showProgressModal(label) {
-	var statusNode = E('p', {}, label);
+function showProgressModal(label, onCancel) {
+	var statusNode = E('p', { 'aria-live': 'polite' }, label);
 	var logNode = E('pre', {
+		'aria-label': _('Command output'),
+		'role': 'log',
 		'style': [
 			'box-sizing: border-box',
 			'width: 100%',
@@ -143,8 +229,18 @@ function showProgressModal(label) {
 			'line-height: 1.45'
 		].join(';')
 	}, _('Waiting for command output...'));
-	var resultNode = E('div', {});
+	var resultNode = E('div', { 'aria-live': 'polite' });
+	var cancelButton = E('button', {
+		'type': 'button',
+		'class': 'btn cbi-button cbi-button-negative',
+		'click': function(ev) {
+			ev.preventDefault();
+			if (onCancel)
+				onCancel();
+		}
+	}, _('Cancel'));
 	var closeButton = E('button', {
+		'type': 'button',
 		'class': 'btn cbi-button cbi-button-neutral',
 		'disabled': 'disabled',
 		'click': function(ev) {
@@ -158,81 +254,204 @@ function showProgressModal(label) {
 		E('div', { 'class': 'cbi-value-title', 'style': 'margin-bottom: .35em;' }, _('Command output')),
 		logNode,
 		resultNode,
-		E('div', { 'class': 'right', 'style': 'margin-top: 1em;' }, closeButton)
+		E('div', { 'class': 'right', 'style': 'margin-top: 1em;' }, [
+			cancelButton, ' ', closeButton
+		])
 	]);
+	focusModal();
 
-	return { status: statusNode, log: logNode, result: resultNode, closeButton: closeButton };
+	return { status: statusNode, log: logNode, result: resultNode, cancelButton: cancelButton, closeButton: closeButton };
 }
 
 function finishProgress(nodes, statusText, resultContent) {
 	if (nodes.status)
 		nodes.status.textContent = statusText;
 	replaceContent(nodes.result, resultContent);
+	if (nodes.cancelButton) {
+		nodes.cancelButton.disabled = true;
+		nodes.cancelButton.setAttribute('disabled', 'disabled');
+	}
 	if (nodes.closeButton) {
 		nodes.closeButton.disabled = false;
 		nodes.closeButton.removeAttribute('disabled');
 	}
 }
 
-function refreshProgressLog(logNode) {
-	return L.resolveDefault(callProgress(), null).then(function(result) {
+/*
+ * core_progress 是共享缓冲，后端没有 operation id；客户端 token 用来丢弃旧操作
+ * 的回包，并只更新仍挂载的节点。按操作隔离需要后端扩展（见残余风险）。
+ */
+function refreshProgressLog(logNode, token) {
+	if (token !== progressState.generation || !isAttached(logNode))
+		return Promise.resolve();
+
+	return Promise.resolve(callProgress()).then(function(result) {
+		if (token !== progressState.generation || !isAttached(logNode))
+			return;
+
+		progressState.failures = 0;
+
 		if (!result || result.ok === false)
 			return;
-		logNode.textContent = result.text || _('Waiting for command output...');
+
+		var text = result.text || _('Waiting for command output...');
+		if (text === progressState.lastText)
+			return;
+
+		progressState.lastText = text;
+		logNode.textContent = text;
 		logNode.scrollTop = logNode.scrollHeight;
+	}).catch(function(err) {
+		if (token !== progressState.generation)
+			return;
+
+		progressState.failures++;
+		console.warn('oxidns rules progress:', err);
 	});
 }
 
-function runRulesAction(label, call, timeout) {
-	var nodes = showProgressModal(label);
-	var stopped = false;
-	var timer = window.setInterval(function() {
-		if (!stopped)
-			refreshProgressLog(nodes.log);
-	}, 1000);
-	window.setTimeout(function() {
-		if (!stopped)
-			refreshProgressLog(nodes.log);
-	}, 500);
+function stopProgressPolling() {
+	progressState.generation++;
 
-	return L.resolveDefault(callWithRpcTimeout(call, timeout), null).then(function(result) {
-		stopped = true;
-		window.clearInterval(timer);
-		return refreshProgressLog(nodes.log).then(function() {
+	if (progressState.timer !== null) {
+		window.clearTimeout(progressState.timer);
+		progressState.timer = null;
+	}
+	progressState.failures = 0;
+}
+
+function scheduleProgressTick(logNode, token) {
+	if (token !== progressState.generation)
+		return;
+
+	var delay = progressState.failures
+		? Math.min(10000, 1000 * Math.pow(2, progressState.failures))
+		: 1000;
+
+	progressState.timer = window.setTimeout(function() {
+		progressState.timer = null;
+		if (token !== progressState.generation)
+			return;
+
+		refreshProgressLog(logNode, token).then(function() {
+			scheduleProgressTick(logNode, token);
+		});
+	}, delay);
+}
+
+function startProgressPolling(logNode) {
+	progressState.lastText = null;
+	var token = ++progressState.generation;
+	scheduleProgressTick(logNode, token);
+
+	return {
+		token: token,
+		stop: function() { stopProgressPolling(); },
+		refresh: function() { return refreshProgressLog(logNode, token); }
+	};
+}
+
+function runRulesAction(label, desc, seconds) {
+	var cancelReject = null;
+	var cancelled = false;
+	var nodes = showProgressModal(label, function() {
+		if (cancelled)
+			return;
+
+		cancelled = true;
+		stopProgressPolling();
+		if (cancelReject)
+			cancelReject({ code: 'operation_cancelled' });
+		finishProgress(nodes, _('Operation cancelled locally.'),
+			E('p', {}, backendMessage({ code: 'operation_cancelled' })));
+	});
+	var progress = startProgressPolling(nodes.log);
+
+	var cancelPromise = new Promise(function(resolve, reject) {
+		cancelReject = reject;
+	});
+	var callPromise = callLongRpc(desc, seconds);
+
+	return Promise.race([ callPromise, cancelPromise ]).then(function(result) {
+		stopProgressPolling();
+		return progress.refresh().then(function() {
 			if (!result || result.ok === false) {
 				finishProgress(nodes, _('Rule operation failed'), renderRulesError(result || {}));
-				return;
+				return false;
 			}
+
 			finishProgress(nodes, _('Rule operation completed.'), E('p', {}, _('Rule operation completed.')));
 			ui.addNotification(null, E('p', {}, _('Rule operation completed.')), 'info');
-			return loadStatus();
+			return loadStatus().then(function() { return true; });
 		});
 	}).catch(function(err) {
-		stopped = true;
-		window.clearInterval(timer);
-		var errorResult = { 'message': (err && err.message) || String(err) };
-		finishProgress(nodes, _('Rule operation failed'), renderRulesError(errorResult));
+		stopProgressPolling();
+		return progress.refresh().then(function() {
+			var errorResult = err && err.code ? err : { detail: (err && err.message) || String(err) };
+			finishProgress(nodes, _('Rule operation failed'), renderRulesError(errorResult));
+			return false;
+		});
 	});
+}
+
+function scheduleStatusRetry() {
+	cancelRetry();
+	if (retryCount >= 4) {
+		showRefreshError(_('Could not refresh rule status. Use Refresh to try again.'));
+		return;
+	}
+
+	retryCount++;
+	showRefreshError(_('Could not refresh rule status. Retrying...'));
+	retryTimer = window.setTimeout(function() {
+		retryTimer = null;
+		if (isAttached(viewRoot))
+			loadStatus();
+	}, Math.min(30000, 1000 * Math.pow(2, retryCount)));
 }
 
 function loadStatus() {
-	return L.resolveDefault(callRulesStatus(), {}).then(function(status) {
-		statusState = status || {};
+	if (!isAttached(viewRoot))
+		return Promise.resolve();
+
+	return Promise.resolve(callRulesStatus()).then(function(status) {
+		if (!status || status.ok === false)
+			throw status || { code: 'rpc_unavailable' };
+
+		/* 失败时保留最后一次成功状态 */
+		statusState = status;
+		cancelRetry();
+		showRefreshError('');
 		renderStatus();
+	}).catch(function(err) {
+		scheduleStatusRetry();
+		console.warn('oxidns rules status refresh:', err);
 	});
 }
 
-function renderStatus() {
-	var summary = document.getElementById('oxidns-rules-summary');
-	if (summary) {
-		replaceContent(summary, [
-			renderRow(_('Installed version'), statusState.installed_version, 'oxidns-rules-installed'),
-			renderRow(_('Baseline version'), statusState.baseline_version, 'oxidns-rules-baseline'),
-			renderRow(_('Repository'), statusState.repository, 'oxidns-rules-repository'),
-			renderRow(_('Working copy'), statusState.rules_dir, 'oxidns-rules-dir')
-		]);
-	}
+function setCellText(id, value) {
+	var node = document.getElementById(id);
+	if (!node)
+		return;
 
+	var text = valueOrDash(value);
+	if (node.textContent !== text)
+		node.textContent = text;
+}
+
+/* 值没变时不触碰 DOM，避免轮询把整张状态表重建 */
+function renderStatus() {
+	setCellText('oxidns-rules-installed', statusState.installed_version);
+	setCellText('oxidns-rules-baseline', statusState.baseline_version);
+	setCellText('oxidns-rules-repository', statusState.repository);
+	setCellText('oxidns-rules-dir', statusState.rules_dir);
+
+	var files = (statusState && statusState.files) || [];
+	var sig = JSON.stringify(files);
+	if (sig === fileSig)
+		return;
+
+	fileSig = sig;
 	var body = document.getElementById('oxidns-rules-files');
 	if (body)
 		replaceContent(body, renderFileRows());
@@ -276,7 +495,7 @@ function renderFileRows() {
 }
 
 function handleCheck() {
-	return L.resolveDefault(callWithRpcTimeout(callRulesCheck, 300), null).then(function(result) {
+	return Promise.resolve(callLongRpc(RULES_RPC.check, 300)).then(function(result) {
 		if (!result || result.ok === false) {
 			ui.addNotification(null, renderRulesError(result || {}), 'danger');
 			return;
@@ -290,6 +509,7 @@ function handleCheck() {
 		];
 		var buttons = [
 			E('button', {
+				'type': 'button',
 				'class': 'btn cbi-button cbi-button-neutral',
 				'click': function(ev) {
 					ev.preventDefault();
@@ -301,11 +521,12 @@ function handleCheck() {
 		if (result.update_available) {
 			buttons.push(' ');
 			buttons.push(E('button', {
+				'type': 'button',
 				'class': 'btn cbi-button cbi-button-positive',
 				'click': function(ev) {
 					ev.preventDefault();
 					ui.hideModal();
-					return runRulesAction(_('Updating rule subscriptions...'), callRulesUpdate, 600);
+					return runRulesAction(_('Updating rule subscriptions...'), RULES_RPC.update, 600);
 				}
 			}, _('Update now')));
 		}
@@ -315,6 +536,9 @@ function handleCheck() {
 			E('p', {}, result.update_available ? _('Rule update available.') : _('No rule update available.')),
 			E('div', { 'class': 'right', 'style': 'margin-top: 1em;' }, buttons)
 		]);
+		focusModal();
+	}).catch(function(err) {
+		ui.addNotification(null, renderRulesError(err || {}), 'danger');
 	});
 }
 
@@ -324,6 +548,7 @@ function handleRestore() {
 			E('p', {}, _('This overwrites every rule file in the working copy with the bundled baseline.')),
 			E('div', { 'class': 'right' }, [
 				E('button', {
+					'type': 'button',
 					'class': 'btn cbi-button cbi-button-neutral',
 					'click': function(ev) {
 						ev.preventDefault();
@@ -333,16 +558,17 @@ function handleRestore() {
 				}, _('Cancel')),
 				' ',
 				E('button', {
+					'type': 'button',
 					'class': 'btn cbi-button cbi-button-negative',
 					'click': function(ev) {
 						ev.preventDefault();
 						ui.hideModal();
-						resolve(runRulesAction(_('Restoring rules from the bundled baseline...'),
-							callRulesRestore, 300));
+						resolve(runRulesAction(_('Restoring rules from the bundled baseline...'), RULES_RPC.restore, 300));
 					}
 				}, _('Confirm'))
 			])
 		]);
+		focusModal();
 	});
 }
 
@@ -357,6 +583,7 @@ function renderStatusRows() {
 
 function actionButton(label, handler, style) {
 	return E('button', {
+		'type': 'button',
 		'class': 'btn cbi-button cbi-button-%s'.format(style || 'neutral'),
 		'click': function(ev) {
 			ev.preventDefault();
@@ -365,15 +592,52 @@ function actionButton(label, handler, style) {
 	}, label);
 }
 
+function updateNow() {
+	return new Promise(function(resolve) {
+		ui.showModal(_('Update rules now'), [
+			E('p', {}, _('Download and install the latest rule subscription now?')),
+			E('div', { 'class': 'right' }, [
+				E('button', {
+					'type': 'button',
+					'class': 'btn cbi-button cbi-button-neutral',
+					'click': function(ev) {
+						ev.preventDefault();
+						ui.hideModal();
+						resolve();
+					}
+				}, _('Cancel')),
+				' ',
+				E('button', {
+					'type': 'button',
+					'class': 'btn cbi-button cbi-button-positive',
+					'click': function(ev) {
+						ev.preventDefault();
+						ui.hideModal();
+						resolve(runRulesAction(_('Updating rule subscriptions...'), RULES_RPC.update, 600));
+					}
+				}, _('Confirm'))
+			])
+		]);
+		focusModal();
+	});
+}
+
 return view.extend({
 	load: function() {
-		return L.resolveDefault(callRulesStatus(), {});
+		return Promise.resolve(callRulesStatus()).catch(function(err) {
+			console.warn('oxidns rules status load:', err);
+			return { ok: false, code: 'rpc_unavailable' };
+		});
 	},
 
 	render: function(status) {
 		statusState = status || {};
+		fileSig = JSON.stringify((statusState && statusState.files) || []);
 
-		return E('div', { 'class': 'cbi-map' }, [
+		addCleanup(stopProgressPolling);
+		addCleanup(cancelRetry);
+
+		var map = E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, _('Rule Subscriptions')),
 			E('div', { 'class': 'cbi-map-descr' },
 				_('Domain lists used for China/ad split and ad blocking. The working copy is seeded from the bundled baseline at boot and can be updated from a published release.')),
@@ -388,25 +652,33 @@ return view.extend({
 					_('Updates are downloaded from the repository release, verified with SHA256 and validated with oxidns check before they replace the working copy. Restoring the baseline works offline.')),
 				E('div', { 'class': 'cbi-button-row', 'style': 'display: flex; flex-wrap: wrap; gap: .5em;' }, [
 					actionButton(_('Check for updates'), handleCheck, 'action'),
-					actionButton(_('Update now'), function() {
-						return runRulesAction(_('Updating rule subscriptions...'), callRulesUpdate, 600);
-					}, 'positive'),
+					actionButton(_('Update now'), updateNow, 'positive'),
 					actionButton(_('Restore baseline'), handleRestore, 'neutral'),
-					actionButton(_('Refresh'), function() {
-						return loadStatus();
-					}, 'neutral')
+					actionButton(_('Refresh'), loadStatus, 'neutral')
 				])
 			]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, _('Rule files')),
 				E('div', { 'class': 'table cbi-section-table', 'id': 'oxidns-rules-files' },
 					renderFileRows())
-			])
+			]),
+			E('div', {
+				'id': 'oxidns-rules-error',
+				'class': 'alert-message error',
+				'aria-live': 'polite',
+				'style': 'margin-top: 1em; display: none;'
+			})
 		]);
+
+		watchView(map);
+
+		if (statusState.ok === false)
+			showRefreshError(backendMessage(statusState, _('Could not refresh rule status.')));
+
+		return map;
 	},
 
 	handleSaveApply: null,
 	handleSave: null,
 	handleReset: null
 });
-
