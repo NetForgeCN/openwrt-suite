@@ -25,7 +25,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=oxidns-rules-baseline
-PKG_VERSION:=2026.11.17.0223
+PKG_VERSION:=2026.11.24.0419
 PKG_RELEASE:=5
 PKGARCH:=all
 
@@ -37,7 +37,7 @@ PKG_MAINTAINER:=NetForgeCN
 
 PKG_SOURCE:=oxidns-rules-baseline-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://github.com/NetForgeCN/luci-app-oxidns/releases/download/rules-v$(PKG_VERSION)/
-PKG_HASH:=cb6b246969dbbdfb800174694e4282efbb4520ce6a8292e72f169ba094db6d25
+PKG_HASH:=1084a9aa8a7986c6159fbeba78433ff64c26567bfe0f782822fc3898023b2a6a
 
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 

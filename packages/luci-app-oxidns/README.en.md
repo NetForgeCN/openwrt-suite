@@ -127,10 +127,10 @@ cd luci-app-oxidns
 
 # App with embedded core and rule baseline (pick the asset for your CPU)
 curl -LO https://github.com/svenshi/oxidns/releases/download/v1.7.1/oxidns-x86_64-unknown-linux-musl.tar.gz
-curl -LO https://github.com/NetForgeCN/luci-app-oxidns/releases/download/rules-v2026.11.17.0223/oxidns-rules-baseline-2026.11.17.0223.tar.gz
+curl -LO https://github.com/NetForgeCN/luci-app-oxidns/releases/download/rules-v2026.11.24.0419/oxidns-rules-baseline-2026.11.24.0419.tar.gz
 ./scripts/build-luci-package.sh 0.2.0 dist-embedded \
 	oxidns-x86_64-unknown-linux-musl.tar.gz \
-	oxidns-rules-baseline-2026.11.17.0223.tar.gz
+	oxidns-rules-baseline-2026.11.24.0419.tar.gz
 ```
 
 Install:
