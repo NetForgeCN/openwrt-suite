@@ -1,6 +1,6 @@
 # openwrt-suite
 
-OpenWrt 第三方组件**单一聚合 feed 仓库**：把 36 个第三方包（40 个包源目录）与一份固件 `.config` 统一收进本仓库，每日由 GitHub Actions 从各上游同步（纯快照方式）。使用时把本仓库挂成一个 feed，第三方包就会出现在 `make menuconfig` 里；`build/compile.sh` 克隆后直接运行即可完成从准备到编译的全过程，本地修改原样生效。
+OpenWrt 第三方组件**单一聚合 feed 仓库**：把 36 个第三方包（40 个包源目录）与一份固件 `.config` 统一收进本仓库，每日由 GitHub Actions 按 `sources.lock` 中固定的 commit 同步（纯快照方式，变更先暂存、校验通过才整体发布）。使用时把本仓库挂成一个 feed，第三方包就会出现在 `make menuconfig` 里；`build/compile.sh` 克隆后直接运行即可完成从准备到编译的全过程，本地修改原样生效。
 
 ## 使用方法
 
@@ -139,7 +139,7 @@ bash build/compile.sh
 
 ### 本仓库：每日固件构建（GitHub Actions）
 
-`.github/workflows/build.yml` 每天**北京时间 02:45** 用 `build/compile.sh` 出一版 x86-64 固件并发布 Release（保留最近 7 个，artifact 保留 3 天），支持手动 `Run workflow`。构建使用独立 cron：同步失败不阻塞出固件，当晚沿用前一天的快照。`.github/workflows/sync.yml` 每天 02:30 同步上游快照。
+`.github/workflows/build.yml` 每天**北京时间 02:45** 用 `build/compile.sh` 出一版 x86-64 固件并发布 Release（保留最近 7 个，artifact 保留 3 天），支持手动 `Run workflow`。构建使用独立 cron：同步失败不阻塞出固件，当晚沿用前一天的快照。`.github/workflows/sync.yml` 每天 02:30 以 `SUITE_SYNC_UPDATE=1` 解析上游分支头、更新 pin 后同步快照。两个 workflow 都设了 `timeout-minutes`，第三方 Action 全部钉到 commit SHA，`build` 作业只读、`release` 作业才有写权限，`sync` 作业只有 `contents: write`；构建与清理都禁止并发取消，且清理会跳过 `backup-pre-audit-*` 备份发布。
 
 构建直接使用 workflow 所在提交的 suite（脚本、`packages/`、`config/dot.config` 同源）：`SUITE_DIR` 指向本次 checkout，`00-feeds-order.sh` 检测到它是本地 suite 仓库就写 `src-link suite <构建树/feeds/.suite-local>`，该目录里只有一个 `packages` 软链指向 checkout 的 `packages/`。`feeds update -a` 把它挂成 feed，包快照与配置严格同属一个提交。只暴露 `packages/` 一层：`scan.mk` 用 `find -L` 递归扫整个 feed 目录，只挂一个干净的 `packages` 软链可以让扫描范围精确可控。本地手动跑 `compile.sh` 时脚本会自动识别自身所在检出，行为一致。
 
@@ -188,19 +188,23 @@ OpenWrt 的 `feeds install -a` 对同名包按 feeds.conf 中的**出现顺序**
 
 `pkg` 的 payload 可以写上游内的**子路径**，目标目录取它的 basename，用来对付「包目录藏在子目录里」的上游（如 c2h2/luci-app-photondns 的 `openwrt/photondns`）。只含一个包目录的上游（如 atomdns）同样走 `pkg`，payload 只写一个目录，仓库根的 README / LICENSE 不会被当成包；许可证放在包目录内的随快照拷入，放在仓库根的另由 `copy_meta` 收进 `meta/<slug>/`。每个源同步后强制校验 `Makefile` 存在，任何失配（上游重构、删库、改默认分支）都会让同步失败报红。每次同步把上游 commit 记入 `sources.lock`。
 
-`packages/` 下的内容由上游决定，快照定制用 `patches/<slug>.sh`。`renovate.json` 里 `ignorePaths: ["packages/**"]`，Renovate 只升级本仓库自身的 workflow 依赖。
+`packages/` 下的内容由上游决定，快照定制用 `patches/<slug>.sh`（当前有 `photondns.sh`、`geodata.sh`）。`renovate.json` 忽略 `packages/**` / `meta/**` / `config/**` / `sources.conf` / `sources.lock`：快照由同步流程管理，Renovate 只处理 workflow 依赖。
 
 ### 版本锁定与可复现
 
-构建用的所有第三方代码严格等于本仓库快照；每个快照对应的上游 commit 记录在 `sources.lock`，可追溯、可回滚（git 历史），上游删库 / force-push / 投毒均不影响已发布的快照。
+`sources.conf` 只描述「从哪里取、取什么」；**`sources.lock` 中 40 位 commit SHA 才是唯一信任锚**。默认 `bash scripts/sync.sh` 只按 lock 中的 pin 抓取（`git fetch --depth 1 origin <sha>` 并核对 HEAD），显式 `SUITE_SYNC_UPDATE=1` 才会 `ls-remote` 解析分支头、写入新 pin 后同步。所有网络访问强制无凭据 HTTPS、带超时与重试；`mode=file` 用 commit SHA 拼 `raw.githubusercontent.com` 内容寻址 URL，不再跟分支头漂移。
+
+同步结果先写入仓库内 staging 目录，对 `packages/`、`meta/`、文件映射和新 lock 跑完整 `scripts/validate.sh`，通过后才替换工作树；发布后校验失败会整体回滚，绝不留下半个快照。`sources.lock` 的字段布局未变（`slug|40位SHA|UTC时间戳|URL`）。
+
+构建用的所有第三方代码严格等于本仓库快照；可追溯、可回滚（git 历史），上游删库 / force-push / 投毒均不影响已发布的快照。`compile.sh` 默认用 suite 提交的提交时间设置 `SOURCE_DATE_EPOCH`，并用 `gzip -n` 去掉归档时间戳；`mihomo-*` 的 `PKG_BUILD_TIME` 与 `v2ray-geodata` 的 `PKG_VERSION` 也遵循该变量。`v2ray-geodata` 的规则数据与 SHA256 一并固定在 Makefile 中，不再使用 `releases/latest`。
 
 ## 各包构建说明
 
 ### v2ray-geodata
 
-同步源是自建仓库 [NetForgeCN/Loyalsoldier](https://github.com/NetForgeCN/Loyalsoldier)（仓库内只有一份 Makefile）。它的 `GEOIP_URL` 与 `GEOSITE_URL` 都指向自建规则仓库 [NetForgeCN/v2ray-rules-dat](https://github.com/NetForgeCN/v2ray-rules-dat) 的 latest release：全量 `geoip.dat` + `geosite.dat`（Loyalsoldier 全量集，另加反广告 / Cats-Team AdRules / neodevhost 列表），release 里同时提供两个 `.sha256sum` 供 Makefile 的 `Build/Compile` 校验。快照与源仓库逐字节一致，换数据源只改那个仓库，suite 次日 02:30 自动同步到位。
+同步源是自建仓库 [NetForgeCN/Loyalsoldier](https://github.com/NetForgeCN/Loyalsoldier)（仓库内只有一份 Makefile）。规则数据来自自建规则仓库 [NetForgeCN/v2ray-rules-dat](https://github.com/NetForgeCN/v2ray-rules-dat) 的**固定 release**（当前 `202611250113`，全量 `geoip.dat` + `geosite.dat`，另加反广告 / Cats-Team AdRules / neodevhost 列表）。`patches/geodata.sh` 在每次同步后把 `GEODATA_TAG` 与两个官方 SHA256 一并钉进 Makefile，`Build/Compile` 强制 HTTPS、超时并用内置哈希校验；不再用 `releases/latest`（该标签现在指向只含备份资产的 release，会 404），也不再从同源现取 `.sha256sum`。要升级规则数据必须同时改 tag 和两个哈希。
 
-该包目录只有 Makefile（头部为 GPL-3.0 声明），`PKG_LICENSE_FILES:=LICENSE` 是上游写法。
+该包目录只有 Makefile（头部为 GPL-3.0 声明），`PKG_LICENSE_FILES:=LICENSE` 是上游写法。`PKG_VERSION` 跟随 `SOURCE_DATE_EPOCH`（UTC），同一 suite 提交得到同一版本。
 
 ### honk
 
@@ -395,13 +399,15 @@ file -L "$(command -v zig)" 2>/dev/null; file -L "$(command -v bpf-linker)" 2>/d
 
 ## 手动触发同步
 
-- GitHub 仓库页 → Actions → daily-sync → Run workflow；或
-- 本地执行：`bash scripts/sync.sh`（之后自行 commit / push）
+- GitHub 仓库页 → Actions → daily-sync → Run workflow（workflow 已设置 `SUITE_SYNC_UPDATE=1`）；或
+- 本地执行：`SUITE_SYNC_UPDATE=1 bash scripts/sync.sh`（之后自行 commit / push）
 
-调试单个源：`SUITE_SYNC_ONLY=geodata bash scripts/sync.sh`
+不带 `SUITE_SYNC_UPDATE=1` 的本地执行只会按 `sources.lock` 的固定 pin 重取快照，用于验证/恢复。调试单个源：`SUITE_SYNC_ONLY=geodata SUITE_SYNC_UPDATE=1 bash scripts/sync.sh`。
+
+`scripts/validate.sh` 可单独运行，检查：包目录/Makefile、锁文件 SHA 与时间戳格式、conf/lock 一一对应、目标目录冲突、payload 路径安全、重复包名、define/endif 配对、源码 hash pin、许可证归属、补丁脚本语法与 shell 语法。它也是同步发布前的强制门禁。
 
 ## 许可证
 
 **本仓库自身**（`scripts/`、`diy/`、`build/`、文档）以 **MIT** 授权，见 [LICENSE](LICENSE)。
 
-**聚合进来的第三方包**许可证**原样保留**：LICENSE 随快照走——`mode=all` 的包、以及把 LICENSE 放在包目录里的 `mode=pkg` 上游，文件就在 `packages/<name>/LICENSE`；仓库根另外提供 LICENSE / THIRD-PARTY-NOTICES / NOTICE 的 `mode=pkg` 上游（如 `atomdns`）再由 `sync.sh` 额外收进 `meta/<slug>/`。快照内容按上游原样分发，`patches/photondns.sh` 把上游仓库根的 Cargo 工程**原样补齐**到包目录（新增文件、不改动任何已有内容）。MIT 只覆盖本仓库自己的脚本与文档；每个 `packages/<name>/` 下的代码按它自己的许可证分发，装机时以包内 LICENSE 或 `meta/<slug>/LICENSE` 为准。
+**聚合进来的第三方包**许可证**原样保留**：LICENSE 随快照走——`mode=all` 的包、以及把 LICENSE 放在包目录里的 `mode=pkg` 上游，文件就在 `packages/<name>/LICENSE`；仓库根另外提供 LICENSE / THIRD-PARTY-NOTICES / NOTICE 的 `mode=pkg` 上游（如 `atomdns`）再由 `sync.sh` 额外收进 `meta/<slug>/`。`scripts/validate.sh` 会检查每个源至少有一处许可证/归属（包内 LICENSE/COPYING/NOTICE、`meta/<slug>/` 或 Makefile 的 `PKG_LICENSE` 声明），缺失会让同步失败而不是静默遗漏。快照内容按上游原样分发，`patches/photondns.sh` 把上游仓库根的 Cargo 工程**原样补齐**到包目录（新增文件、不改动任何已有内容），`patches/geodata.sh` 固定规则数据 release 与哈希。MIT 只覆盖本仓库自己的脚本与文档；每个 `packages/<name>/` 下的代码按它自己的许可证分发，装机时以包内 LICENSE 或 `meta/<slug>/LICENSE` 为准。

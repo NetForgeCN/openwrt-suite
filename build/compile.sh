@@ -28,6 +28,16 @@ set -Eeuo pipefail
 # 把全角标点的首字节误判成变量名的一部分（$VAR）+ 中文 会报 unbound variable
 export LC_ALL=C LANG=C
 
+# 可复现构建：显式 SOURCE_DATE_EPOCH / SUITE_COMMIT_EPOCH 优先；否则在
+# prepare_suite 里用 suite 检出的提交时间填充。gzip -n 去掉归档里的文件名/时间戳。
+if [[ -n "${SOURCE_DATE_EPOCH:-}" ]]; then
+    export SOURCE_DATE_EPOCH
+elif [[ -n "${SUITE_COMMIT_EPOCH:-}" ]]; then
+    export SOURCE_DATE_EPOCH="$SUITE_COMMIT_EPOCH"
+fi
+export GZIP="${GZIP:--n}"
+export GIT_TERMINAL_PROMPT=0
+
 # ---------------------------------------------------------------------------
 # 可配置项（全部可用环境变量覆盖）
 # ---------------------------------------------------------------------------
@@ -79,6 +89,9 @@ HONK_BPF_LINKER_VERSION="${HONK_BPF_LINKER_VERSION:-0.11.0}"
 # bpf-linker 按宿主机架构分开打包，两个资产的 sha256 不同；脚本按 uname -m 选
 HONK_BPF_LINKER_SHA256_X86_64="${HONK_BPF_LINKER_SHA256_X86_64:-${HONK_BPF_LINKER_SHA256:-10f62ba9ab7e544d538370552660efcb4f1a19153d5752bbf0f6b51f3bada450}}"
 HONK_BPF_LINKER_SHA256_AARCH64="${HONK_BPF_LINKER_SHA256_AARCH64:-d09ddd83303e9ab1443f51e0e284680154009646a3ce141c63d838ee61b73eb9}"
+# zig 官方 download/index.json 中的 sha256，同样按宿主机架构区分；下载后强制校验
+HONK_ZIG_SHA256_X86_64="${HONK_ZIG_SHA256_X86_64:-24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c}"
+HONK_ZIG_SHA256_AARCH64="${HONK_ZIG_SHA256_AARCH64:-f7a654acc967864f7a050ddacfaa778c7504a0eca8d2b678839c21eea47c992b}"
 # 空 = 自动判断：CI（GITHUB_ACTIONS）或免密 sudo 可用时自动装，否则只提示不装
 HONK_TOOLCHAIN_AUTO="${HONK_TOOLCHAIN_AUTO:-}"
 
@@ -124,6 +137,18 @@ detect_jobs() {
     printf '%s\n' "$n"
 }
 
+# 所有外部仓库 URL 必须是无凭据 HTTPS（防止 token 泄漏 / 非加密传输）
+require_https_url() {
+    local url="$1" what="$2" rest
+    case "$url" in
+        https://*) rest="${url#https://}" ;;
+        *) die "$what 必须是 HTTPS URL：$url" ;;
+    esac
+    case "$rest" in
+        *@*|*'?'*|*'#'*) die "$what 不得包含凭据、查询串或 fragment：$url" ;;
+    esac
+}
+
 # 消除 "detected dubious ownership" 导致的 git 操作失败
 git_safe() {
     local dir="$1"
@@ -140,6 +165,7 @@ repo_is_dirty() {
 ensure_repo() {
     local url="$1" dir="$2" parent
 
+    require_https_url "$url" "仓库地址"
     parent="$(dirname "$dir")"
     [[ -d "$parent" ]] || mkdir -p -- "$parent"
 
@@ -177,14 +203,20 @@ ensure_repo() {
     fi
 }
 
-# 读取 diy 脚本写入的状态（决定是否清理对应构建缓存）
+# 读取 diy 脚本写入的状态（决定是否清理对应构建缓存）。
+# 只取白名单数值，不 source 文件，避免构建树里的状态文件被执行成 shell。
 load_diy_state() {
+    local v
     RUST_CHANGED=0
     GOLANG_CHANGED=0
     KERNEL_CHANGED=0
     [[ -f "$DIY_STATE_FILE" ]] || return 0
-    # shellcheck disable=SC1090
-    source "$DIY_STATE_FILE"
+    v="$(sed -n 's/^RUST_CHANGED=\([01]\)$/\1/p' "$DIY_STATE_FILE" | tail -n 1 || true)"
+    [[ -z "$v" ]] || RUST_CHANGED="$v"
+    v="$(sed -n 's/^GOLANG_CHANGED=\([01]\)$/\1/p' "$DIY_STATE_FILE" | tail -n 1 || true)"
+    [[ -z "$v" ]] || GOLANG_CHANGED="$v"
+    v="$(sed -n 's/^KERNEL_CHANGED=\([01]\)$/\1/p' "$DIY_STATE_FILE" | tail -n 1 || true)"
+    [[ -z "$v" ]] || KERNEL_CHANGED="$v"
 }
 
 # ---------------------------------------------------------------------------
@@ -194,8 +226,8 @@ load_diy_state() {
 check_env() {
     log "检查运行环境"
 
-    local required=(git make curl sed awk grep find tar)
-    local optional=(gcc g++ cc patch perl python3 unzip xz gzip bzip2 flex bison gawk rsync file)
+    local required=(git make curl sed awk grep find tar mktemp)
+    local optional=(gcc g++ cc patch perl python3 unzip xz gzip bzip2 flex bison gawk rsync file sha256sum)
     local cmd missing=() missing_opt=()
 
     for cmd in "${required[@]}"; do
@@ -220,6 +252,17 @@ check_env() {
     JOBS="${JOBS:-$(detect_jobs)}"
     [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "无法获取有效的 CPU 并行任务数（JOBS=${JOBS}）"
 
+    # 工具链版本/哈希会拼进 URL 与 sha256sum 校验：严格白名单，防止注入
+    [[ "$HONK_ZIG_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+        die "HONK_ZIG_VERSION 格式不合法：$HONK_ZIG_VERSION"
+    [[ "$HONK_BPF_LINKER_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+        die "HONK_BPF_LINKER_VERSION 格式不合法：$HONK_BPF_LINKER_VERSION"
+    local h
+    for h in "$HONK_ZIG_SHA256_X86_64" "$HONK_ZIG_SHA256_AARCH64" \
+             "$HONK_BPF_LINKER_SHA256_X86_64" "$HONK_BPF_LINKER_SHA256_AARCH64"; do
+        [[ "$h" =~ ^[0-9a-f]{64}$ ]] || die "工具链 sha256 必须是 64 位小写十六进制：$h"
+    done
+
     # 统一 locale，避免 sort/grep/编译期出现 locale 相关差异
     export LC_ALL=C LANG=C
     unset -v GREP_OPTIONS || true
@@ -231,6 +274,7 @@ check_env() {
 
 prepare_source() {
     log "检查 OpenWrt 主仓库"
+    require_https_url "$OPENWRT_REPO" "OPENWRT_REPO"
 
     if [[ ! -e "$WORKDIR" && ! -L "$WORKDIR" ]]; then
         mkdir -p -- "$(dirname "$WORKDIR")"
@@ -269,6 +313,16 @@ prepare_suite() {
     git_safe "$SUITE_DIR"
 
     log "suite 提交：$(git -C "$SUITE_DIR" rev-parse --short HEAD)"
+
+    # 未显式给 SOURCE_DATE_EPOCH 时用 suite 提交时间，保证同一提交构建时间戳一致
+    if [[ -z "${SOURCE_DATE_EPOCH:-}" ]]; then
+        local epoch
+        epoch="$(git -C "$SUITE_DIR" log -1 --format=%ct 2>/dev/null || true)"
+        if [[ "$epoch" =~ ^[0-9]+$ ]]; then
+            export SOURCE_DATE_EPOCH="$epoch"
+            log "可复现构建：SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH（suite 提交时间）"
+        fi
+    fi
 
     # 上游版本记录（sources.lock 摘要）
     if [[ -f "$SUITE_DIR/sources.lock" ]]; then
@@ -388,9 +442,11 @@ prepare_config() {
     local suite_cfg="$SUITE_DIR/config/dot.config" dl_dir=""
 
     if [[ -n "$CONFIG_URL" ]]; then
+        require_https_url "$CONFIG_URL" "CONFIG_URL"
         log "CONFIG_URL 已指定，从网络获取 .config：${CONFIG_URL}"
         dl_dir="$(mktemp -d "${TMPDIR:-/tmp}/openwrt-config.XXXXXX")"
-        if ! curl -fL --retry 3 --retry-delay 2 --connect-timeout 15 \
+        if ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            -fL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 300 \
             "$CONFIG_URL" -o "$dl_dir/config"; then
             rm -rf -- "$dl_dir"
             die "下载远程 .config 失败：$CONFIG_URL"
@@ -480,6 +536,8 @@ honk_enabled() {
 
 install_honk_toolchain() {
     log "安装 honk 宿主机工具链（Rust / Zig ${HONK_ZIG_VERSION} / bpf-linker ${HONK_BPF_LINKER_VERSION}）"
+    command -v sha256sum >/dev/null 2>&1 ||
+        die "校验 honk 工具链需要 sha256sum（coreutils），请先安装"
 
     if command -v apt-get >/dev/null 2>&1; then
         sudo apt-get -qq update
@@ -490,7 +548,8 @@ install_honk_toolchain() {
     fi
 
     if ! command -v rustup >/dev/null 2>&1; then
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+        curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            --retry 3 --connect-timeout 15 --max-time 300 -sSf https://sh.rustup.rs |
             sh -s -- -y --profile minimal
     fi
 
@@ -505,15 +564,17 @@ install_honk_toolchain() {
     # zig / bpf-linker 的资产名和 sha256 都随「宿主机」架构变（不是目标架构）。
     # 之前这里硬编码 x86_64，在 aarch64 机器上会装进 x86_64 的二进制 —— 表现为
     # "zig 版本不符：" 或直接 "cannot execute binary file"。按 uname -m 选择。
-    local host_arch host_bpf_sha
+    local host_arch host_bpf_sha host_zig_sha
     case "$(uname -m)" in
         x86_64|amd64)
             host_arch=x86_64
             host_bpf_sha="$HONK_BPF_LINKER_SHA256_X86_64"
+            host_zig_sha="$HONK_ZIG_SHA256_X86_64"
             ;;
         aarch64|arm64)
             host_arch=aarch64
             host_bpf_sha="$HONK_BPF_LINKER_SHA256_AARCH64"
+            host_zig_sha="$HONK_ZIG_SHA256_AARCH64"
             ;;
         *)
             die "honk 工具链：暂不支持宿主机架构 $(uname -m)（只适配 x86_64 / aarch64；可手动装好 zig + bpf-linker 后设 HONK_TOOLCHAIN_AUTO=0）"
@@ -524,7 +585,8 @@ install_honk_toolchain() {
     # bpf-linker：已装且「能跑」才跳过 —— 只看 command -v 会漏掉架构装错的情况
     if ! command -v bpf-linker >/dev/null 2>&1 ||
         ! bpf-linker --version >/dev/null 2>&1; then
-        curl -fsSL --retry 3 -o "$tmp/bpf-linker.tar.zst" \
+        curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            -fsSL --retry 3 --connect-timeout 15 --max-time 300 -o "$tmp/bpf-linker.tar.zst" \
             "https://github.com/aya-rs/bpf-linker/releases/download/v${HONK_BPF_LINKER_VERSION}/bpf-linker-${host_arch}-unknown-linux-musl.tar.zst" ||
             die "下载 bpf-linker 失败（宿主机 ${host_arch}）"
         printf '%s  %s\n' "$host_bpf_sha" "$tmp/bpf-linker.tar.zst" | sha256sum -c - ||
@@ -535,9 +597,12 @@ install_honk_toolchain() {
 
     if ! command -v zig >/dev/null 2>&1 ||
         [[ "$(zig version 2>/dev/null)" != "$HONK_ZIG_VERSION" ]]; then
-        curl -fsSL --retry 3 -o "$tmp/zig.tar.xz" \
+        curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            -fsSL --retry 3 --connect-timeout 15 --max-time 300 -o "$tmp/zig.tar.xz" \
             "https://ziglang.org/download/${HONK_ZIG_VERSION}/zig-${host_arch}-linux-${HONK_ZIG_VERSION}.tar.xz" ||
             die "下载 zig 失败（宿主机 ${host_arch}）"
+        printf '%s  %s\n' "$host_zig_sha" "$tmp/zig.tar.xz" | sha256sum -c - ||
+            die "zig sha256 校验失败（宿主机 ${host_arch}）"
         sudo tar -xJf "$tmp/zig.tar.xz" -C /usr/local || die "解压 zig 失败"
         sudo ln -sf "/usr/local/zig-${host_arch}-linux-${HONK_ZIG_VERSION}/zig" /usr/local/bin/zig
     fi
@@ -719,8 +784,13 @@ OpenWrt 一键构建脚本（openwrt-suite 单源版）
   KERNEL_CONFIG     手动指定内核配置文件路径（默认自动探测最新版本）
   GO_AMD64_LEVEL    GOAMD64 微架构级别（默认 v3，可选 v1/v2/v3/v4）
   HONK_TOOLCHAIN_AUTO / HONK_ZIG_VERSION / HONK_BPF_LINKER_VERSION
-                    honk 核心的宿主机工具链（.config 选中 honk 才会用到；详见
-                    suite README「宿主机依赖」一节）
+                    honk 核心的宿主机工具链（.config 选中 honk 才会用到；版本与
+                    sha256 都做白名单校验，详见 suite README「宿主机依赖」一节）
+  HONK_ZIG_SHA256_X86_64 / HONK_ZIG_SHA256_AARCH64
+  HONK_BPF_LINKER_SHA256_X86_64 / HONK_BPF_LINKER_SHA256_AARCH64
+                    工具链资产 sha256（默认按官方 release 固定，改版本须同步改）
+  SOURCE_DATE_EPOCH / SUITE_COMMIT_EPOCH
+                    可复现构建时间戳（默认取 suite 检出的提交时间）
   RUST_MAKEFILE     Rust Makefile 路径（默认 feeds/packages/lang/rust/Makefile）
   GOLANG_VALUES     golang-values.mk 路径（默认 feeds/packages/lang/golang/golang-values.mk）
   JOBS              并行任务数

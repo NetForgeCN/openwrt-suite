@@ -44,18 +44,22 @@ jobs:
 
           echo "=== 开始清理 Releases，保留最新 ${KEEP_COUNT} 个 ==="
 
-          releases_json=$(gh release list --repo ${{ github.repository }} --limit 1000 --json tagName)
+          releases_json=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --json tagName)
           releases_to_delete=$(echo "$releases_json" | jq -r ".[${KEEP_COUNT}:][].tagName")
 
           if [ -z "$releases_to_delete" ]; then
             echo "没有需要删除的 Release"
           else
             for tag in $releases_to_delete; do
+              # 审计前的不可变备份 release/tag 永不自动清理
+              case "$tag" in
+                backup-pre-audit-*) echo "跳过受保护的备份 Release：$tag"; continue ;;
+              esac
               echo "正在删除 Release: $tag"
-              gh release delete "$tag" --repo ${{ github.repository }} -y || true
+              gh release delete "$tag" --repo "$GITHUB_REPOSITORY" -y || true
 
               echo "正在强制彻底删除远端 Git Tag: $tag"
-              gh api -X DELETE repos/${{ github.repository }}/git/refs/tags/$tag || true
+              gh api -X DELETE repos/$GITHUB_REPOSITORY/git/refs/tags/$tag || true
             done
           fi
 
@@ -85,8 +89,12 @@ jobs:
             echo "没有多余的 Git Tag 需要清理"
           else
             for tag in $tags_to_delete; do
+              # 即使 Release 已被跳过，也要在这里再保护一次备份 tag
+              case "$tag" in
+                backup-pre-audit-*) echo "跳过受保护的备份 Tag：$tag"; continue ;;
+              esac
               echo "正在删除残留 Git Tag: $tag"
-              gh api -X DELETE repos/${{ github.repository }}/git/refs/tags/$tag || true
+              gh api -X DELETE repos/$GITHUB_REPOSITORY/git/refs/tags/$tag || true
             done
           fi
 

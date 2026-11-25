@@ -7,7 +7,8 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=v2ray-geodata
-PKG_VERSION:=$(shell date "+%Y.%m.%d")
+# 版本号跟随可复现构建时间戳（同一 SOURCE_DATE_EPOCH 得到同一版本）
+PKG_VERSION:=$(shell if [ -n "$$SOURCE_DATE_EPOCH" ]; then date -u -d "@$$SOURCE_DATE_EPOCH" +%Y.%m.%d; else date -u +%Y.%m.%d; fi)
 PKG_RELEASE:=1
 
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)
@@ -37,17 +38,23 @@ define Package/v2ray-geosite
   LICENSE:=GPL-3.0
 endef
 
-GEOIP_URL:=https://github.com/NetForgeCN/v2ray-rules-dat/releases/latest/download/geoip.dat
-GEOSITE_URL:=https://github.com/NetForgeCN/v2ray-rules-dat/releases/latest/download/geosite.dat
+# 不用 latest：latest 曾指向只含备份资产的 release，导致下载 404；
+# 固定到含 geoip.dat / geosite.dat 的 release，并把官方 .sha256sum 的值直接钉在这里。
+# 更新规则数据时必须同时更新 tag 与两个 SHA256（patches/geodata.sh 同步注入）。
+GEODATA_TAG:=202611250113
+GEOIP_SHA256:=d4ec4c5e5d5a38c1399964ea9fd8c94288426a3b31b483904b67819fc07f4466
+GEOSITE_SHA256:=67ccb3cda9fb1b118be77d4aeb954d16fe3a12c63a6006e72709ad12dee7aab2
+GEOIP_URL:=https://github.com/NetForgeCN/v2ray-rules-dat/releases/download/$(GEODATA_TAG)/geoip.dat
+GEOSITE_URL:=https://github.com/NetForgeCN/v2ray-rules-dat/releases/download/$(GEODATA_TAG)/geosite.dat
 
 define Build/Compile
 	( \
-		pushd $(PKG_BUILD_DIR) ; \
-		curl -L $(GEOIP_URL) -o geoip.dat --progress-bar ; \
-		curl -L $(GEOSITE_URL) -o geosite.dat --progress-bar ; \
-		[ "$(curl -sL $(GEOIP_URL).sha256sum | awk '{print $1}')" != "$(sha256sum geoip.dat | awk '{print $1}')" ] && exit 1 ; \
-		[ "$(curl -sL $(GEOSITE_URL).sha256sum | awk '{print $1}')" != "$(sha256sum geosite.dat | awk '{print $1}')" ] && exit 1 ; \
-		popd ; \
+		set -e ; \
+		cd $(PKG_BUILD_DIR) ; \
+		curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL --retry 3 --connect-timeout 15 --max-time 300 $(GEOIP_URL) -o geoip.dat ; \
+		curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL --retry 3 --connect-timeout 15 --max-time 300 $(GEOSITE_URL) -o geosite.dat ; \
+		printf '%s  %s\n' '$(GEOIP_SHA256)' geoip.dat | sha256sum -c - ; \
+		printf '%s  %s\n' '$(GEOSITE_SHA256)' geosite.dat | sha256sum -c - ; \
 	)
 endef
 

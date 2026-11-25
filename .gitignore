@@ -1,4 +1,5 @@
 # 同步过程的临时产物
 tmp/
+.sync-tmp.*/
 *.tmp
 *.log

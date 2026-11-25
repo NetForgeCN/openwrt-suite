@@ -19,7 +19,7 @@ PKG_BUILD_FLAGS:=no-mips16
 
 PKG_BUILD_VERSION:=alpha-0455d0d
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
-PKG_BUILD_TIME:=$(shell date -u -Iseconds)
+PKG_BUILD_TIME:=$(shell if [ -n "$$SOURCE_DATE_EPOCH" ]; then date -u -d "@$$SOURCE_DATE_EPOCH" -Iseconds; else date -u -Iseconds; fi)
 
 GO_PKG:=github.com/metacubex/mihomo
 GO_PKG_BUILD_PKG:=github.com/metacubex/mihomo

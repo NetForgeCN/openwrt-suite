@@ -4,6 +4,11 @@
     "config:recommended"
   ],
   "ignorePaths": [
-    "packages/**"
-  ]
+    "packages/**",
+    "meta/**",
+    "config/**",
+    "sources.conf",
+    "sources.lock"
+  ],
+  "separateMajorMinor": false
 }

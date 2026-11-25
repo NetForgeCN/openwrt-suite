@@ -29,6 +29,18 @@ TARGET_SUBDIR="${TARGET_SUBDIR:-x86}"
 KERNEL_CONFIG="${KERNEL_CONFIG:-}"
 STATE_FILE="$OW/.suite-diy-state.env"
 
+# 环境输入必须是构建树内的相对路径，避免读写任意系统文件
+safe_rel() {
+    case "$1" in ''|/*|*'..'*|*'\'*|*'|'*|*';'*|*'&'*|*'$'*|*'`'*) return 1 ;; esac
+    return 0
+}
+[[ "$TARGET_SUBDIR" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] ||
+    { echo "[02-kernel-config] TARGET_SUBDIR 不合法：$TARGET_SUBDIR" >&2; exit 1; }
+if [[ -n "$KERNEL_CONFIG" ]]; then
+    safe_rel "$KERNEL_CONFIG" ||
+        { echo "[02-kernel-config] KERNEL_CONFIG 必须是构建树内的相对路径" >&2; exit 1; }
+fi
+
 # 内置清单，不读环境变量（与上方「环境变量」说明一致）
 KERNEL_OPTIONS=(
     "NETKIT|CONFIG_NETKIT=y"
@@ -59,19 +71,21 @@ detect_kernel_config() {
 
 set_kernel_config() {
     local key="$1" value="$2" file="$3" tmp count
+    [[ -f "$file" && ! -L "$file" ]] ||
+        { echo "[02-kernel-config] 配置文件不存在或为符号链接：$file" >&2; return 1; }
     count="$(grep -cE "^(CONFIG_${key}=|# CONFIG_${key} is not set$)" "$file" || true)"
     if [[ "$count" == "1" ]] && grep -qxF -- "$value" "$file"; then
         echo "[02-kernel-config] 内核配置 ${key} 已是目标值，跳过"
         return 1
     fi
-    tmp="$(mktemp)"
-    awk -v key="$key" '
+    tmp="$(mktemp "${TMPDIR:-/tmp}/suite-kernel-config.XXXXXX")" || return 1
+    if ! awk -v key="$key" '
         $0 ~ "^CONFIG_" key "="                 { next }
         $0 ~ "^# CONFIG_" key " is not set$"    { next }
         { print }
-    ' "$file" > "$tmp"
+    ' "$file" > "$tmp"; then rm -f -- "$tmp"; return 1; fi
     printf '%s\n' "$value" >> "$tmp"
-    cat -- "$tmp" > "$file"
+    if ! cat -- "$tmp" > "$file"; then rm -f -- "$tmp"; return 1; fi
     rm -f -- "$tmp"
     echo "[02-kernel-config] 已写入：${value}"
     return 0
@@ -91,12 +105,19 @@ for item in "${KERNEL_OPTIONS[@]}"; do
     fi
 done
 
-# 校验
+# 校验：必须所有目标配置都恰好出现一次，否则直接失败（不再只发警告）
 echo "[02-kernel-config] 内核配置校验结果："
-grep -nE '^(CONFIG_NETKIT=y|# CONFIG_X86_NATIVE_CPU is not set|# CONFIG_X86_SGX is not set)$' \
-    "$KERNEL_CONFIG" ||
-    echo "[02-kernel-config] [警告] 未能校验到全部目标配置" >&2
+for item in "${KERNEL_OPTIONS[@]}"; do
+    key="${item%%|*}"
+    value="${item#*|}"
+    hits="$(grep -cxF -- "$value" "$KERNEL_CONFIG" || true)"
+    [[ "$hits" == "1" ]] ||
+        { echo "[02-kernel-config] [错误] $key 校验失败（匹配 $hits 次）：$value" >&2; exit 1; }
+    grep -nxF -- "$value" "$KERNEL_CONFIG" | sed 's/^/    /'
+done
 
 # 追加状态（保留 01 脚本写入的 RUST/GOLANG 状态）
+[[ ! -L "$STATE_FILE" ]] ||
+    { echo "[02-kernel-config] 状态文件是符号链接，拒绝写入：$STATE_FILE" >&2; exit 1; }
 printf 'KERNEL_CHANGED=%s\n' "$KERNEL_CHANGED" >> "$STATE_FILE"
 echo "[02-kernel-config] 完成（状态追加至 $STATE_FILE）"

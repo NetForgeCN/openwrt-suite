@@ -26,6 +26,15 @@ OW="${1:-$PWD}"
 SUITE_REPO="${SUITE_REPO:-https://github.com/NetForgeCN/openwrt-suite.git}"
 FEED_NAME="${FEED_NAME:-suite}"
 
+die() { echo "[00-feeds-order] $*" >&2; exit 1; }
+
+# 环境变量来自调用方：先做白名单校验，禁止把 shell/make 元字符注入 feeds.conf
+[[ "$FEED_NAME" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]] || die "FEED_NAME 不合法：$FEED_NAME"
+case "$SUITE_REPO" in
+    https://*) case "$SUITE_REPO" in *@*|*'?'*|*'#'*) die "SUITE_REPO 不得含凭据/查询串" ;; esac ;;
+    *) die "SUITE_REPO 必须是 HTTPS URL：$SUITE_REPO" ;;
+esac
+
 # 从本仓库里直接调用（手工接入的常见用法）时，自动识别脚本所在的 suite 仓库，
 # 不必额外设 SUITE_DIR 就能用 src-link 挂本地 packages/。把脚本单独复制到别处
 # 执行时识别失败，回退 src-git，行为与旧版一致。
@@ -68,7 +77,8 @@ feed_type="src-git"
 feed_src="$SUITE_REPO"
 if [[ -n "${SUITE_DIR:-}" && -d "$SUITE_DIR/packages" && -f "$SUITE_DIR/sources.conf" ]]; then
     feed_type="src-link"
-    suite_packages="$(cd "$SUITE_DIR/packages" && pwd -P)"
+    suite_packages="$(cd "$SUITE_DIR/packages" && pwd -P)" || die "无法解析 SUITE_DIR/packages"
+    [[ -n "$suite_packages" ]] || die "SUITE_DIR/packages 路径无效"
     link_root="$OW/feeds/.suite-local"
     mkdir -p "$link_root"
     ln -sfn "$suite_packages" "$link_root/packages"
@@ -79,7 +89,8 @@ if [[ -n "${SUITE_DIR:-}" && -d "$SUITE_DIR/packages" && -f "$SUITE_DIR/sources.
 fi
 
 # 幂等：先删除任何已存在的 suite 行（旧位置/重复行/另一种 feed 类型一并清掉）
-tmp="$(mktemp)"
+tmp="$(mktemp "${TMPDIR:-/tmp}/suite-feeds.XXXXXX")"
+trap 'rm -f -- "$tmp"' EXIT
 awk -v feed="$FEED_NAME" '
     $0 ~ ("^[[:space:]]*src-(git|link)[[:space:]]+" feed "[[:space:]]") { next }
     { print }
