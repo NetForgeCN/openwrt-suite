@@ -1,12 +1,19 @@
 #!/bin/sh
 
-uci -q batch <<-EOF >/dev/null
+if ! uci -q batch <<-EOF >/dev/null
 	delete ucitrack.@lucky[-1]
 	add ucitrack lucky
 	set ucitrack.@lucky[-1].init=lucky
 	commit ucitrack
 EOF
+then
+	logger -t luci-lucky -p daemon.warn "failed to register the ucitrack entry"
+fi
 
-chmod 0755 /usr/bin/luckyarch 2>/dev/null || true
-rm -rf /tmp/luci-indexcache* /tmp/luci-modulecache/ 2>/dev/null
+chmod 0755 /usr/bin/luckyarch 2>/dev/null || \
+	logger -t luci-lucky -p daemon.warn "failed to make /usr/bin/luckyarch executable"
+
+rm -rf /tmp/luci-indexcache* /tmp/luci-modulecache/ 2>/dev/null || \
+	logger -t luci-lucky -p daemon.warn "failed to clear LuCI caches"
+
 exit 0

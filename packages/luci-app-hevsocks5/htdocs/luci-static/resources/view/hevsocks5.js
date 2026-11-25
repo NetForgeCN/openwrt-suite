@@ -26,8 +26,10 @@ function callCtl(cmd, args) {
 }
 
 function getStatus() {
-	return L.resolveDefault(callServiceList(CONF), {}).then(function(res) {
-		var instances = (res[CONF] && res[CONF].instances) || {};
+	// Do not hide RPC failures behind L.resolveDefault(): an unavailable
+	// service object must not be rendered as a clean "not running" state.
+	return callServiceList(CONF).then(function(res) {
+		var instances = (res && res[CONF] && res[CONF].instances) || {};
 		var running = false;
 
 		for (var name in instances)
@@ -40,22 +42,16 @@ function getStatus() {
 	});
 }
 
-var RAND_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-
 // Web Crypto may be missing or mocked to all-zero bytes in some embedded
-// WebViews (that produced "AAAA..." credentials). Ask the server to generate
-// the value from /dev/urandom and fall back to Math.random in the browser.
-function randomString(len, btn) {
+// WebViews (that produced "AAAA..." credentials). Always ask the server to
+// generate the value from /dev/urandom; never fall back to Math.random for
+// authentication secrets.
+function randomString(len) {
 	return callCtl('rand', [ String(len) ]).then(function(res) {
 		var value = String(res && res.stdout || '').trim();
-		if (value.length !== len)
+		if (value.length !== len || !/^[A-Za-z0-9]+$/.test(value))
 			throw new Error(_('Random generator returned an invalid value'));
 		return value;
-	}).catch(function() {
-		var out = '';
-		for (var i = 0; i < len; i++)
-			out += RAND_CHARS.charAt(Math.floor(Math.random() * RAND_CHARS.length));
-		return out;
 	});
 }
 
@@ -94,10 +90,14 @@ var RandomValue = form.Value.extend({
 						ev.preventDefault();
 						var trigger = ev.currentTarget;
 						setButtonBusy(trigger, true);
-						return randomString(self.randLen, trigger).then(function(value) {
+						return randomString(self.randLen).then(function(value) {
 							input.value = value;
 							input.dispatchEvent(new Event('change', { bubbles: true }));
 							setButtonBusy(trigger, false);
+						}).catch(function(e) {
+							setButtonBusy(trigger, false);
+							notify(_('Operation failed'), 'error');
+							showError(e);
 						});
 					}
 				}, _('Generate'));
@@ -150,6 +150,7 @@ function showError(e) {
 		E('div', { 'class': 'right' }, [
 			E('button', {
 				'class': 'btn',
+				'type': 'button',
 				'click': function() { ui.hideModal(); }
 			}, _('Close'))
 		])
@@ -211,57 +212,84 @@ return view.extend({
 					stop.disabled = !running;
 			}
 
-		function action(cmd, label, btn) {
-			setButtonBusy(btn, true);
-			notify(_('Working...'), 'ok');
+			function statusUnavailable() {
+				var label = document.getElementById('hevsocks5-status');
+				if (label) {
+					label.textContent = _('Status unavailable');
+					label.className = 'alert-danger';
+				}
+			}
 
-			return callCtl(cmd).then(function(res) {
-				return getStatus().then(function(running) {
-					update(running);
+			function action(cmd, label, btn) {
+				setButtonBusy(btn, true);
+				notify(_('Working...'), 'ok');
+
+				return callCtl(cmd).then(function(res) {
+					// A failed status refresh must not turn a successful action into a failure.
+					return getStatus().then(update, function() {}).then(function() {
+						setButtonBusy(btn, false);
+						notify(_('%s succeeded').format(label), 'ok');
+						return res;
+					});
+				}).catch(function(e) {
 					setButtonBusy(btn, false);
-					notify(_('%s succeeded').format(label), 'ok');
-					return res;
+					notify(_('%s failed').format(label), 'error');
+					showError(e);
 				});
-			}).catch(function(e) {
-				setButtonBusy(btn, false);
-				notify(_('%s failed').format(label), 'error');
-				showError(e);
-			});
-		}
+			}
 
-		poll.add(function() {
-			return getStatus().then(update);
-		});
+			// Keep a reference so the callback unregisters itself as soon as this
+			// view is replaced; otherwise polling keeps hitting ubus forever.
+			var statusPoll = function() {
+				if (!document.getElementById('hevsocks5-status-section')) {
+					poll.remove(statusPoll);
+					return Promise.resolve();
+				}
 
-		return E('div', { 'class': 'cbi-section', 'id': 'hevsocks5-status-section' }, [
-			E('h3', {}, _('Service status')),
-			E('p', {}, [
-				_('Status') + ': ',
-				E('span', { 'id': 'hevsocks5-status' }, _('Collecting data...'))
-			]),
-			E('p', { 'id': 'hevsocks5-result', 'class': 'alert-success' }, ''),
-			E('div', { 'class': 'cbi-section-actions' }, [
-				E('button', {
-					'class': 'btn', 'id': 'hevsocks5-start',
-					'click': function(ev) { return action('start', _('Start'), ev.currentTarget); }
-				}, _('Start')),
-				' ',
-				E('button', {
-					'class': 'btn', 'id': 'hevsocks5-stop',
-					'click': function(ev) { return action('stop', _('Stop'), ev.currentTarget); }
-				}, _('Stop')),
-				' ',
-				E('button', {
-					'class': 'btn',
-					'click': function(ev) { return action('restart', _('Restart'), ev.currentTarget); }
-				}, _('Restart')),
-				' ',
-				E('button', {
-					'class': 'btn',
-					'click': function(ev) { return action('apply', _('Regenerate config and apply'), ev.currentTarget); }
-				}, _('Regenerate config and apply'))
-			])
-		]);
+				return getStatus().then(update, statusUnavailable);
+			};
+
+			var section = E('div', { 'class': 'cbi-section', 'id': 'hevsocks5-status-section' }, [
+				E('h3', {}, _('Service status')),
+				E('p', {}, [
+					_('Status') + ': ',
+					E('span', { 'id': 'hevsocks5-status', 'aria-live': 'polite' }, _('Collecting data...'))
+				]),
+				E('p', { 'id': 'hevsocks5-result', 'class': 'alert-success', 'aria-live': 'polite' }, ''),
+				E('div', { 'class': 'cbi-section-actions' }, [
+					E('button', {
+						'class': 'btn', 'id': 'hevsocks5-start', 'type': 'button',
+						'click': function(ev) { return action('start', _('Start'), ev.currentTarget); }
+					}, _('Start')),
+					' ',
+					E('button', {
+						'class': 'btn', 'id': 'hevsocks5-stop', 'type': 'button',
+						'click': function(ev) { return action('stop', _('Stop'), ev.currentTarget); }
+					}, _('Stop')),
+					' ',
+					E('button', {
+						'class': 'btn', 'type': 'button',
+						'click': function(ev) { return action('restart', _('Restart'), ev.currentTarget); }
+					}, _('Restart')),
+					' ',
+					E('button', {
+						'class': 'btn', 'type': 'button',
+						'click': function(ev) { return action('apply', _('Regenerate config and apply'), ev.currentTarget); }
+					}, _('Regenerate config and apply'))
+				])
+			]);
+
+			// poll.add() returns false when another poll is already active;
+			// do not leave the status stuck on "Collecting data..." in that case.
+			if (!poll.add(statusPoll)) {
+				var label = section.querySelector('#hevsocks5-status');
+				if (label) {
+					label.textContent = _('Status unavailable');
+					label.className = 'alert-danger';
+				}
+			}
+
+			return section;
 		};
 
 		var s = m.section(form.NamedSection, 'config', CONF, _('Configuration'));
@@ -448,7 +476,7 @@ return view.extend({
 		o.rmempty = false;
 
 		o = s.taboption('misc', form.Value, 'read_write_timeout', _('Legacy read/write timeout (ms)'),
-			_('Compatibility option from older upstream versions. When set, the TCP and UDP specific timeouts below are not written to YAML and this value applies to both. Usually leave it empty.'));
+			_('Compatibility option from older upstream versions. When set, the TCP and UDP specific timeouts above are not written to YAML and this value applies to both. Usually leave it empty.'));
 		o.placeholder = '60000';
 		o.datatype = 'uinteger';
 		o.rmempty = true;

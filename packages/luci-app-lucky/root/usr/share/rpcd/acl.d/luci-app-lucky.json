@@ -16,7 +16,6 @@
 		},
 		"write": {
 			"file": {
-				"/usr/bin/lucky": [ "exec" ],
 				"/usr/bin/lucky -setconf *": [ "exec" ],
 				"/etc/init.d/lucky": [ "exec" ],
 				"/etc/init.d/lucky *": [ "exec" ]

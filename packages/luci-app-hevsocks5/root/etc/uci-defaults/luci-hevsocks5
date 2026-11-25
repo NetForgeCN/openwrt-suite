@@ -4,11 +4,16 @@
 # option exposed by the LuCI page.
 
 CONF='hev-socks5-server'
+RC=0
 
-uci -q get "$CONF.config" >/dev/null 2>&1 || uci set "$CONF.config=hev-socks5-server"
+uci -q get "$CONF.config" >/dev/null 2>&1 || uci set "$CONF.config=hev-socks5-server" || RC=1
 
 set_default() {
-	uci -q get "$CONF.config.$1" >/dev/null 2>&1 || uci set "$CONF.config.$1=$2"
+	uci -q get "$CONF.config.$1" >/dev/null 2>&1 && return 0
+	uci set "$CONF.config.$1=$2" || {
+		echo "luci-hevsocks5: failed to set $1" >&2
+		RC=1
+	}
 }
 
 set_default enabled 0
@@ -49,16 +54,35 @@ set_default limit_nofile 1000000
 
 # Generate one random credential pair on first install. Without it the
 # server would start as an open proxy, which is never a safe default.
-if [ -z "$(uci -q get "$CONF.config.username")" ] &&
-	[ -z "$(uci -q get "$CONF.config.password")" ] &&
-	[ "$(uci -q get "$CONF.config.allow_no_auth")" != "1" ]; then
-	u="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-16)"
-	p="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-24)"
-	uci set "$CONF.config.username=$u"
-	uci set "$CONF.config.password=$p"
+# Use the same CSPRNG-backed helper as the LuCI page, with a byte-wise
+# fallback for systems where it is not available yet.
+gen_credential() {
+	local len="$1" value
+
+	value="$(/usr/bin/hevsocks5-ctl rand "$len" 2>/dev/null)" || value=''
+	[ "${#value}" -eq "$len" ] || value="$(head -c "$len" /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-"$len")"
+	[ "${#value}" -eq "$len" ] || return 1
+	printf '%s' "$value"
+}
+
+if [ -z "$(uci -q get "$CONF.config.username" 2>/dev/null)" ] &&
+	[ -z "$(uci -q get "$CONF.config.password" 2>/dev/null)" ] &&
+	[ "$(uci -q get "$CONF.config.allow_no_auth" 2>/dev/null)" != "1" ]; then
+	u="$(gen_credential 16)" || RC=1
+	p="$(gen_credential 24)" || RC=1
+	if [ -n "$u" ] && [ -n "$p" ]; then
+		uci set "$CONF.config.username=$u" || RC=1
+		uci set "$CONF.config.password=$p" || RC=1
+	else
+		echo "luci-hevsocks5: failed to generate initial credentials" >&2
+		RC=1
+	fi
 fi
 
-uci commit "$CONF" >/dev/null 2>&1
-/usr/bin/hevsocks5-ctl generate >/dev/null 2>&1 || :
+uci commit "$CONF" >/dev/null 2>&1 || RC=1
+/usr/bin/hevsocks5-ctl generate >/dev/null 2>&1 || {
+	echo "luci-hevsocks5: initial YAML generation failed" >&2
+	RC=1
+}
 
-exit 0
+exit "$RC"

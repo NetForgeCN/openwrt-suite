@@ -1,0 +1,31 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  static-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Python syntax
+        run: python3 -m py_compile scripts/*.py
+
+      - name: Shell syntax
+        run: |
+          for f in lucky/files/lucky.init root/etc/uci-defaults/66_luci-lucky root/usr/bin/luckyarch; do
+            sh -n "$f"
+          done
+
+      - name: JavaScript syntax
+        run: node --check htdocs/luci-static/resources/view/lucky/config.js
+
+      - name: Bundle contract
+        run: python3 scripts/verify-bundle.py

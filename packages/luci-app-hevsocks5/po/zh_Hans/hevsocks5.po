@@ -46,6 +46,9 @@ msgstr "运行中"
 msgid "Not running"
 msgstr "未运行"
 
+msgid "Status unavailable"
+msgstr "状态不可用"
+
 msgid "%s succeeded"
 msgstr "%s 成功"
 
@@ -268,8 +271,8 @@ msgstr "UDP 中继会话的空闲超时，上游默认 60000 毫秒。"
 msgid "Legacy read/write timeout (ms)"
 msgstr "旧版读写超时（毫秒）"
 
-msgid "Compatibility option from older upstream versions. When set, the TCP and UDP specific timeouts below are not written to YAML and this value applies to both. Usually leave it empty."
-msgstr "旧版上游配置的兼容项。设置后，下方 TCP/UDP 专用超时不会写入 YAML，该值会同时应用到两者。通常留空即可。"
+msgid "Compatibility option from older upstream versions. When set, the TCP and UDP specific timeouts above are not written to YAML and this value applies to both. Usually leave it empty."
+msgstr "旧版上游配置的兼容项。设置后，上方 TCP/UDP 专用超时不会写入 YAML，该值会同时应用到两者。通常留空即可。"
 
 msgid "Log file"
 msgstr "日志文件"

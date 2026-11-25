@@ -7,8 +7,7 @@ PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_SUBDIR:=$(PKG_NAME)-$(PKG_VERSION)
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/MetaCubeX/mihomo.git
-# 固定到 commit（不用可变 tag）：v1.19.34 = 0455d0d28c4526937380505153e65a843d8612e8
-PKG_SOURCE_VERSION:=0455d0d28c4526937380505153e65a843d8612e8
+PKG_SOURCE_VERSION:=v1.19.34
 PKG_MIRROR_HASH:=5ef52ba261e872e99658422165d0c0a9fbebcf3366c9544ac8da813933e3d245
 
 PKG_LICENSE:=GPL3.0+
@@ -20,7 +19,7 @@ PKG_BUILD_FLAGS:=no-mips16
 
 PKG_BUILD_VERSION:=v1.19.34
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
-PKG_BUILD_TIME:=$(shell if [ -n "$$SOURCE_DATE_EPOCH" ]; then date -u -d "@$$SOURCE_DATE_EPOCH" -Iseconds; else date -u -Iseconds; fi)
+PKG_BUILD_TIME:=$(shell date -u -Iseconds)
 
 GO_PKG:=github.com/metacubex/mihomo
 GO_PKG_BUILD_PKG:=github.com/metacubex/mihomo

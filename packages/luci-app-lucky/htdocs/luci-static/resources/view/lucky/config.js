@@ -15,6 +15,16 @@ var callServiceList = rpc.declare({
 	expect: { '': {} }
 });
 
+/* L.resolveDefault() silently swallows every failure. Keep the fallback
+ * behaviour, but leave a diagnostic in the browser console so a broken ACL or
+ * a missing binary is not indistinguishable from an offline device. */
+function resolveWithLog(promise, fallback, label) {
+	return Promise.resolve(promise).catch(function(e) {
+		console.warn('lucky: ' + label + ' failed', e);
+		return fallback;
+	});
+}
+
 var STYLE_CSS = [
 	'.lucky-panel { margin-bottom: 18px; }',
 	'.lucky-inline { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 30px; }',
@@ -41,7 +51,7 @@ var STYLE_CSS = [
 ].join('\n');
 
 function getServiceStatus() {
-	return L.resolveDefault(callServiceList('lucky'), {}).then(function(res) {
+	return resolveWithLog(callServiceList('lucky'), {}, 'service status').then(function(res) {
 		var instances = res && res.lucky && res.lucky.instances;
 		if (!instances)
 			return false;
@@ -61,22 +71,34 @@ function getFirstSectionId() {
 function getConfigDir() {
 	var sid = getFirstSectionId();
 	var dir = sid ? uci.get('lucky', sid, 'configdir') : null;
-	return (dir && dir.trim()) ? dir.trim() : '/etc/config/lucky.daji';
+	dir = (dir && String(dir).trim()) ? String(dir).trim() : '/etc/config/lucky.daji';
+	/* Mirror lucky.init's whitelist: a hand-edited UCI value must not be able
+	 * to point the core at an arbitrary (or symlinked) location. */
+	if (!/^\/[A-Za-z0-9\/._-]+$/.test(dir) || dir.indexOf('..') !== -1)
+		return '/etc/config/lucky.daji';
+	return dir;
 }
 
 function buildAdminUrl(conf) {
 	if (!conf)
 		return '';
 	var isHttps = !!(conf.HttpsEnable || conf.AdminEnableTLS);
-	var port = (isHttps && conf.AdminWebListenTLSPort)
+	var rawPort = (isHttps && conf.AdminWebListenTLSPort)
 		? conf.AdminWebListenTLSPort
 		: (conf.AdminWebListenPort || 16601);
+	var port = /^\d+$/.test(String(rawPort)) ? Number(rawPort) : 16601;
+	if (port < 1 || port > 65535)
+		port = 16601;
 	var host = window.location.hostname || '127.0.0.1';
 	if (host.indexOf(':') !== -1 && host.charAt(0) !== '[')
 		host = '[' + host + ']';
 	var safeUrl = conf.SafeURL ? String(conf.SafeURL).trim() : '';
-	if (safeUrl && safeUrl.charAt(0) !== '/')
-		safeUrl = '/' + safeUrl;
+	/* SafeURL is a path on the router, not an absolute URL: reject protocol-
+	 * relative references, backslashes and control characters. */
+	if (safeUrl && !/^\/[A-Za-z0-9._~:\/?#\[\]@!$&'()*+,;=-]*$/.test(safeUrl))
+		safeUrl = '';
+	if (safeUrl.indexOf('//') === 0)
+		safeUrl = '/' + safeUrl.replace(/^\/+/, '');
 	return (isHttps ? 'https://' : 'http://') + host + ':' + port + safeUrl;
 }
 
@@ -110,9 +132,9 @@ function queryLuckyData() {
 
 	return Promise.all([
 		getServiceStatus(),
-		L.resolveDefault(fs.stat('/usr/bin/lucky'), null),
-		L.resolveDefault(fs.exec('/usr/bin/luckyarch'), null),
-		L.resolveDefault(fs.exec('/usr/bin/lucky', ['-info']), null)
+		resolveWithLog(fs.stat('/usr/bin/lucky'), null, 'binary stat'),
+		resolveWithLog(fs.exec('/usr/bin/luckyarch'), null, 'arch detection'),
+		resolveWithLog(fs.exec('/usr/bin/lucky', ['-info']), null, 'core info')
 	]).then(function(res) {
 		var running = res[0];
 		var binStat = res[1];
@@ -137,9 +159,9 @@ function queryLuckyData() {
 			detail = JSON.parse(infoRes.stdout.trim());
 		} catch (e) {}
 
-		return L.resolveDefault(
+		return resolveWithLog(
 			fs.exec('/usr/bin/lucky', ['-baseConfInfo', '-cd', configDir]),
-			null
+			null, 'base configuration'
 		).then(function(confRes) {
 			var baseConf = null;
 			try {
@@ -180,8 +202,8 @@ return view.extend({
 		};
 
 		var refs = {
-			installStatus: E('div', { 'class': 'lucky-inline' }),
-			runStatus: E('div', { 'class': 'lucky-inline' }),
+			installStatus: E('div', { 'class': 'lucky-inline', 'role': 'status', 'aria-live': 'polite' }),
+			runStatus: E('div', { 'class': 'lucky-inline', 'role': 'status', 'aria-live': 'polite' }),
 			arch: E('div', { 'class': 'lucky-inline' }),
 			version: E('div', { 'class': 'lucky-inline' }),
 			compileTime: E('div', { 'class': 'lucky-inline' }),
@@ -201,7 +223,7 @@ return view.extend({
 			 * Run the unload by itself, then chain on uci.load() which does
 			 * return a Promise (wrapped for compatibility with older LuCI). */
 			uci.unload('lucky');
-			return L.resolveDefault(uci.load('lucky'), null)
+			return resolveWithLog(uci.load('lucky'), null, 'UCI reload')
 				.then(function() { return queryLuckyData(); })
 				.then(function(nextState) {
 					state = nextState;
@@ -608,17 +630,35 @@ return view.extend({
 
 		renderDashboard();
 
-		poll.add(function() {
-			return getServiceStatus().then(function(running) {
-				if (state.running !== running) {
-					state.running = running;
-					if (running)
-						return refreshAll();
-					renderRunStatusAndLink();
-				}
-			});
-		}, 3);
+		function stopStatusPoll() {
+			if (self._statusPollFn != null && typeof poll.remove === 'function') {
+				poll.remove(self._statusPollFn);
+				self._statusPollFn = null;
+			}
+		}
 
+		/* LuCI's poll.add() takes and removes a callback function - it does not
+		 * return a removable handle. Keep the function so we can stop the poll
+		 * when the view is replaced or saved. The poller only refreshes the
+		 * dashboard badge and admin link; it must never call uci.unload(),
+		 * otherwise a status change would silently discard unsaved edits. */
+		if (self._statusPollFn == null) {
+			self._statusPollFn = function() {
+				if (!refs.runStatus.parentNode) {
+					stopStatusPoll();
+					return;
+				}
+				return getServiceStatus().then(function(running) {
+					if (state.running === running)
+						return;
+					state.running = running;
+					renderRunStatusAndLink();
+				});
+			};
+			poll.add(self._statusPollFn, 3);
+		}
+
+		self._stopLuckyStatusPoll = stopStatusPoll;
 		self._refreshLuckyDashboard = refreshAll;
 
 		var m = new form.Map('lucky', _('Lucky'),
@@ -656,7 +696,7 @@ return view.extend({
 				return _('Config directory path cannot be empty.');
 			if (v.charAt(0) !== '/')
 				return _('Config directory path must be an absolute path starting with "/".');
-			if (/[\0\r\n]/.test(v))
+			if (v.indexOf('..') !== -1 || !/^\/[A-Za-z0-9\/._-]+$/.test(v))
 				return _('Config directory path contains invalid characters.');
 			return true;
 		};
@@ -666,16 +706,16 @@ return view.extend({
 
 	handleSaveApply: function(ev, mode) {
 		var self = this;
-		return L.resolveDefault(this.super('handleSaveApply', [ev, mode]), null)
+		return resolveWithLog(this.super('handleSaveApply', [ev, mode]), null, 'save/apply')
 			.then(function() {
+				if (typeof self._stopLuckyStatusPoll === 'function')
+					self._stopLuckyStatusPoll();
 				if (typeof self._refreshLuckyDashboard !== 'function')
 					return;
 				window.setTimeout(function() {
 					/* Save & Apply may reload the page; never let a deferred
 					 * refresh on a detached view become an unhandled error. */
-					try {
-						L.resolveDefault(self._refreshLuckyDashboard(), null);
-					} catch (e) {}
+					resolveWithLog(self._refreshLuckyDashboard(), null, 'post-apply refresh');
 				}, 900);
 			});
 	}

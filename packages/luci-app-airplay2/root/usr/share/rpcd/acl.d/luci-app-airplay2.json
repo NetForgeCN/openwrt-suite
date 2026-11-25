@@ -3,11 +3,12 @@
 		"description": "Grant UCI access for luci-app-airplay2",
 		"read": {
 			"file": {
-				"/bin/cat": [ "exec" ],
 				"/proc/asound/cards": [ "read" ],
-				"/usr/bin/bluealsa-aplay": [ "exec", "stat" ]
+				"/usr/bin/bluealsa-aplay": [ "stat" ],
+				"/usr/bin/bluealsa-aplay -l": [ "exec" ]
 			},
 			"ubus": {
+				"file": [ "read", "stat", "exec" ],
 				"service": [ "list" ]
 			},
 			"uci": [ "airplay2" ]

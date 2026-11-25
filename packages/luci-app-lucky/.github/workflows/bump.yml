@@ -13,9 +13,6 @@ on:
         type: boolean
         default: false
 
-permissions:
-  contents: write
-
 concurrency:
   group: bump-lucky-core
   cancel-in-progress: false
@@ -24,9 +21,11 @@ jobs:
   bump:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Check latest release and refresh the pin
         id: bump
@@ -41,12 +40,14 @@ jobs:
         if: steps.bump.outputs.changed == 'true'
         env:
           NEW_VERSION: ${{ steps.bump.outputs.version }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
+          set -eu
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add lucky/Makefile lucky/assets.json
           git commit -m "chore: pin Lucky core ${NEW_VERSION}" \
-            -m "Automated by scripts/bump-version.py. All 13 Linux assets were
+            -m "Automated by scripts/bump-version.py. All Linux assets were
           downloaded and sha256-verified; the tarball layout was checked for a
           top-level executable ELF named lucky."
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git push origin "HEAD:${REF_NAME}"

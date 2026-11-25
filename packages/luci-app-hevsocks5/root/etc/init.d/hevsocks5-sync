@@ -6,15 +6,32 @@
 START=99
 
 start() {
+	local enabled
+
 	/usr/bin/hevsocks5-ctl generate || return 1
 
-	if [ "$(uci -q get hev-socks5-server.config.enabled)" = "1" ]; then
-		/etc/init.d/hev-socks5-server enable >/dev/null 2>&1 || :
-		/etc/init.d/hev-socks5-server restart >/dev/null 2>&1 || :
-	else
-		/etc/init.d/hev-socks5-server disable >/dev/null 2>&1 || :
-		/etc/init.d/hev-socks5-server stop >/dev/null 2>&1 || :
-	fi
+	# A missing option means "disabled"; a failing uci read must not be
+	# mistaken for "enabled" and silently start an open proxy.
+	enabled="$(uci -q get hev-socks5-server.config.enabled 2>/dev/null)" || enabled=0
+
+	case "$enabled" in
+		1|true|yes|on)
+			/etc/init.d/hev-socks5-server enable >/dev/null 2>&1 || {
+				logger -t hevsocks5-sync 'failed to enable hev-socks5-server' 2>/dev/null || :
+				return 1
+			}
+			/etc/init.d/hev-socks5-server restart || {
+				logger -t hevsocks5-sync 'failed to restart hev-socks5-server' 2>/dev/null || :
+				return 1
+			}
+			;;
+		*)
+			/etc/init.d/hev-socks5-server disable >/dev/null 2>&1 || :
+			/etc/init.d/hev-socks5-server stop >/dev/null 2>&1 || :
+			;;
+	esac
+
+	return 0
 }
 
 reload() {

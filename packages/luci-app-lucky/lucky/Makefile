@@ -93,7 +93,10 @@ define Build/Prepare
 	@test -n "$(LUCKY_ARCH)" || { echo "lucky: unsupported target ARCH '$(ARCH)'" >&2; exit 1; }
 	rm -rf $(PKG_BUILD_DIR)
 	mkdir -p $(PKG_BUILD_DIR)
-	tar -C $(PKG_BUILD_DIR) -xzf $(DL_DIR)/$(PKG_SOURCE)
+	# The archive is sha256-pinned; still refuse to inherit owner/permissions
+	# or to accept a symlink in place of the expected ELF binary.
+	tar --no-same-owner --no-same-permissions -C $(PKG_BUILD_DIR) -xzf $(DL_DIR)/$(PKG_SOURCE)
+	test -f $(PKG_BUILD_DIR)/lucky && test ! -L $(PKG_BUILD_DIR)/lucky
 	chmod +x $(PKG_BUILD_DIR)/lucky
 	test -x $(PKG_BUILD_DIR)/lucky
 endef

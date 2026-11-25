@@ -11,6 +11,9 @@
       "file": {
         "/usr/bin/hevsocks5-ctl": [ "exec" ]
       },
+      "ubus": {
+        "file": [ "exec" ]
+      },
       "uci": [ "hev-socks5-server" ]
     }
   }

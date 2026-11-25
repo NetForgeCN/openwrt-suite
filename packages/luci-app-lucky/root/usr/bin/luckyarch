@@ -1,5 +1,9 @@
 #!/bin/sh
 
+# Keep this map aligned with the LUCKY_ARCH branches in lucky/Makefile. The
+# dashboard only needs to report the variant that was actually bundled into
+# the firmware; guessing from CPU features (or from hexdump byte order) used
+# to report a core that is not present in the image.
 arch="$(uname -m)"
 case "$arch" in
 	x86_64|amd64)
@@ -12,22 +16,28 @@ case "$arch" in
 		cpucore="arm64"
 		;;
 	armv7*)
-		if grep -q 'vfp' /proc/cpuinfo 2>/dev/null; then
+		cpucore="armv7"
+		;;
+	arm*)
+		# Makefile uses CPU_TYPE=cortex to select armv7; /proc/cpuinfo is the
+		# closest runtime equivalent. Everything else stays on the armv5 pin.
+		if grep -qi 'cortex' /proc/cpuinfo 2>/dev/null; then
 			cpucore="armv7"
 		else
 			cpucore="armv5"
 		fi
 		;;
-	arm*)
-		cpucore="armv5"
+	mips64*)
+		cpucore="mips64_softfloat"
+		;;
+	mipsel*)
+		cpucore="mipsle_softfloat"
 		;;
 	mips*)
-		mipstype="$(printf 'I' | hexdump -o 2>/dev/null | awk '{ print substr($2,6,1); exit }')"
-		if [ "$mipstype" = "0" ]; then
-			cpucore="mips_softfloat"
-		else
-			cpucore="mipsle_softfloat"
-		fi
+		cpucore="mips_softfloat"
+		;;
+	riscv64*)
+		cpucore="riscv64"
 		;;
 	*)
 		cpucore="$arch"

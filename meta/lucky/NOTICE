@@ -1,0 +1,31 @@
+NetForgeCN/luci-app-lucky - third-party component notices
+=========================================================
+
+This repository contains three distinct sets of material:
+
+1. The Lucky core binary (not stored in this repository)
+   Project : https://github.com/gdy666/lucky
+   License : MIT
+   The binary is downloaded at BUILD time from the author's official release
+   channel https://release.66666.host/ , verified against a pinned sha256 and
+   installed into the firmware image as /usr/bin/lucky. It is a statically
+   linked Go executable; it is never downloaded by the running device.
+   The release tarball also contains the upstream MIT LICENSE file.
+
+2. The LuCI front end (this repository's Makefile, htdocs/, po/, root/)
+   Derived from https://github.com/FloatingDream528/luci-app-lucky
+   Copyright (C) 2022-2026 gdy666, FloatingDream528
+   License : GPL-3.0-only
+   Changes made here: LUCI_DEPENDS now includes +lucky +luci-base +rpcd
+   +rpcd-mod-file, and the core is pinned to a sha256-verified release.
+   The full GPL-3.0 text is in LICENSE.
+
+3. Packaging and release tooling (lucky/Makefile, lucky/files/, lucky/LICENSE,
+   scripts/)
+   Copyright (C) 2026 NetForgeCN
+   License : MIT (packaging) / GPL-3.0-only where it incorporates material
+   from (2). The MIT text is in lucky/LICENSE.
+
+The daily version check (scripts/bump-version.py + .github/workflows/bump.yml)
+only rewrites the pinned version and hashes in lucky/Makefile. It never adds a
+runtime download path; scripts/verify-bundle.py enforces that contract in CI.

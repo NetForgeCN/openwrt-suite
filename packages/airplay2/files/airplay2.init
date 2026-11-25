@@ -4,17 +4,68 @@
 START=99
 USE_PROCD=1
 
+log_cfg_error() {
+	logger -t airplay2 -p daemon.warn "$1"
+}
+
+# Escape a UCI value for a libconfig double-quoted string. Backslashes and
+# quotes must be escaped, and embedded newlines/CR/tabs become libconfig
+# escapes - otherwise a UCI option could inject arbitrary libconfig settings
+# (including the sessioncontrol commands shairport-sync executes as root).
+escape_str() {
+	local out
+	out=$(printf '%sX' "$1" |
+		sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' |
+		awk 'BEGIN { ORS = "" }
+		     { if (NR > 1) printf "\\n"
+		       gsub(/\r/, "\\r"); gsub(/\t/, "\\t"); print }')
+	printf '%s' "${out%X}"
+}
+
+# A user-supplied conf_file must not be able to overwrite UCI configuration or
+# follow a symlink into an arbitrary location.
+valid_conf_file() {
+	local p="$1"
+
+	case "$p" in
+		/*) ;;
+		*) return 1 ;;
+	esac
+	case "$p" in
+		*..*) return 1 ;;
+	esac
+	case "$p" in
+		/etc/config|/etc/config/*) return 1 ;;
+	esac
+	case "$p" in
+		*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789/._-]*) return 1 ;;
+	esac
+	return 0
+}
+
 append_num() {
 	local cfg="$1"
 	local var="$2"
 	local opt="$3"
 	local def="$4"
-	local val
+	local val raw check
 
 	config_get val "$cfg" "$var"
-	if [ -n "$val" ] || [ -n "$def" ]; then
-		printf "\t%s = ${val:-$def};\n" "$opt"
-	fi
+	[ -n "$val" ] || [ -n "$def" ] || return 0
+
+	raw="${val:-$def}"
+	check="$raw"
+	case "$check" in
+		-*) check="${check#-}" ;;
+	esac
+	case "$check" in
+		''|*[!0-9]*)
+			log_cfg_error "invalid numeric value for '$var' ($raw); using '$def'"
+			raw="$def"
+			;;
+	esac
+
+	printf '\t%s = %s;\n' "$opt" "$raw"
 }
 
 append_str() {
@@ -22,27 +73,46 @@ append_str() {
 	local var="$2"
 	local opt="$3"
 	local def="$4"
-	local val
+	local val out
 
 	config_get val "$cfg" "$var"
-	if [ -n "$val" ] || [ -n "$def" ]; then
-		printf "\t%s = \"%s\";\n" "$opt" "${val:-$def}"
-	fi
+	[ -n "$val" ] || [ -n "$def" ] || return 0
+
+	out="$(escape_str "${val:-$def}")"
+	printf '\t%s = "%s";\n' "$opt" "$out"
 }
 
 start_instance() {
 	local cfg=$1
 	local conf_custom conf_file aux
+	local generate=0 safe_cfg alsa_output_rate_val
 
 	config_get_bool aux "$cfg" 'enabled' '0'
 	[ "$aux" = 0 ] && return 1
 
 	config_get_bool conf_custom "$cfg" 'conf_custom' '0'
 	config_get conf_file "$cfg" "conf_file"
-	[ "$conf_custom" -ne 1 ] && [ -z "$conf_file" ] && {
-		mkdir -p /var/etc
-		conf_file="/var/etc/airplay2-${cfg}.conf"
-	} && {
+
+	if [ "$conf_custom" -ne 1 ] || [ -z "$conf_file" ]; then
+		generate=1
+	elif ! valid_conf_file "$conf_file"; then
+		log_cfg_error "refusing unsafe conf_file '$conf_file'; using generated config"
+		generate=1
+	elif [ -L "$conf_file" ]; then
+		log_cfg_error "refusing symlinked conf_file '$conf_file'; using generated config"
+		generate=1
+	fi
+
+	if [ "$generate" -eq 1 ]; then
+		safe_cfg="$(printf '%s' "$cfg" | tr -cd 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-')"
+		[ -n "$safe_cfg" ] || safe_cfg="default"
+		if ! mkdir -p /var/etc 2>/dev/null; then
+			log_cfg_error "unable to create /var/etc"
+			return 1
+		fi
+		conf_file="/var/etc/airplay2-${safe_cfg}.conf"
+
+		{
 		printf "// Automatically generated from UCI config\n\n"
 
 		# General
@@ -97,9 +167,10 @@ start_instance() {
 		append_str "$cfg" alsa_mixer_control_name "mixer_control_name"
 		append_str "$cfg" alsa_mixer_device "mixer_device"
 		append_num "$cfg" alsa_latency_offset "audio_backend_latency_offset"
-		local alsa_output_rate_val
 		config_get alsa_output_rate_val "$cfg" "alsa_output_rate"
-		[ $alsa_output_rate_val != "auto" ] && append_num "$cfg" alsa_output_rate "output_rate" "44100"
+		if [ "$alsa_output_rate_val" != "auto" ]; then
+			append_num "$cfg" alsa_output_rate "output_rate" "44100"
+		fi
 		append_num "$cfg" alsa_buffer_length "audio_backend_buffer_desired_length"
 		append_str "$cfg" alsa_disable_synchronization "disable_synchronization"
 		append_num "$cfg" alsa_period_size "period_size"
@@ -153,7 +224,11 @@ start_instance() {
 		append_str "$cfg" diagnostics_log_output_to "log_output_to"
 		append_num "$cfg" diagnostics_log_verbosity "log_verbosity" "${log_verbosity}"
 		printf "};\n\n"
-	} > "$conf_file"
+		} > "$conf_file" || {
+			log_cfg_error "unable to write $conf_file"
+			return 1
+		}
+	fi
 
 	procd_open_instance
 

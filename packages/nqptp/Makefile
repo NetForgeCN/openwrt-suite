@@ -1,6 +1,6 @@
 #
-# This is free software, licensed under the GNU General Public License v2.
-# See /LICENSE for more information.
+# Packaging files: GPL-3.0-only, see the repository /LICENSE.
+# Upstream nqptp keeps its own license, declared below in PKG_LICENSE.
 # updated to work with latest source from abrasive
 #
 # Shairport Sync 5.x talks to NQPTP over shared memory interface version 11

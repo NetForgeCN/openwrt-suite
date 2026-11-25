@@ -3,6 +3,9 @@ include $(TOPDIR)/rules.mk
 PKG_NAME:=luci-app-hevsocks5
 PKG_VERSION:=1.0.0
 PKG_RELEASE:=1
+PKG_LICENSE:=MIT
+PKG_LICENSE_FILES:=LICENSE
+PKG_MAINTAINER:=NetForgeCN
 
 LUCI_TITLE:=LuCI support for hev-socks5-server
 LUCI_DESCRIPTION:=Manage hev-socks5-server: service control, random credentials and full YAML options.

@@ -45,7 +45,7 @@ scripts/bump-version.py
 
 默认后台 `http://<路由器>:16601`，配置目录 `/etc/config/lucky.daji`，UCI 在 `/etc/config/lucky`。LuCI 页面只做服务管理，端口转发 / DDNS / 反代 / ACME / WOL 都在 Lucky 自带后台里。
 
-`LUCI_DEPENDS:=+lucky +luci-base +rpcd +rpcd-mod-file`：`+lucky` 是硬约束，保证选界面必然带上核心；后两项是 `fs.exec` / 服务状态查询所需。
+`LUCI_DEPENDS:=+lucky +luci-base +rpcd +rpcd-mod-file`：`+lucky` 是硬约束，保证选界面必然带上核心；后两项是 `fs.exec` / 服务状态查询所需。rpcd ACL 只放行精确命令行（`-info` / `-baseConfInfo ...` / `-setconf ...`），不给 `/usr/bin/lucky` 的裸 `exec` 权限，避免只读会话传入任意参数。`configdir` 在界面和 init 脚本里都做白名单校验，并拒绝符号链接。
 
 ## 在 OpenWrt 源码树里用
 
@@ -85,4 +85,4 @@ file build_dir/target-*/root-*/usr/bin/lucky     # statically linked
 
 ## 许可
 
-见 [LICENSE](LICENSE)（GPL-3.0 全文）与 `NOTICE`（三部分的版权/许可归属）。核心二进制来自 `gdy666/lucky`（MIT），LuCI 界面衍生自 `FloatingDream528/luci-app-lucky`（GPL-3.0-only），打包脚本由 NetForgeCN 维护。
+见 [LICENSE](LICENSE)（GPL-3.0 全文）、[lucky/LICENSE](lucky/LICENSE)（核心/打包层的 MIT 文本）与 `NOTICE`（三部分的版权/许可归属）。核心二进制来自 `gdy666/lucky`（MIT），LuCI 界面衍生自 `FloatingDream528/luci-app-lucky`（GPL-3.0-only），打包脚本由 NetForgeCN 维护。

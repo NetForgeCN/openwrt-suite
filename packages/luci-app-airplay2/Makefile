@@ -1,6 +1,6 @@
 # Copyright (C) 2016 Openwrt.org
 #
-# This is free software, licensed under the Apache License, Version 2.0 .
+# This package is licensed under GPL-3.0-only; see the repository LICENSE file.
 #
 
 include $(TOPDIR)/rules.mk
@@ -14,6 +14,8 @@ LUCI_DEPENDS:=+luci-base +alsa-utils +airplay2
 LUCI_PKGARCH:=all
 
 PKG_MAINTAINER:=sbwml <admin@cooluc.com>
+PKG_LICENSE:=GPL-3.0-only
+PKG_LICENSE_FILES:=LICENSE
 
 include $(TOPDIR)/feeds/luci/luci.mk
 

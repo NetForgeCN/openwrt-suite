@@ -62,8 +62,8 @@ UCI 段为 `hev-socks5-server.config`。UCI 选项名使用下划线（rpcd 的 
 | 页签 | 选项 |
 |---|---|
 | 基础 | `enabled`、`username`、`password` |
-| 高级 - 监听 | `workers`、`port`、`listen_address`、`udp_port`、`udp_listen_address`、`udp-public-address-v4/v6`、`listen_ipv6_only`、`tcp_fastopen` |
-| 高级 - 路由 | `bind_address`、`bind-address-v4/v6`、`bind_interface`、`domain_address_type`、`mark` |
+| 高级 - 监听 | `workers`、`port`、`listen_address`、`udp_port`、`udp_listen_address`、`udp_public_address_v4`、`udp_public_address_v6`、`listen_ipv6_only`、`tcp_fastopen` |
+| 高级 - 路由 | `bind_address`、`bind_address_v4`、`bind_address_v6`、`bind_interface`、`domain_address_type`、`mark` |
 | 高级 - 认证 | `auth_file`、`allow_no_auth` |
 | 高级 - 调优与日志 | `task_stack_size`、`udp_recv_buffer_size`、`udp_copy_buffer_nums`、`connect_timeout`、`tcp_read_write_timeout`、`udp_read_write_timeout`、`read_write_timeout`、`log_file`、`log_level`、`limit_nofile`、`pid_file` |
 
@@ -71,7 +71,7 @@ UCI 段为 `hev-socks5-server.config`。UCI 选项名使用下划线（rpcd 的 
 
 - `auth_file` 对应 YAML 的 `auth.file`。设置后优先于内联的 `username/password`，认证文件内容格式为每行 `USER PASS [MARK]`，修改后可用 `SIGUSR1` 热重载。
 - `allow_no_auth` 是本应用增加的安全开关。凭据和认证文件都为空时只有打开它才会生成无认证配置，避免误操作把路由器变成开放代理。
-- `read_write_timeout` 是旧版兼容项：设置后渲染器不再写 TCP/UDP 专用超时，上游会把该值同时应用到两者；留空则使用下方的专用超时。
+- `read_write_timeout` 是旧版兼容项：设置后渲染器不再写 TCP/UDP 专用的 `tcp_read_write_timeout` / `udp_read_write_timeout`，上游会把该值同时应用到两者；留空则使用这两个专用超时。
 
 `pid_file` 仅作展示，生成 YAML 时会被忽略：上游在设置它后会调用 `daemon()` 自行脱壳，与 procd 监管冲突。
 `limit_nofile` 默认写 1000000，与上游 init 脚本向 procd 申请的值保持一致，否则程序启动时会把上限降回默认的 65535。
@@ -79,6 +79,8 @@ UCI 段为 `hev-socks5-server.config`。UCI 选项名使用下划线（rpcd 的 
 ## 安全提醒
 
 - 用户名、密码明文保存在 UCI 和生成的 YAML 中；生成的 YAML 权限为 `0600`，UCI 文件权限由系统控制。
+- 随机值只由服务端 `/dev/urandom` 生成；服务端生成失败时按钮会报错，不会退回浏览器 `Math.random`，避免弱随机凭据。写入 YAML 的字符串禁止控制字符，`conffile` 必须是无 `..` 的绝对路径且不能是符号链接。
+- rpcd 中只有具备写权限的会话才能执行 `/usr/bin/hevsocks5-ctl`；读权限仅可查询服务状态和 UCI。
 - 记得在防火墙中放行 TCP 端口以及选定的 UDP 端口/端口范围。
 - 不要把服务直接暴露到公网，除非确认认证和防火墙策略都正确。
 

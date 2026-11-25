@@ -7,9 +7,8 @@ Design contract (important - do not "simplify" this away):
   always carries an explicit PKG_VERSION, release directory and per-architecture
   sha256, so a firmware built from a given commit is reproducible and offline.
 * This script is the only thing that looks for "latest". It runs in CI once a
-  day, rewrites the pinned block and commits. Downstream feeds (openwrt-suite
-  daily sync, OpenWRT / OpenWrt-ScriptBuild FEEDS clones) then pick up the new
-  pin automatically. No first-boot download is ever involved.
+  day, rewrites the pinned block and commits. Downstream feeds then pick up the
+  new pin automatically. No first-boot download is ever involved.
 
 Exit codes: 0 = done (with or without changes), 1 = detection/verification
 failure (CI goes red, nothing is committed, the old pin stays valid).
@@ -27,7 +26,9 @@ import pathlib
 import re
 import sys
 import tarfile
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 BASE = "https://release.66666.host"
@@ -38,8 +39,9 @@ ASSETS = ROOT / "lucky" / "assets.json"
 BEGIN = "# BEGIN AUTO-GENERATED (scripts/bump-version.py) -- DO NOT EDIT BY HAND"
 END = "# END AUTO-GENERATED (scripts/bump-version.py)"
 
-# Every Linux asset published for 3.8.1. Hashes for all of them are recorded in
-# assets.json; the Makefile only references the architectures OpenWrt can build.
+# Every Linux asset published for the pinned release. Hashes for all of them
+# are recorded in assets.json; the Makefile only references the architectures
+# OpenWrt can build.
 ALL_ARCHES = [
     "x86_64",
     "arm64",
@@ -74,15 +76,38 @@ BRANCHES = [
 REQUIRED_ARCHES = {key for _, key, _ in BRANCHES}
 
 UA = {"User-Agent": "NetForgeCN-lucky-version-bump/1.0"}
+MAX_DOWNLOAD = 128 * 1024 * 1024
+RETRIES = 3
 # workflow_dispatch 的 force 输入：即使版本没变也重新下载/校验全部资产并刷新 pin，
 # 用来验证整条「检测 -> 改写 -> 提交」链路，或在上游替换了同名资产后强制重算。
 FORCE = os.environ.get("FORCE_BUMP") == "1"
 
 
 def fetch(url: str, timeout: int = 180) -> bytes:
+    """Fetch with bounded size, bounded retries and a same-host redirect check."""
+    expected = urllib.parse.urlsplit(url)
     req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.read()
+    last_error: Exception | None = None
+
+    for attempt in range(RETRIES):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                actual = urllib.parse.urlsplit(resp.geturl())
+                if (actual.scheme, actual.netloc) != (expected.scheme, expected.netloc):
+                    raise RuntimeError(f"unexpected redirect to {resp.geturl()}")
+                length = resp.headers.get("Content-Length")
+                if length is not None and int(length) > MAX_DOWNLOAD:
+                    raise RuntimeError("response is too large")
+                data = resp.read(MAX_DOWNLOAD + 1)
+                if len(data) > MAX_DOWNLOAD:
+                    raise RuntimeError("response is too large")
+                return data
+        except (urllib.error.URLError, OSError, ValueError, RuntimeError) as exc:
+            last_error = exc
+            if attempt + 1 < RETRIES:
+                time.sleep(2 * (attempt + 1))
+
+    raise RuntimeError(f"download failed after {RETRIES} attempts: {last_error}")
 
 
 def text(url: str, timeout: int = 60) -> str:
@@ -105,16 +130,20 @@ def find_latest() -> str:
 def find_release_dir(ver: str) -> str:
     html = text(f"{BASE}/v{ver}/")
     dirs = set(re.findall(r'href="\./([^"/]+_lucky)/"', html))
-    if not dirs:
-        raise RuntimeError(f"no *_lucky subdirectory under /v{ver}/")
     preferred = f"{ver}_lucky"
-    chosen = preferred if preferred in dirs else sorted(dirs)[-1]
-    return f"v{ver}/{chosen}"
+    # Never guess: an unexpected directory could be a beta or a completely
+    # different release. Fail closed and keep the existing pin.
+    if preferred not in dirs:
+        raise RuntimeError(f"release directory {preferred}/ not found under /v{ver}/")
+    return f"v{ver}/{preferred}"
 
 
 def asset_names(release_dir: str, ver: str) -> set[str]:
     html = text(f"{BASE}/{release_dir}/")
-    return set(re.findall(r'href="\./(lucky_[^"]*_Linux_[^"]+\.tar\.gz)"', html))
+    pattern = re.compile(
+        r'href="\./(lucky_' + re.escape(ver) + r'_Linux_[^"]+\.tar\.gz)"'
+    )
+    return set(pattern.findall(html))
 
 
 def probe(ver: str, release_dir: str, arch: str) -> tuple[str, str]:
@@ -124,9 +153,11 @@ def probe(ver: str, release_dir: str, arch: str) -> tuple[str, str]:
     digest = hashlib.sha256(data).hexdigest()
     # Fail loudly if upstream changes the tarball layout: the Makefile's
     # Build/Prepare extracts a flat "lucky" ELF from the archive root.
+    # Do NOT use lstrip("./") here: it would also accept "../lucky" and other
+    # traversal names.
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
         member = next(
-            (m for m in tar.getmembers() if m.name.lstrip("./") == "lucky" and m.isfile()),
+            (m for m in tar.getmembers() if m.name in ("lucky", "./lucky") and m.isfile()),
             None,
         )
         if member is None:
@@ -140,13 +171,15 @@ def probe(ver: str, release_dir: str, arch: str) -> tuple[str, str]:
 
 
 def render_block(ver: str, release_dir: str, hashes: dict[str, str], now: str) -> str:
+    missing = sorted(REQUIRED_ARCHES - set(hashes))
+    if missing:
+        raise RuntimeError("missing hashes for: " + ", ".join(missing))
     out = [
         BEGIN,
         f"# Source: {BASE}/  (latest stable v{ver}, checked {now})",
         f"PKG_VERSION:={ver}",
         f"LUCKY_RELEASE_DIR:={release_dir}",
     ]
-    arm_legacy_pending = False
     for idx, (ow_arch, key, lucky_arch) in enumerate(BRANCHES):
         if ow_arch == "arm_legacy":
             # Emitted inside the arm/cortex branch as the else leg.
@@ -161,12 +194,10 @@ def render_block(ver: str, release_dir: str, hashes: dict[str, str], now: str) -
             out.append("    LUCKY_ARCH:=armv5")
             out.append(f"    PKG_HASH:={hashes['armv5']}")
             out.append("  endif")
-            arm_legacy_pending = True
         else:
             out.append(f"  LUCKY_ARCH:={lucky_arch}")
             out.append(f"  PKG_HASH:={hashes[key]}")
     out += ["else", "  LUCKY_ARCH:=", "  PKG_HASH:=", "endif", END]
-    assert arm_legacy_pending, "arm branch missing"
     return "\n".join(out)
 
 
@@ -181,8 +212,10 @@ def rewrite_makefile(block: str) -> None:
 def gh_output(key: str, value: str) -> None:
     path = os.environ.get("GITHUB_OUTPUT")
     if path:
+        # A value containing a newline could inject extra workflow outputs.
+        safe = " ".join(str(value).splitlines()) or str(value)
         with open(path, "a", encoding="utf-8") as fh:
-            fh.write(f"{key}={value}\n")
+            fh.write(f"{key}={safe}\n")
 
 
 def main() -> int:
@@ -246,7 +279,8 @@ def main() -> int:
         gh_output("changed", "true")
         gh_output("version", ver)
         return 0
-    except (urllib.error.URLError, RuntimeError, OSError, ValueError, tarfile.TarError) as exc:
+    except (urllib.error.URLError, RuntimeError, OSError, ValueError,
+            KeyError, tarfile.TarError) as exc:
         print(f"[bump] FAILED, keeping the existing pin: {exc}", file=sys.stderr)
         gh_output("changed", "false")
         return 1
