@@ -7,7 +7,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-airplay2
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 LUCI_TITLE:=Luci for Apple Airplay2 Receiver
 LUCI_DEPENDS:=+luci-base +alsa-utils +airplay2
