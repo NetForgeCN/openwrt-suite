@@ -22,6 +22,12 @@ set -Eeuo pipefail
 dest="${1:?用法: patches/photondns.sh <包目录>}"
 src="${SUITE_SRC_DIR:-}"
 
+# 只接受真实目录；拒绝符号链接目标，防止把补丁写到包目录之外
+[[ -d "$dest" && ! -L "$dest" ]] || {
+	echo "photondns.sh: 目标不是目录或为符号链接：$dest" >&2
+	exit 1
+}
+
 # 这个源有三个包目录，只有 photondns 需要动
 [[ "$(basename "$dest")" == "photondns" ]] || exit 0
 
@@ -32,16 +38,20 @@ src="${SUITE_SRC_DIR:-}"
 
 # 上游结构校验：任何一项缺失都说明仓库布局变了，直接报错让 CI 红
 for f in Cargo.toml Cargo.lock build.rs src src/main.rs; do
-	[[ -e "$src/$f" ]] || {
+	[[ -e "$src/$f" && ! -L "$src/$f" ]] || {
 		echo "photondns.sh: 上游缺少 $f —— 仓库结构变了，请更新本补丁" >&2
 		exit 1
 	}
 done
 
 mkdir -p "$dest/src"
-rm -rf "$dest/src/src"
-cp -a "$src/Cargo.toml" "$src/Cargo.lock" "$src/build.rs" "$dest/src/"
-cp -a "$src/src" "$dest/src/src"
+[[ ! -L "$dest/src" && ! -L "$dest/src/src" ]] || {
+	echo "photondns.sh: 拒绝覆盖符号链接：$dest/src" >&2
+	exit 1
+}
+rm -rf -- "$dest/src/src"
+cp -a -- "$src/Cargo.toml" "$src/Cargo.lock" "$src/build.rs" "$dest/src/" || exit 1
+cp -a -- "$src/src" "$dest/src/src" || exit 1
 
 # 自检：stage 之后的结果必须能被 cargo 直接吃
 [[ -f "$dest/src/Cargo.toml" ]] || { echo "photondns.sh: Cargo.toml 未就位" >&2; exit 1; }

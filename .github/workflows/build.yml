@@ -46,7 +46,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
@@ -78,7 +78,7 @@ jobs:
 
       # dl 缓存：key 绑定 dot.config / compile.sh，配置变了才换 key
       - name: Cache dl
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: openwrt/dl
           key: dl-suite-x86-${{ hashFiles('config/dot.config', 'build/compile.sh') }}
@@ -88,7 +88,7 @@ jobs:
       # 工具链缓存（staging_dir，含 rust/host 等宿主工具，命中后省 1.5~2.5 小时）
       - name: Restore toolchain cache
         id: toolchain-restore
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: openwrt/staging_dir
           key: toolchain-suite-x86-${{ steps.toolchain-hash.outputs.hash }}
@@ -98,7 +98,7 @@ jobs:
       # ccache：key 带 run_id 每轮存新快照，靠 restore-keys 前缀命中上一轮
       - name: Restore ccache
         id: ccache-restore
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: openwrt/.ccache
           key: ccache-suite-x86-${{ steps.toolchain-hash.outputs.hash }}-${{ github.run_id }}
@@ -145,7 +145,7 @@ jobs:
           ls -lh "$RELEASE_DIR/"
 
       - name: Upload firmware artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: firmware-x86-64
           path: release-assets/
@@ -154,7 +154,7 @@ jobs:
           compression-level: 0
 
       - name: Upload build logs on failure
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: failure()
         with:
           name: openwrt-build-logs
@@ -168,7 +168,7 @@ jobs:
       - name: Save ccache
         if: always()
         continue-on-error: true
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: openwrt/.ccache
           key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
@@ -176,7 +176,7 @@ jobs:
       - name: Save toolchain cache
         if: always() && steps.toolchain-restore.outputs.cache-hit != 'true'
         continue-on-error: true
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: openwrt/staging_dir
           key: ${{ steps.toolchain-restore.outputs.cache-primary-key }}
@@ -194,7 +194,7 @@ jobs:
       GH_REPO: ${{ github.repository }}
     steps:
       - name: Download firmware artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: firmware-x86-64
           path: release-assets
@@ -253,5 +253,9 @@ jobs:
           fi
 
           for tag in "${TAGS[@]:$KEEP_RELEASES}"; do
+            # 审计前的不可变备份 release/tag 永不自动清理
+            case "$tag" in
+              backup-pre-audit-*) echo "跳过受保护的备份 release/tag：$tag"; continue ;;
+            esac
             gh release delete "$tag" --repo "$GH_REPO" -y --cleanup-tag || true
           done

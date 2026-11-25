@@ -29,16 +29,29 @@ GOLANG_VALUES="${GOLANG_VALUES:-feeds/packages/lang/golang/golang-values.mk}"
 GO_AMD64_LEVEL="${GO_AMD64_LEVEL:-v3}"
 STATE_FILE="$OW/.suite-diy-state.env"
 
+# 环境输入白名单：GO_AMD64_LEVEL 会进入 sed 替换文本，必须严格限制；
+# 两个文件路径必须是 OW 内的相对路径，避免覆盖构建树之外的任意文件。
+[[ "$GO_AMD64_LEVEL" =~ ^v[1-4]$ ]] ||
+    { echo "[01-feed-patches] GO_AMD64_LEVEL 只能是 v1/v2/v3/v4" >&2; exit 1; }
+safe_rel() {
+    case "$1" in
+        ''|/*|*'..'*|*'\'*|*'|'*|*';'*|*'&'*|*'$'*|*'`'*) return 1 ;;
+    esac
+    return 0
+}
+safe_rel "$RUST_MAKEFILE" || { echo "[01-feed-patches] RUST_MAKEFILE 必须是相对路径" >&2; exit 1; }
+safe_rel "$GOLANG_VALUES" || { echo "[01-feed-patches] GOLANG_VALUES 必须是相对路径" >&2; exit 1; }
+
 RUST_CHANGED=0
 GOLANG_CHANGED=0
 
-# 可移植原地修改（BSD/GNU 通用，不用 sed -i）
+# 可移植原地修改（BSD/GNU 通用，不用 sed -i）；拒绝覆盖符号链接
 sed_inplace() {
     local expr="$1" file="$2" tmp
-    [[ -f "$file" ]] || { echo "[01-feed-patches] 文件不存在：$file" >&2; return 1; }
-    tmp="$(mktemp)"
-    sed -E "$expr" "$file" > "$tmp" || { rm -f -- "$tmp"; return 1; }
-    cat -- "$tmp" > "$file"
+    [[ -f "$file" && ! -L "$file" ]] || { echo "[01-feed-patches] 文件不存在或为符号链接：$file" >&2; return 1; }
+    tmp="$(mktemp "${TMPDIR:-/tmp}/suite-feed-patch.XXXXXX")" || return 1
+    if ! sed -E "$expr" "$file" > "$tmp"; then rm -f -- "$tmp"; return 1; fi
+    if ! cat -- "$tmp" > "$file"; then rm -f -- "$tmp"; return 1; fi
     rm -f -- "$tmp"
 }
 
@@ -91,5 +104,7 @@ else
 fi
 
 # ---------------------------------------------------------------- 状态输出
+[[ ! -L "$STATE_FILE" ]] ||
+    { echo "[01-feed-patches] 状态文件是符号链接，拒绝写入：$STATE_FILE" >&2; exit 1; }
 printf 'RUST_CHANGED=%s\nGOLANG_CHANGED=%s\n' "$RUST_CHANGED" "$GOLANG_CHANGED" > "$STATE_FILE"
 echo "[01-feed-patches] 完成（状态写入 $STATE_FILE）"

@@ -7,18 +7,24 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: write   # 仅同步流程需要提交快照；同步脚本本身不发布 Release
 
 concurrency:
   group: daily-sync
-  cancel-in-progress: true
+  # 不允许中途取消：sync.sh 会整体替换 packages/ 与 sources.lock
+  cancel-in-progress: false
+
+env:
+  # sources.lock 是唯一信任锚；只有显式 UPDATE=1 才解析上游分支头并更新 pin
+  SUITE_SYNC_UPDATE: "1"
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Sync upstream snapshots
         run: bash scripts/sync.sh
