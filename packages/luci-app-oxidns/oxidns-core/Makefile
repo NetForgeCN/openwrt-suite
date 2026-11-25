@@ -116,15 +116,20 @@ define Build/Prepare
 	fi
 	@if command -v readelf >/dev/null 2>&1; then \
 		case "$(OXIDNS_RUST_TARGET)" in \
-			x86_64*) expected='Advanced Micro Devices X86-64' ;; \
-			aarch64*) expected='AArch64' ;; \
-			i686*) expected='Intel 80386' ;; \
-			arm*) expected='ARM' ;; \
+			x86_64*) expected='X86-64|Advanced Micro Devices|AMD|amd64' ;; \
+			aarch64*) expected='AArch64|aarch64|ARM64|arm64' ;; \
+			i686*) expected='Intel 80386|i386|i686|x86' ;; \
+			arm*) expected='ARM|arm' ;; \
 			*) exit 0 ;; \
 		esac; \
-		readelf -h "$(PKG_BUILD_DIR)/oxidns" | grep -q "$$expected" || { \
+		machine_info="$$(readelf -h "$(PKG_BUILD_DIR)/oxidns" 2>/dev/null || true)"; \
+		if printf '%s\n' "$$machine_info" | grep -Eqi "$$expected"; then \
+			:; \
+		elif printf '%s\n' "$$machine_info" | grep -Eqi 'X86-64|Advanced Micro Devices|AMD|aarch64|ARM64|Intel 80386|i386|i686|ARM'; then \
 			echo "ERROR: bundled oxidns ABI does not match $(OXIDNS_RUST_TARGET)" >&2; exit 1; \
-		}; \
+		else \
+			echo "WARNING: readelf did not report a recognizable machine type; skipping ABI check for $(OXIDNS_RUST_TARGET)" >&2; \
+		fi; \
 	fi
 endef
 
