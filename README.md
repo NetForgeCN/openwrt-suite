@@ -232,7 +232,7 @@ OpenWrt 的 `feeds install -a` 对同名包按 feeds.conf 中的**出现顺序**
 
 ##### 动态解析（默认）
 
-`packages/honk/honk_toolchain.sh` 按当前 `HONK_SRC_VERSION`（取自 `packages/honk/Makefile` 的 `HONK_SRC_URL` / `HONK_SRC_VERSION`）从该 commit 的 `.github/ci/pins.env` 读取 `BPF_LINKER_VERSION` / `BPF_LINKER_SHA256`，从该 commit 的 `.github/workflows/release.yml` 读取 setup-zig 的 `version`；zig 资产 hash 再按版本从 `https://ziglang.org/download/index.json` 的 `x86_64-linux` / `aarch64-linux` 条目读取。`build/compile.sh` 与 `build_honk_core.sh` 都走这套逻辑，**上游升级 honk commit 后不需要手改本仓库的版本常量或 4 个 hash**。解析成功时日志会打印来源（`upstream` / `zig-index`）和版本。
+权威解析器是仓库本地的 `scripts/honk_toolchain.sh`（**不要放到 `packages/honk/`**：daily-sync 会用上游文件覆盖该目录）。它按当前 `HONK_SRC_VERSION`（取自 `packages/honk/Makefile` 的 `HONK_SRC_URL` / `HONK_SRC_VERSION`）从该 commit 的 `.github/ci/pins.env` 读取 `BPF_LINKER_VERSION` / `BPF_LINKER_SHA256`，从该 commit 的 `.github/workflows/release.yml` 读取 setup-zig 的 `version`；zig 资产 hash 再按版本从 `https://ziglang.org/download/index.json` 的 `x86_64-linux` / `aarch64-linux` 条目读取。`build/compile.sh` 调用的就是这份本地脚本，**上游升级 honk commit 后不需要手改本仓库的版本常量或 4 个 hash**，daily-sync 覆盖 `packages/honk/honk_toolchain.sh` 也不影响。解析成功时日志会打印来源（`upstream` / `zig-index`）和版本。
 
 优先级：**显式环境变量 > 上游动态解析 > 本地回退 pin**。显式设置时以下变量直接生效：
 
@@ -262,7 +262,7 @@ OpenWrt 的 `feeds install -a` 对同名包按 feeds.conf 中的**出现顺序**
 先在有网机器上看当前解析结果（输出可直接搬到离线机器用）：
 
 ```bash
-bash packages/honk/honk_toolchain.sh packages/honk/Makefile
+bash scripts/honk_toolchain.sh packages/honk/Makefile
 ```
 
 Debian / Ubuntu 宿主机可用下面这段一次装好（把版本/hash 换成上面命令的输出）：

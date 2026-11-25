@@ -83,7 +83,7 @@ CLEAN_GOLANG="${CLEAN_GOLANG:-auto}"        # auto|1|0：GO_AMD64 变更后是�
 MENUCONFIG_ONLY="${MENUCONFIG_ONLY:-0}"     # 1 = 准备完直接打开 make menuconfig（--menuconfig）
 
 # honk 核心的宿主机工具链：优先按当前 HONK_SRC_VERSION 从上游动态解析
-# （packages/honk/honk_toolchain.sh → pins.env / release.yml / zig index.json）；
+# （scripts/honk_toolchain.sh → pins.env / release.yml / zig index.json）；
 # 网络失败或解析失败时回退到下面这些本地保存的 pin，保证离线 VM 仍能编译。
 # 任何 HONK_* 变量显式指定时优先级最高；下载后依然强制 sha256sum -c 校验。
 HONK_FALLBACK_SRC_URL="https://github.com/daeuniverse/honk.git"
@@ -602,7 +602,9 @@ validate_honk_pins() {
 # 按当前 HONK_SRC_VERSION 调用 suite 自带的 honk_toolchain.sh 动态解析；
 # 显式环境变量优先，解析失败回退本地 pin。stdout 只接受白名单 KEY=value，不 eval。
 resolve_honk_toolchain() {
-    local script="$SUITE_DIR/packages/honk/honk_toolchain.sh"
+    # 解析器放在 scripts/（本地拥有），不能放在 packages/honk/（daily-sync 会用
+    # 上游文件覆盖它，导致这里解析不到 SHA256/来源）
+    local script="$SUITE_DIR/scripts/honk_toolchain.sh"
     local makefile="$SUITE_DIR/packages/honk/Makefile"
     local out_file="${TMP_WORK}/honk-pins.env"
     local key value
