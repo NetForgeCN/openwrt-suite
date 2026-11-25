@@ -282,13 +282,8 @@ if [[ -d "$SCRIPT_DIR/patches" ]]; then
         slug="${p##*/}"; slug="${slug%.sh}"
         printf '%s\n' "$slug" >> "$TMP_VALIDATE/patch_slugs"
     done < <(find "$SCRIPT_DIR/patches" -maxdepth 1 -type f -name '*.sh' -print | sort || true)
-    if [[ -f "$conf" ]]; then
-        while IFS= read -r slug; do
-            [[ -n "$slug" ]] || continue
-            grep -qxF "$slug" "$TMP_VALIDATE/patch_slugs" ||
-                warn "patches/$slug.sh 不存在（若该源不需要补丁可忽略）"
-        done < <(grep -Ev '^[[:space:]]*(#|$)' "$conf" | cut -d'|' -f1)
-    fi
+    # 补丁挂钩按设计是可选的（sources.conf 已注明），因此不为每个没有补丁的
+    # 源产生警告；只反向检查“补丁存在但源不存在”这种真正的配置错误。
     while IFS= read -r slug; do
         [[ -n "$slug" ]] || continue
         if [[ -f "$conf" ]] && ! grep -qE "^${slug}\|" "$conf"; then
