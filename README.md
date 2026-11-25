@@ -143,7 +143,7 @@ bash build/compile.sh
 
 构建直接使用 workflow 所在提交的 suite（脚本、`packages/`、`config/dot.config` 同源）：`SUITE_DIR` 指向本次 checkout，`00-feeds-order.sh` 检测到它是本地 suite 仓库就写 `src-link suite <构建树/feeds/.suite-local>`，该目录里只有一个 `packages` 软链指向 checkout 的 `packages/`。`feeds update -a` 把它挂成 feed，包快照与配置严格同属一个提交。只暴露 `packages/` 一层：`scan.mk` 用 `find -L` 递归扫整个 feed 目录，只挂一个干净的 `packages` 软链可以让扫描范围精确可控。本地手动跑 `compile.sh` 时脚本会自动识别自身所在检出，行为一致。
 
-缓存分三类：dl（key 绑 `dot.config` / `compile.sh`）、staging_dir 工具链（含 photondns 需要的 rust/host）、ccache（key 带 run_id）。热构建约 3~3.5 小时；首次冷构建耗时更长，可先手动触发一次预热缓存。`honk` 的宿主机工具链由 `compile.sh` 里的 `ensure_honk_toolchain` 按 `.config` 自动准备，不选 honk 则整段跳过。
+缓存分三类：dl（key 绑 `dot.config` / `compile.sh`）、staging_dir 工具链（含 photondns 需要的 rust/host）、ccache（key 带 run_id）。热构建约 3~3.5 小时；首次冷构建耗时更长，可先手动触发一次预热缓存。`honk` 的宿主机工具链由 `compile.sh` 里的 `ensure_honk_toolchain` 按 `.config` 自动准备：版本与 hash 按当前 `HONK_SRC_VERSION` 动态解析，网络失败时回退本地 pin，不选 honk 则整段跳过（详见「宿主机依赖（honk 核心专用）」）。
 
 ## 工作原理
 
@@ -228,60 +228,65 @@ OpenWrt 的 `feeds install -a` 对同名包按 feeds.conf 中的**出现顺序**
 
 #### 宿主机依赖（honk 核心专用）
 
-`honk-core` 是**在宿主机上**用 Rust + Zig 编译后再塞进 ipk 的，所以每台构建机（含 GitHub Actions runner）都要备好这套工具。版本必须与上游 pin **完全一致**（`honk/build_honk_core.sh` 会用 `zig version` 严格比对，不等就 `exit 1`）。当前 pin 由 `honk/Makefile` 的 `HONK_SRC_VERSION` 所指的提交决定：
+`honk-core` 是**在宿主机上**用 Rust + Zig 编译后再塞进 ipk 的，所以每台构建机（含 GitHub Actions runner）都要备好这套工具。`build_honk_core.sh` 用 `zig version` 严格比对版本（不等就 `exit 1`），所有资产下载后仍强制 `sha256sum -c`。
 
-| 组件 | 版本 | 说明 |
+##### 动态解析（默认）
+
+`packages/honk/honk_toolchain.sh` 按当前 `HONK_SRC_VERSION`（取自 `packages/honk/Makefile` 的 `HONK_SRC_URL` / `HONK_SRC_VERSION`）从该 commit 的 `.github/ci/pins.env` 读取 `BPF_LINKER_VERSION` / `BPF_LINKER_SHA256`，从该 commit 的 `.github/workflows/release.yml` 读取 setup-zig 的 `version`；zig 资产 hash 再按版本从 `https://ziglang.org/download/index.json` 的 `x86_64-linux` / `aarch64-linux` 条目读取。`build/compile.sh` 与 `build_honk_core.sh` 都走这套逻辑，**上游升级 honk commit 后不需要手改本仓库的版本常量或 4 个 hash**。解析成功时日志会打印来源（`upstream` / `zig-index`）和版本。
+
+优先级：**显式环境变量 > 上游动态解析 > 本地回退 pin**。显式设置时以下变量直接生效：
+
+| 变量 | 作用 |
+|---|---|
+| `HONK_ZIG_VERSION` / `HONK_BPF_LINKER_VERSION` | 强制版本（覆盖上游 pin） |
+| `HONK_ZIG_SHA256_X86_64` / `HONK_ZIG_SHA256_AARCH64` | 强制 zig 资产 hash |
+| `HONK_BPF_LINKER_SHA256_X86_64` / `HONK_BPF_LINKER_SHA256_AARCH64` | 强制 bpf-linker 资产 hash（`HONK_BPF_LINKER_SHA256` 是 x86_64 的旧别名） |
+| `HONK_SRC_URL` / `HONK_SRC_VERSION` / `HONK_MAKEFILE` | 指定解析所用的上游源 / Makefile（一般无需设置） |
+| `HONK_ZIG_INDEX_URL` | 指定 zig 官方索引地址（离线测试用） |
+| `HONK_TOOLCHAIN_AUTO` | `1` = 让脚本自动安装工具链（需要 sudo） |
+
+##### 离线回退（本地保存的 pin）
+
+网络不可达、上游解析失败或 Makefile 缺失时自动回退到下面这份本地 pin（对应当前 `HONK_SRC_VERSION`），离线 VM 仍能正常本地编译；回退时日志明确写出 `local-fallback` / `local-default`。
+
+| 组件 | 回退版本 | sha256（按宿主机架构选） |
 |---|---|---|
-| Zig | `0.14.1` | 必须精确匹配，脚本不比较范围 |
-| bpf-linker | `0.11.0` | musl 静态包，按 sha256 校验；`--version` 报 0.0.0 是正常的 |
+| Zig | `0.14.1` | x86_64 `24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c`；aarch64 `f7a654acc967864f7a050ddacfaa778c7504a0eca8d2b678839c21eea47c992b` |
+| bpf-linker | `0.11.0` | x86_64 `10f62ba9ab7e544d538370552660efcb4f1a19153d5752bbf0f6b51f3bada450`（与上游 pins.env 同值）；aarch64 `d09ddd83303e9ab1443f51e0e284680154009646a3ce141c63d838ee61b73eb9`（本地保存） |
 | Rust | 任意 rustup 稳定版 | eBPF 部分脚本会自动 `rustup toolchain install nightly --component rust-src,llvm-tools` |
 
-Zig 与 bpf-linker 都按**构建机架构**发布，两个架构的资产名和 sha256 各不相同。`build/compile.sh` 里的 `ensure_honk_toolchain` 已按 `uname -m` 自动选择；手工安装时按下面表格替换 `ARCH`：
+**guard**：版本升级但对应 hash 仍是上表旧默认值时直接报错，绝不拿旧 hash 校验新资产。上游 `pins.env` 只发布 x86_64 的 bpf-linker hash，所以 aarch64 宿主机升级 bpf-linker 版本时必须显式设置 `HONK_BPF_LINKER_SHA256_AARCH64`；zig 两个架构的 hash 升级后由官方 index.json 自动提供。
 
-| 宿主机 `uname -m` | 资产里的 ARCH | bpf-linker sha256 |
-|---|---|---|
-| `x86_64` / `amd64` | `x86_64` | `10f62ba9ab7e544d538370552660efcb4f1a19153d5752bbf0f6b51f3bada450` |
-| `aarch64` / `arm64` | `aarch64` | `d09ddd83303e9ab1443f51e0e284680154009646a3ce141c63d838ee61b73eb9` |
+##### 手工安装（可选）
 
-Zig 下载地址：`https://ziglang.org/download/0.14.1/zig-<ARCH>-linux-0.14.1.tar.xz`。
-
-Debian / Ubuntu 宿主机可用下面这段一次装好（含 `exit` 分支，请保存为脚本执行）：
+先在有网机器上看当前解析结果（输出可直接搬到离线机器用）：
 
 ```bash
-# 0) 先确定宿主机架构（x86_64 / aarch64 都支持）
-ARCH=$(uname -m); case "$ARCH" in amd64) ARCH=x86_64 ;; arm64) ARCH=aarch64 ;; esac
-case "$ARCH" in
-  x86_64)  SHA=10f62ba9ab7e544d538370552660efcb4f1a19153d5752bbf0f6b51f3bada450 ;;
-  aarch64) SHA=d09ddd83303e9ab1443f51e0e284680154009646a3ce141c63d838ee61b73eb9 ;;
-  *) echo "unsupported arch: $ARCH" >&2; exit 1 ;;
-esac
+bash packages/honk/honk_toolchain.sh packages/honk/Makefile
+```
 
-# 1) 编译 honk-core 需要的系统依赖（bindgen / eBPF / 解压用）
-sudo apt-get update
+Debian / Ubuntu 宿主机可用下面这段一次装好（把版本/hash 换成上面命令的输出）：
+
+```bash
+# ARCH 按 uname -m 选 x86_64 / aarch64；ZIG_VERSION / BPF_VERSION / ZIG_SHA / BPF_SHA
+# 来自 honk_toolchain.sh 的 ZIG_VERSION / BPF_LINKER_VERSION / HONK_ZIG_SHA256_* / HONK_BPF_LINKER_SHA256_*
 sudo apt-get install -y clang llvm libbpf-dev cmake libclang-dev zstd \
   make perl file binutils git curl xz-utils pkg-config ca-certificates
-
-# 2) rustup（honk 构建脚本位于 ~/.cargo/bin 的前提）
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
 . "$HOME/.cargo/env"
-
-# 3) bpf-linker 0.11.0（按宿主机架构下，务必保留 sha256 校验）
-curl -fsSL -o /tmp/bpf-linker.tar.zst \
-  "https://github.com/aya-rs/bpf-linker/releases/download/v0.11.0/bpf-linker-${ARCH}-unknown-linux-musl.tar.zst"
-echo "$SHA  /tmp/bpf-linker.tar.zst" | sha256sum -c -
+curl --proto '=https' --tlsv1.2 -fsSL -o /tmp/bpf-linker.tar.zst \
+  "https://github.com/aya-rs/bpf-linker/releases/download/v\${BPF_VERSION}/bpf-linker-\${ARCH}-unknown-linux-musl.tar.zst"
+echo "\$BPF_SHA  /tmp/bpf-linker.tar.zst" | sha256sum -c -
 sudo tar --zstd -xf /tmp/bpf-linker.tar.zst -C /usr/local/bin
-
-# 4) Zig 0.14.1（版本必须一模一样，架构也要对）
-curl -fsSL -o /tmp/zig.tar.xz \
-  "https://ziglang.org/download/0.14.1/zig-${ARCH}-linux-0.14.1.tar.xz"
+curl --proto '=https' --tlsv1.2 -fsSL -o /tmp/zig.tar.xz \
+  "https://ziglang.org/download/\${ZIG_VERSION}/zig-\${ARCH}-linux-\${ZIG_VERSION}.tar.xz"
+echo "\$ZIG_SHA  /tmp/zig.tar.xz" | sha256sum -c -
 sudo tar -xJf /tmp/zig.tar.xz -C /usr/local
-sudo ln -sf "/usr/local/zig-${ARCH}-linux-0.14.1/zig" /usr/local/bin/zig
-
-# 5) 自检
+sudo ln -sf "/usr/local/zig-\${ARCH}-linux-\${ZIG_VERSION}/zig" /usr/local/bin/zig
 zig version && bpf-linker --version && cargo --version
 ```
 
-`build_honk_core.sh` 只检查工具是否存在（`command -v zig` 之类的断言），缺失就报错退出。Zig 与 bpf-linker 必须用上游 pin 对应的 release 资产：发行版包管理器里的 Zig 版本较旧，`zig version` 对不上 pin 会失败。这套工具装在宿主机全局，不随 OpenWrt 构建树或 `staging_dir` 缓存走，换机器需重新准备。
+`build_honk_core.sh` 会检查工具是否在 PATH、`zig version` 是否等于解析出的版本；Zig / bpf-linker 必须用对应 release 资产（发行版包管理器里的 Zig 通常太旧）。这套工具装在宿主机全局，不随 OpenWrt 构建树或 `staging_dir` 缓存走，换机器需重新准备。
 
 需要自动安装时先 `sudo -v` 刷新凭据，再 `HONK_TOOLCHAIN_AUTO=1 bash build/compile.sh`（脚本会按 `uname -m` 选对架构）。手动体检：
 

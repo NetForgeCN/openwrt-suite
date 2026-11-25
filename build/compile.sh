@@ -82,16 +82,31 @@ CLEAN_KERNEL="${CLEAN_KERNEL:-auto}"        # auto|1|0：内核配置变更后�
 CLEAN_GOLANG="${CLEAN_GOLANG:-auto}"        # auto|1|0：GO_AMD64 变更后是否 make golang/clean
 MENUCONFIG_ONLY="${MENUCONFIG_ONLY:-0}"     # 1 = 准备完直接打开 make menuconfig（--menuconfig）
 
-# honk 核心的宿主机工具链版本：必须与 openwrt-suite README「宿主机依赖」一节、
-# 以及 NetForgeCN/OpenWRT 的 OpenWRT.yml 里同名常量保持一致，否则 honk 编译失败
-HONK_ZIG_VERSION="${HONK_ZIG_VERSION:-0.14.1}"
-HONK_BPF_LINKER_VERSION="${HONK_BPF_LINKER_VERSION:-0.11.0}"
-# bpf-linker 按宿主机架构分开打包，两个资产的 sha256 不同；脚本按 uname -m 选
-HONK_BPF_LINKER_SHA256_X86_64="${HONK_BPF_LINKER_SHA256_X86_64:-${HONK_BPF_LINKER_SHA256:-10f62ba9ab7e544d538370552660efcb4f1a19153d5752bbf0f6b51f3bada450}}"
-HONK_BPF_LINKER_SHA256_AARCH64="${HONK_BPF_LINKER_SHA256_AARCH64:-d09ddd83303e9ab1443f51e0e284680154009646a3ce141c63d838ee61b73eb9}"
-# zig 官方 download/index.json 中的 sha256，同样按宿主机架构区分；下载后强制校验
-HONK_ZIG_SHA256_X86_64="${HONK_ZIG_SHA256_X86_64:-24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c}"
-HONK_ZIG_SHA256_AARCH64="${HONK_ZIG_SHA256_AARCH64:-f7a654acc967864f7a050ddacfaa778c7504a0eca8d2b678839c21eea47c992b}"
+# honk 核心的宿主机工具链：优先按当前 HONK_SRC_VERSION 从上游动态解析
+# （packages/honk/honk_toolchain.sh → pins.env / release.yml / zig index.json）；
+# 网络失败或解析失败时回退到下面这些本地保存的 pin，保证离线 VM 仍能编译。
+# 任何 HONK_* 变量显式指定时优先级最高；下载后依然强制 sha256sum -c 校验。
+HONK_FALLBACK_SRC_URL="https://github.com/daeuniverse/honk.git"
+HONK_FALLBACK_SRC_VERSION="00be4f01309ecf7620be01f0398e875295e9b942"
+HONK_FALLBACK_ZIG_VERSION="0.14.1"
+HONK_FALLBACK_BPF_VERSION="0.11.0"
+HONK_FALLBACK_BPF_SHA_X86="10f62ba9ab7e544d538370552660efcb4f1a19153d5752bbf0f6b51f3bada450"
+HONK_FALLBACK_BPF_SHA_AARCH64="d09ddd83303e9ab1443f51e0e284680154009646a3ce141c63d838ee61b73eb9"
+HONK_FALLBACK_ZIG_SHA_X86="24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c"
+HONK_FALLBACK_ZIG_SHA_AARCH64="f7a654acc967864f7a050ddacfaa778c7504a0eca8d2b678839c21eea47c992b"
+
+# 空 = 交给动态解析；非空 = 调用方显式覆盖
+HONK_ZIG_VERSION="${HONK_ZIG_VERSION:-}"
+HONK_BPF_LINKER_VERSION="${HONK_BPF_LINKER_VERSION:-}"
+HONK_BPF_LINKER_SHA256_X86_64="${HONK_BPF_LINKER_SHA256_X86_64:-${HONK_BPF_LINKER_SHA256:-}}"
+HONK_BPF_LINKER_SHA256_AARCH64="${HONK_BPF_LINKER_SHA256_AARCH64:-}"
+HONK_ZIG_SHA256_X86_64="${HONK_ZIG_SHA256_X86_64:-}"
+HONK_ZIG_SHA256_AARCH64="${HONK_ZIG_SHA256_AARCH64:-}"
+HONK_PINS_SOURCE=""
+HONK_ZIG_SHA_SOURCE=""
+HONK_HOST_ARCH=""
+HONK_HOST_BPF_SHA=""
+HONK_HOST_ZIG_SHA=""
 # 空 = 自动判断：CI（GITHUB_ACTIONS）或免密 sudo 可用时自动装，否则只提示不装
 HONK_TOOLCHAIN_AUTO="${HONK_TOOLCHAIN_AUTO:-}"
 
@@ -252,16 +267,8 @@ check_env() {
     JOBS="${JOBS:-$(detect_jobs)}"
     [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "无法获取有效的 CPU 并行任务数（JOBS=${JOBS}）"
 
-    # 工具链版本/哈希会拼进 URL 与 sha256sum 校验：严格白名单，防止注入
-    [[ "$HONK_ZIG_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
-        die "HONK_ZIG_VERSION 格式不合法：$HONK_ZIG_VERSION"
-    [[ "$HONK_BPF_LINKER_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
-        die "HONK_BPF_LINKER_VERSION 格式不合法：$HONK_BPF_LINKER_VERSION"
-    local h
-    for h in "$HONK_ZIG_SHA256_X86_64" "$HONK_ZIG_SHA256_AARCH64" \
-             "$HONK_BPF_LINKER_SHA256_X86_64" "$HONK_BPF_LINKER_SHA256_AARCH64"; do
-        [[ "$h" =~ ^[0-9a-f]{64}$ ]] || die "工具链 sha256 必须是 64 位小写十六进制：$h"
-    done
+    # honk 工具链的版本/hash 在选中 honk 时由 resolve_honk_toolchain 动态解析，
+    # 并在 validate_honk_pins 里做白名单 + 升级 guard（见下方对应函数）。
 
     # 统一 locale，避免 sort/grep/编译期出现 locale 相关差异
     export LC_ALL=C LANG=C
@@ -534,6 +541,111 @@ honk_enabled() {
     grep -qE '^CONFIG_PACKAGE_honk=[ym]' .config
 }
 
+# 本地回退：动态解析不可用（离线 VM / 上游 URL 失效 / 解析失败）时用保存的 pin。
+honk_apply_fallbacks() {
+    HONK_ZIG_VERSION="${HONK_ZIG_VERSION:-$HONK_FALLBACK_ZIG_VERSION}"
+    HONK_BPF_LINKER_VERSION="${HONK_BPF_LINKER_VERSION:-$HONK_FALLBACK_BPF_VERSION}"
+    HONK_BPF_LINKER_SHA256_X86_64="${HONK_BPF_LINKER_SHA256_X86_64:-$HONK_FALLBACK_BPF_SHA_X86}"
+    HONK_BPF_LINKER_SHA256_AARCH64="${HONK_BPF_LINKER_SHA256_AARCH64:-$HONK_FALLBACK_BPF_SHA_AARCH64}"
+    HONK_ZIG_SHA256_X86_64="${HONK_ZIG_SHA256_X86_64:-$HONK_FALLBACK_ZIG_SHA_X86}"
+    HONK_ZIG_SHA256_AARCH64="${HONK_ZIG_SHA256_AARCH64:-$HONK_FALLBACK_ZIG_SHA_AARCH64}"
+    HONK_PINS_SOURCE="${HONK_PINS_SOURCE:-local-fallback}"
+    HONK_ZIG_SHA_SOURCE="${HONK_ZIG_SHA_SOURCE:-local-default}"
+}
+
+# zig / bpf-linker 的资产名和 sha256 都随「宿主机」架构变（不是目标架构）。
+honk_host_info() {
+    case "$(uname -m)" in
+        x86_64|amd64)
+            HONK_HOST_ARCH=x86_64
+            HONK_HOST_BPF_SHA="$HONK_BPF_LINKER_SHA256_X86_64"
+            HONK_HOST_ZIG_SHA="$HONK_ZIG_SHA256_X86_64"
+            ;;
+        aarch64|arm64)
+            HONK_HOST_ARCH=aarch64
+            HONK_HOST_BPF_SHA="$HONK_BPF_LINKER_SHA256_AARCH64"
+            HONK_HOST_ZIG_SHA="$HONK_ZIG_SHA256_AARCH64"
+            ;;
+        *)
+            die "honk 工具链：暂不支持宿主机架构 $(uname -m)（只适配 x86_64 / aarch64；可手动装好 zig + bpf-linker 后设 HONK_TOOLCHAIN_AUTO=0）"
+            ;;
+    esac
+}
+
+# 版本/hash 白名单 + guard：版本升级但 sha256 仍是本地旧默认值时明确失败，
+# 绝不拿着 0.14.1 / 0.11.0 的 hash 去校验新资产（与 honk_toolchain.sh --check 同逻辑）。
+validate_honk_pins() {
+    local h
+    [[ "$HONK_ZIG_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+        die "HONK_ZIG_VERSION 格式不合法：$HONK_ZIG_VERSION"
+    [[ "$HONK_BPF_LINKER_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+        die "HONK_BPF_LINKER_VERSION 格式不合法：$HONK_BPF_LINKER_VERSION"
+    for h in "$HONK_ZIG_SHA256_X86_64" "$HONK_ZIG_SHA256_AARCH64" \
+             "$HONK_BPF_LINKER_SHA256_X86_64" "$HONK_BPF_LINKER_SHA256_AARCH64"; do
+        [[ "$h" =~ ^[0-9a-f]{64}$ ]] || die "工具链 sha256 必须是 64 位小写十六进制：$h"
+    done
+
+    honk_host_info
+    local fb_zig="$HONK_FALLBACK_ZIG_SHA_X86" fb_bpf="$HONK_FALLBACK_BPF_SHA_X86"
+    if [[ "$HONK_HOST_ARCH" == aarch64 ]]; then
+        fb_zig="$HONK_FALLBACK_ZIG_SHA_AARCH64"
+        fb_bpf="$HONK_FALLBACK_BPF_SHA_AARCH64"
+    fi
+    if [[ "$HONK_ZIG_VERSION" != "$HONK_FALLBACK_ZIG_VERSION" && "$HONK_HOST_ZIG_SHA" == "$fb_zig" ]]; then
+        die "zig 版本已升级到 ${HONK_ZIG_VERSION}，但 ${HONK_HOST_ARCH} 的 sha256 仍是本地旧默认值；请确认 zig index.json 解析成功，或显式设置 HONK_ZIG_SHA256_*"
+    fi
+    if [[ "$HONK_BPF_LINKER_VERSION" != "$HONK_FALLBACK_BPF_VERSION" && "$HONK_HOST_BPF_SHA" == "$fb_bpf" ]]; then
+        die "bpf-linker 版本已升级到 ${HONK_BPF_LINKER_VERSION}，但 ${HONK_HOST_ARCH} 的 sha256 仍是本地旧默认值；请确认 pins.env 解析成功，或显式设置 HONK_BPF_LINKER_SHA256_*（aarch64 上游未提供 hash，必须显式指定）"
+    fi
+}
+
+# 按当前 HONK_SRC_VERSION 调用 suite 自带的 honk_toolchain.sh 动态解析；
+# 显式环境变量优先，解析失败回退本地 pin。stdout 只接受白名单 KEY=value，不 eval。
+resolve_honk_toolchain() {
+    local script="$SUITE_DIR/packages/honk/honk_toolchain.sh"
+    local makefile="$SUITE_DIR/packages/honk/Makefile"
+    local out_file="${TMP_WORK}/honk-pins.env"
+    local key value
+
+    if [[ ! -f "$script" ]]; then
+        warn "找不到 $script，使用本地 honk 工具链 pin"
+        honk_apply_fallbacks
+        validate_honk_pins
+        return 0
+    fi
+
+    if HONK_MAKEFILE="$makefile" \
+       HONK_SRC_URL="${HONK_SRC_URL:-}" HONK_SRC_VERSION="${HONK_SRC_VERSION:-}" \
+       HONK_ZIG_VERSION="$HONK_ZIG_VERSION" \
+       HONK_BPF_LINKER_VERSION="$HONK_BPF_LINKER_VERSION" \
+       HONK_BPF_LINKER_SHA256_X86_64="$HONK_BPF_LINKER_SHA256_X86_64" \
+       HONK_BPF_LINKER_SHA256_AARCH64="$HONK_BPF_LINKER_SHA256_AARCH64" \
+       HONK_ZIG_SHA256_X86_64="$HONK_ZIG_SHA256_X86_64" \
+       HONK_ZIG_SHA256_AARCH64="$HONK_ZIG_SHA256_AARCH64" \
+       bash "$script" "$makefile" > "$out_file"; then
+        while IFS='=' read -r key value; do
+            [[ "$value" =~ ^[A-Za-z0-9._:/-]+$ ]] || continue
+            case "$key" in
+                HONK_ZIG_VERSION|ZIG_VERSION)     HONK_ZIG_VERSION="$value" ;;
+                BPF_LINKER_VERSION)               HONK_BPF_LINKER_VERSION="$value" ;;
+                BPF_LINKER_SHA256)                HONK_BPF_LINKER_SHA256_X86_64="$value" ;;
+                HONK_BPF_LINKER_SHA256_X86_64)    HONK_BPF_LINKER_SHA256_X86_64="$value" ;;
+                HONK_BPF_LINKER_SHA256_AARCH64)   HONK_BPF_LINKER_SHA256_AARCH64="$value" ;;
+                HONK_ZIG_SHA256_X86_64)           HONK_ZIG_SHA256_X86_64="$value" ;;
+                HONK_ZIG_SHA256_AARCH64)          HONK_ZIG_SHA256_AARCH64="$value" ;;
+                HONK_PINS_SOURCE)                 HONK_PINS_SOURCE="$value" ;;
+                HONK_ZIG_SHA_SOURCE)              HONK_ZIG_SHA_SOURCE="$value" ;;
+            esac
+        done < "$out_file"
+        log "honk 工具链版本来源：${HONK_PINS_SOURCE:-unknown}（zig ${HONK_ZIG_VERSION} / bpf-linker ${HONK_BPF_LINKER_VERSION}）"
+        log "honk zig sha256 来源：${HONK_ZIG_SHA_SOURCE:-unknown}；下载后仍强制 sha256sum -c"
+    else
+        warn "honk_toolchain.sh 解析失败，使用本地 pin（离线回退）"
+        honk_apply_fallbacks
+    fi
+    validate_honk_pins
+}
+
 install_honk_toolchain() {
     log "安装 honk 宿主机工具链（Rust / Zig ${HONK_ZIG_VERSION} / bpf-linker ${HONK_BPF_LINKER_VERSION}）"
     command -v sha256sum >/dev/null 2>&1 ||
@@ -562,24 +674,8 @@ install_honk_toolchain() {
     mkdir -p -- "$tmp"
 
     # zig / bpf-linker 的资产名和 sha256 都随「宿主机」架构变（不是目标架构）。
-    # 之前这里硬编码 x86_64，在 aarch64 机器上会装进 x86_64 的二进制 —— 表现为
-    # "zig 版本不符：" 或直接 "cannot execute binary file"。按 uname -m 选择。
-    local host_arch host_bpf_sha host_zig_sha
-    case "$(uname -m)" in
-        x86_64|amd64)
-            host_arch=x86_64
-            host_bpf_sha="$HONK_BPF_LINKER_SHA256_X86_64"
-            host_zig_sha="$HONK_ZIG_SHA256_X86_64"
-            ;;
-        aarch64|arm64)
-            host_arch=aarch64
-            host_bpf_sha="$HONK_BPF_LINKER_SHA256_AARCH64"
-            host_zig_sha="$HONK_ZIG_SHA256_AARCH64"
-            ;;
-        *)
-            die "honk 工具链：暂不支持宿主机架构 $(uname -m)（只适配 x86_64 / aarch64；可手动装好 zig + bpf-linker 后设 HONK_TOOLCHAIN_AUTO=0）"
-            ;;
-    esac
+    honk_host_info
+    local host_arch="$HONK_HOST_ARCH" host_bpf_sha="$HONK_HOST_BPF_SHA" host_zig_sha="$HONK_HOST_ZIG_SHA"
     log "honk 工具链：宿主机架构 ${host_arch}（uname -m = $(uname -m)）"
 
     # bpf-linker：已装且「能跑」才跳过 —— 只看 command -v 会漏掉架构装错的情况
@@ -626,6 +722,10 @@ ensure_honk_toolchain() {
         log "未选中 honk（.config 里没有 CONFIG_PACKAGE_honk=y），跳过 honk 工具链"
         return 0
     fi
+
+    # 动态解析优先（当前 HONK_SRC_VERSION → pins.env / release.yml / zig index）；
+    # 离线时回退本地 pin；版本升级但 hash 未更新时 validate 会明确失败。
+    resolve_honk_toolchain
 
     if [[ -f "$HOME/.cargo/env" ]]; then
         # shellcheck disable=SC1091
@@ -690,21 +790,20 @@ ensure_honk_toolchain() {
         else
             printf '  （HONK_TOOLCHAIN_AUTO=%s，已按设置跳过自动安装；设为 1 可让脚本自己装）\n' "$HONK_TOOLCHAIN_AUTO" >&2
         fi
-        cat >&2 <<'EOF'
+        honk_host_info
+        cat >&2 <<EOF
 请手动安装（详见 openwrt-suite README「宿主机依赖（honk 核心专用）」）：
-  # 按宿主机架构选资产（x86_64 / aarch64 都支持）
-  ARCH=$(uname -m); case "$ARCH" in amd64) ARCH=x86_64 ;; arm64) ARCH=aarch64 ;; esac
-  case "$ARCH" in x86_64) SHA=10f62ba9ab7e544d538370552660efcb4f1a19153d5752bbf0f6b51f3bada450 ;;
-                  aarch64) SHA=d09ddd83303e9ab1443f51e0e284680154009646a3ce141c63d838ee61b73eb9 ;;
-                  *) echo "unsupported arch: $ARCH"; return 1 ;; esac
+  当前解析结果（来源：${HONK_PINS_SOURCE} / zig sha：${HONK_ZIG_SHA_SOURCE}）：
+  zig ${HONK_ZIG_VERSION} / bpf-linker ${HONK_BPF_LINKER_VERSION} / 宿主机架构 ${HONK_HOST_ARCH}
   sudo apt-get install -y libbpf-dev cmake libclang-dev zstd xz-utils pkg-config
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-  curl -fsSL -o /tmp/bpf-linker.tar.zst "https://github.com/aya-rs/bpf-linker/releases/download/v0.11.0/bpf-linker-${ARCH}-unknown-linux-musl.tar.zst"
-  echo "$SHA  /tmp/bpf-linker.tar.zst" | sha256sum -c -
+  curl --proto '=https' --tlsv1.2 -fsSL -o /tmp/bpf-linker.tar.zst "https://github.com/aya-rs/bpf-linker/releases/download/v${HONK_BPF_LINKER_VERSION}/bpf-linker-${HONK_HOST_ARCH}-unknown-linux-musl.tar.zst"
+  echo "${HONK_HOST_BPF_SHA}  /tmp/bpf-linker.tar.zst" | sha256sum -c -
   sudo tar --zstd -xf /tmp/bpf-linker.tar.zst -C /usr/local/bin
-  curl -fsSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.14.1/zig-${ARCH}-linux-0.14.1.tar.xz"
+  curl --proto '=https' --tlsv1.2 -fsSL -o /tmp/zig.tar.xz "https://ziglang.org/download/${HONK_ZIG_VERSION}/zig-${HONK_HOST_ARCH}-linux-${HONK_ZIG_VERSION}.tar.xz"
+  echo "${HONK_HOST_ZIG_SHA}  /tmp/zig.tar.xz" | sha256sum -c -
   sudo tar -xJf /tmp/zig.tar.xz -C /usr/local
-  sudo ln -sf "/usr/local/zig-${ARCH}-linux-0.14.1/zig" /usr/local/bin/zig
+  sudo ln -sf "/usr/local/zig-${HONK_HOST_ARCH}-linux-${HONK_ZIG_VERSION}/zig" /usr/local/bin/zig
 或设 HONK_TOOLCHAIN_AUTO=1 让本脚本自动安装（需要 sudo）。
 EOF
         die "缺少 honk 构建工具链"
@@ -784,11 +883,16 @@ OpenWrt 一键构建脚本（openwrt-suite 单源版）
   KERNEL_CONFIG     手动指定内核配置文件路径（默认自动探测最新版本）
   GO_AMD64_LEVEL    GOAMD64 微架构级别（默认 v3，可选 v1/v2/v3/v4）
   HONK_TOOLCHAIN_AUTO / HONK_ZIG_VERSION / HONK_BPF_LINKER_VERSION
-                    honk 核心的宿主机工具链（.config 选中 honk 才会用到；版本与
-                    sha256 都做白名单校验，详见 suite README「宿主机依赖」一节）
+                    honk 核心的宿主机工具链（.config 选中 honk 才会用到）。
+                    未显式指定时按当前 HONK_SRC_VERSION 从上游 pins.env /
+                    release.yml 动态解析；网络失败回退本地 pin（离线可用）。
   HONK_ZIG_SHA256_X86_64 / HONK_ZIG_SHA256_AARCH64
   HONK_BPF_LINKER_SHA256_X86_64 / HONK_BPF_LINKER_SHA256_AARCH64
-                    工具链资产 sha256（默认按官方 release 固定，改版本须同步改）
+                    工具链资产 sha256；zig 默认从 ziglang.org/index.json 按版本
+                    与架构读取，bpf-linker x86_64 默认取上游 pins.env。版本升级
+                    但 hash 未更新会 fail closed；下载后强制 sha256sum -c。
+  HONK_SRC_URL / HONK_SRC_VERSION / HONK_ZIG_INDEX_URL
+                    动态解析的源与 zig 索引地址（一般无需设置，可用于离线测试）
   SOURCE_DATE_EPOCH / SUITE_COMMIT_EPOCH
                     可复现构建时间戳（默认取 suite 检出的提交时间）
   RUST_MAKEFILE     Rust Makefile 路径（默认 feeds/packages/lang/rust/Makefile）
