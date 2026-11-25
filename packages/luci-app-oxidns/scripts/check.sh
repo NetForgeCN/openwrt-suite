@@ -323,6 +323,15 @@ for (const [, arch, target] of rows) {
 }
 if (!mk.includes('CONFIG_SOFTFLOAT'))
 	throw new Error('soft-float ARM must be excluded from the hard-float core build');
+
+// package.mk calls Download/default whenever PKG_SOURCE_URL is non-empty,
+// but FILE comes from PKG_SOURCE which is only set for a recognised ARCH.
+// An unconditional URL breaks feed index generation (ARCH is undefined then).
+const guard = mk.match(/ifneq \(\$\(OXIDNS_PKG_HASH\),skip\)([\s\S]*?)^endif/m);
+if (!guard || !/PKG_SOURCE_URL:=/.test(guard[1]))
+	throw new Error('PKG_SOURCE_URL must be inside the OXIDNS_PKG_HASH guard');
+if (/^PKG_SOURCE_URL:=/m.test(mk.replace(guard[0], '')))
+	throw new Error('PKG_SOURCE_URL must not be declared outside the OXIDNS_PKG_HASH guard');
 NODE
 
 # [build-rules] Negative fixtures for the validators. These must fail on

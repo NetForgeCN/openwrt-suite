@@ -44,7 +44,12 @@ PKG_LICENSE:=GPL-3.0-or-later
 PKG_LICENSE_FILES:=LICENSE
 PKG_MAINTAINER:=NetForgeCN
 
-PKG_SOURCE_URL:=https://github.com/svenshi/oxidns/releases/download/v$(PKG_VERSION)/
+# NOTE: PKG_SOURCE_URL is declared conditionally near the end of this file.
+# package.mk invokes Download/default whenever PKG_SOURCE_URL is non-empty,
+# and that macro requires PKG_SOURCE to be non-empty as well. Feed metadata
+# collection runs before the target ARCH is defined, so an unconditional URL
+# here would make the whole package fail to parse at index generation time
+# with "Download/default is missing the FILE field".
 
 # Map OpenWrt ARCH / CPU_TYPE to OxiDNS release targets. CONFIG_SOFTFLOAT is
 # provided by the buildroot target configuration; soft-float ARM must not be
@@ -74,10 +79,14 @@ else
   OXIDNS_PKG_HASH:=skip
 endif
 
-# Never register a fake "oxidns-unsupported-arch.tar.gz" download target: on
-# an unsupported target the package is not selectable and has no PKG_SOURCE,
-# so `make download` does not try to fetch a non-existent release asset.
+# Register the download target only for a recognised target architecture.
+# PKG_SOURCE_URL must live inside the same guard as PKG_SOURCE: package.mk
+# calls Download/default whenever PKG_SOURCE_URL is non-empty, and that macro
+# derives FILE from PKG_SOURCE. At feed index generation time ARCH is not yet
+# defined, so a URL without a matching source archive makes the whole package
+# fail to parse. On an unsupported target the package is not selectable anyway.
 ifneq ($(OXIDNS_PKG_HASH),skip)
+  PKG_SOURCE_URL:=https://github.com/svenshi/oxidns/releases/download/v$(PKG_VERSION)/
   PKG_SOURCE:=oxidns-$(OXIDNS_RUST_TARGET).tar.gz
   PKG_HASH:=$(OXIDNS_PKG_HASH)
 endif
