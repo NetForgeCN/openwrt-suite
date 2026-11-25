@@ -1,7 +1,7 @@
 airplay2|5dc055cdcb7cedf4a4ceb27532180b7355b2f3e7|2026-11-25T09:27:09Z|https://github.com/NetForgeCN/luci-app-airplay2.git
 argon|5d6a6e8b86ea9aee0f3cbb9637f9140414153a45|2026-11-24T10:38:19Z|https://github.com/jerrykuku/luci-theme-argon.git
 atomdns|a011370c3d6ca59c75494c1bf4d4d28fb4e6670c|2026-11-25T09:27:09Z|https://github.com/NetForgeCN/luci-app-atomdns.git
-config|9aec7ff3613bc1d30a4d577d8ae9e7d7f1503069|2026-11-25T09:27:09Z|https://github.com/NetForgeCN/OpenWRT.git
+config|ea75a11cf67a929c43a05e09f87d4395d63b01b3|2026-11-25T09:54:40Z|https://github.com/NetForgeCN/OpenWRT.git
 dae|4d33a0c69733436074d2f5f13267b09e8c4c6949|2026-11-08T04:32:51Z|https://github.com/QiuSimons/luci-app-dae.git
 ddnsgo|7092e6de6ad9fe3f7d327f70468dfd19e00d6f0e|2026-11-08T04:32:51Z|https://github.com/sirpdboy/luci-app-ddns-go.git
 diskman|be87fcb92c472821bcedbefbfc8b7e8d9e039449|2026-11-08T04:32:51Z|https://github.com/sbwml/luci-app-diskman.git
