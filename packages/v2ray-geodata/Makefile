@@ -46,9 +46,15 @@ GEOSITE_SHA256:=67ccb3cda9fb1b118be77d4aeb954d16fe3a12c63a6006e72709ad12dee7aab2
 GEOIP_URL:=https://github.com/NetForgeCN/v2ray-rules-dat/releases/download/202611250113/geoip.dat
 GEOSITE_URL:=https://github.com/NetForgeCN/v2ray-rules-dat/releases/download/202611250113/geosite.dat
 
-# HTTPS only (including redirects), fail on HTTP/TLS errors, bounded time and
-# size, with retries. Each URL is downloaded exactly once per build.
-CURL_FLAGS:=--fail --silent --show-error --proto '=https' --proto-redir '=https' --location --max-redirs 5 --connect-timeout 15 --max-time 300 --retry 3 --retry-delay 2 --max-filesize 67108864
+
+# 下载/校验逻辑已抽到 fetch-geodata.sh：Build/Compile 里的内联 shell 在
+# OpenWrt package.mk 的 $(call) 二次展开下会把 $$1 / $$url 吃掉首字符，
+# 导致 curl 拿到裸串并按 http 处理（--proto '=https' 直接拒绝）。
+# Build/Prepare 负责把脚本送进 PKG_BUILD_DIR，Compile 只传 URL 并调用。
+define Build/Prepare
+	$(INSTALL_DIR) $(PKG_BUILD_DIR)
+	$(CP) ./fetch-geodata.sh $(PKG_BUILD_DIR)/fetch-geodata.sh
+endef
 
 define Build/Compile
 	( \
