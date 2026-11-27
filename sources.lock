@@ -2,12 +2,11 @@ airplay2|5dc055cdcb7cedf4a4ceb27532180b7355b2f3e7|2026-11-25T09:27:09Z|https://g
 argon|5d6a6e8b86ea9aee0f3cbb9637f9140414153a45|2026-11-24T10:38:19Z|https://github.com/jerrykuku/luci-theme-argon.git
 atomdns|c0702068defe7ee9d959389f4e565a4f233e63b4|2026-11-27T01:02:28Z|https://github.com/NetForgeCN/luci-app-atomdns.git
 config|8565d41189b7074c6254761f09e70d935508c099|2026-11-27T04:50:25Z|https://github.com/NetForgeCN/OpenWRT.git
-dae|4d33a0c69733436074d2f5f13267b09e8c4c6949|2026-11-08T04:32:51Z|https://github.com/QiuSimons/luci-app-dae.git
 ddnsgo|7092e6de6ad9fe3f7d327f70468dfd19e00d6f0e|2026-11-08T04:32:51Z|https://github.com/sirpdboy/luci-app-ddns-go.git
 diskman|be87fcb92c472821bcedbefbfc8b7e8d9e039449|2026-11-08T04:32:51Z|https://github.com/sbwml/luci-app-diskman.git
 geodata|2e87ae9a27c96dc9004448fad1d130cec695a463|2026-11-26T01:23:50Z|https://github.com/NetForgeCN/Loyalsoldier.git
 hevsocks5|7114c079880823878919a16d55600ea8e0f226a3|2026-11-25T09:27:09Z|https://github.com/NetForgeCN/luci-app-hevsocks5.git
-honk|cdfa15acd725793ac1287003c8e2494dd8ccb530|2026-11-27T01:52:43Z|https://github.com/QiuSimons/luci-app-honk.git
+honk|d42df6ac519078b08901ec15191c27dc406071b6|2026-11-27T12:08:12Z|https://github.com/QiuSimons/luci-app-daeuniverse.git
 kixdns|bea466368823dfc829a13151f804b29b5ab2ca67|2026-11-08T04:32:51Z|https://github.com/JohnsonRan/luci-app-kixdns.git
 lucky|51d4c86db2bcfd54b76233c77946b1893136830d|2026-11-25T09:27:09Z|https://github.com/NetForgeCN/luci-app-lucky.git
 mosdns|a8a6caffe04167dbb17407a63463eb4ce7243873|2026-11-15T06:10:52Z|https://github.com/sbwml/luci-app-mosdns.git

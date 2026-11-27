@@ -1,61 +1,42 @@
 # SPDX-License-Identifier: GPL-2.0-only
 #
 # Copyright (C) 2023 ImmortalWrt.org
+# Copyright (C) 2026 QiuSimons <https://github.com/QiuSimons>
 
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=dae
-PKG_VERSION:=2026.10.18
+PKG_VERSION:=2026.11.27~57f67ba
 PKG_RELEASE:=1
 
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
-PKG_SOURCE_PROTO:=git
-PKG_SOURCE_VERSION:=e52e96f132896e9ef6683b354a47231e354361a2
-PKG_SOURCE_URL:=https://github.com/olicesx/dae.git
-PKG_MIRROR_HASH:=skip
+DAE_SRC_URL:=https://github.com/olicesx/dae.git
+DAE_SRC_VERSION:=57f67ba1175613e742dc0e4e2eae7655dc9fdb72
+DAE_SHORT_VERSION:=$(shell printf '%.7s' "$(DAE_SRC_VERSION)")
 
 PKG_LICENSE:=AGPL-3.0-only
-PKG_LICENSE_FILE:=LICENSE
-PKG_MAINTAINER:=Tianling Shen <cnsztl@immortalwrt.org>
+PKG_LICENSE_FILES:=LICENSE
+PKG_MAINTAINER:=QiuSimons <https://github.com/QiuSimons>
 
-PKG_BUILD_DEPENDS:=golang/host bpf-headers
-PKG_BUILD_PARALLEL:=1
-PKG_BUILD_FLAGS:=no-mips16
-
-GO_PKG:=github.com/daeuniverse/dae
-GO_PKG_EXCLUDES:=control/kern/tests
-
-GO_PKG_LDFLAGS:= \
-	-s -w -buildid= \
-	-linkmode external -extldflags '-static -Wl,-s'
-GO_PKG_LDFLAGS_X:= \
-	$(GO_PKG)/cmd.Version=$(PKG_VERSION) \
-	$(GO_PKG)/common/consts.MaxMatchSetLen_=1024
-GO_PKG_TAGS:=trace
-
-PGO_PROFILE:=$(CURDIR)/pprof/default.pgo
-
-include $(INCLUDE_DIR)/package.mk
-include $(INCLUDE_DIR)/bpf.mk
-include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
-
-GO_PKG_BUILD_VARS+= \
-	GOFLAGS="-trimpath -buildvcs=false -pgo=auto"
-
-GO_PKG_TARGET_VARS+= \
-	CGO_LDFLAGS="$(TARGET_LDFLAGS) -static -Wl,-s" \
-	GOEXPERIMENT=newinliner,simd
+DAE_ARCH_DEPENDS:=@(aarch64||x86_64)
 
 define Package/dae
   SECTION:=net
   CATEGORY:=Network
   SUBMENU:=Web Servers/Proxies
-  TITLE:=A lightweight and high-performance transparent proxy solution
-  DEPENDS:=$(GO_ARCH_DEPENDS) \
+  TITLE:=dae - eBPF transparent proxy engine (kdae branch)
+  URL:=https://github.com/olicesx/dae
+  DEPENDS:=$(DAE_ARCH_DEPENDS) \
     +ca-bundle +kmod-sched-core +kmod-sched-bpf \
     +kmod-veth +v2ray-geoip +v2ray-geosite \
-    +@KERNEL_XDP_SOCKETS \
     +DAE_USE_VMLINUX_BTF:vmlinux-btf
+endef
+
+define Package/dae/description
+  kdae (olicesx/dae kdae branch) is an eBPF transparent proxy engine with native API support.
+  Kernel requirements when building firmware: CONFIG_KERNEL_CGROUP_BPF=y,
+  CONFIG_KERNEL_BPF_EVENTS=y, CONFIG_KERNEL_KPROBES=y, CONFIG_KERNEL_KPROBE_EVENTS=y,
+  and CONFIG_KERNEL_DEBUG_INFO_BTF=y (or select DAE_USE_VMLINUX_BTF).
+  AF_XDP (KERNEL_XDP_SOCKETS) is not used.
 endef
 
 define Package/dae/config
@@ -73,27 +54,73 @@ define Package/dae/config
 	endchoice
 endef
 
-define Package/dae/conffiles
-/etc/dae/
-/etc/config/dae
+ifneq ($(wildcard $(CURDIR)/files/dae.bin),)
+
+include $(INCLUDE_DIR)/package.mk
+
+define Build/Prepare
+	mkdir -p "$(PKG_BUILD_DIR)"
 endef
+
+define Build/Compile
+	"$(CURDIR)/build_dae_core.sh" --if-needed "$(ARCH)" "$(CURDIR)/files/dae.bin"
+	$(INSTALL_DIR) "$(PKG_INSTALL_DIR)/bin"
+	$(INSTALL_BIN) "$(CURDIR)/files/dae.bin" "$(PKG_INSTALL_DIR)/bin/dae"
+endef
+
+define Package/dae/install
+	$(INSTALL_DIR) "$(1)/usr/bin"
+	$(INSTALL_BIN) "$(PKG_INSTALL_DIR)/bin/dae" "$(1)/usr/bin/dae"
+endef
+
+else
+
+PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
+PKG_SOURCE_PROTO:=git
+PKG_SOURCE_VERSION:=$(DAE_SRC_VERSION)
+PKG_SOURCE_URL:=$(DAE_SRC_URL)
+PKG_MIRROR_HASH:=skip
+
+PKG_BUILD_DEPENDS:=golang/host bpf-headers
+PKG_BUILD_PARALLEL:=1
+PKG_BUILD_FLAGS:=no-mips16
+
+GO_PKG:=github.com/daeuniverse/dae
+GO_PKG_EXCLUDES:=control/kern/tests
+
+GO_PKG_LDFLAGS:= \
+	-s -w -buildid= \
+	-linkmode external -extldflags '-static -Wl,-s'
+GO_PKG_LDFLAGS_X:= \
+	$(GO_PKG)/cmd.Version=$(DAE_SHORT_VERSION) \
+	$(GO_PKG)/common/consts.MaxMatchSetLen_=1024
+GO_PKG_TAGS:=trace
+
+include $(INCLUDE_DIR)/package.mk
+include $(INCLUDE_DIR)/bpf.mk
+include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
+
+GO_PKG_BUILD_VARS+= \
+	GOFLAGS="-trimpath -buildvcs=false -pgo=auto" \
+	GOTOOLCHAIN=auto
+
+GO_PKG_TARGET_VARS+= \
+	CGO_LDFLAGS="$(TARGET_LDFLAGS) -static -Wl,-s" \
+	GOEXPERIMENT=newinliner,simd,heapminimum512kib,randomizedheapbase64
 
 DAE_CFLAGS:= \
 	-O2 -Wall -Werror \
 	-DMAX_MATCH_SET_LEN=1024 \
 	-I$(BPF_HEADERS_DIR)/tools/lib \
 	-I$(BPF_HEADERS_DIR)/arch/$(BPF_KARCH)/include/asm/mach-generic
-	
+
 define Build/Prepare
 	$(call Build/Prepare/Default)
-	[ -f "$(PGO_PROFILE)" ] && $(CP) "$(PGO_PROFILE)" "$(PKG_BUILD_DIR)/default.pgo" || true
 endef
 
 define Build/Compile
 	( \
-		pushd $(PKG_BUILD_DIR) ; \
-		go get -u=patch ; \
-		go mod tidy ; \
+		pushd "$(PKG_BUILD_DIR)" ; \
 		export \
 		$(GO_GENERAL_BUILD_CONFIG_VARS) \
 		$(GO_PKG_BUILD_CONFIG_VARS) \
@@ -103,6 +130,8 @@ define Build/Compile
 		BPF_CFLAGS="$(DAE_CFLAGS)" \
 		BPF_TARGET="bpfel,bpfeb" \
 		BPF_TRACE_TARGET="$(GO_ARCH)" ; \
+		unset GOOS GOARCH GOARM GOAMD64 ; \
+		go generate ./common/consts/ebpf.go ; \
 		go generate ./control/control.go ; \
 		go generate ./trace/trace.go ; \
 		popd ; \
@@ -112,20 +141,12 @@ endef
 
 define Package/dae/install
 	$(call GoPackage/Package/Install/Bin,$(PKG_INSTALL_DIR))
-	$(INSTALL_DIR) $(1)/usr/bin/
-	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/bin/dae $(1)/usr/bin/dae
-	$(INSTALL_DIR) $(1)/etc/dae/
-	$(INSTALL_CONF) $(PKG_BUILD_DIR)/example.dae $(1)/etc/dae/
-	$(INSTALL_CONF) $(CURDIR)/files/config.dae $(1)/etc/dae/config.dae
-	$(INSTALL_DIR) $(1)/etc/dae/config.d/
-	$(INSTALL_CONF) $(CURDIR)/files/config.d/dns.dae $(1)/etc/dae/config.d/dns.dae
-	$(INSTALL_CONF) $(CURDIR)/files/config.d/node.dae $(1)/etc/dae/config.d/node.dae
-	$(INSTALL_CONF) $(CURDIR)/files/config.d/route.dae $(1)/etc/dae/config.d/route.dae
-	$(INSTALL_DIR) $(1)/etc/config
-	$(INSTALL_CONF) $(CURDIR)/files/dae.config $(1)/etc/config/dae
-	$(INSTALL_DIR) $(1)/etc/init.d
-	$(INSTALL_BIN) $(CURDIR)/files/dae.init $(1)/etc/init.d/dae
+	$(INSTALL_DIR) "$(1)/usr/bin"
+	$(INSTALL_BIN) "$(PKG_INSTALL_DIR)/usr/bin/dae" "$(1)/usr/bin/dae"
 endef
 
 $(eval $(call GoBinPackage,dae))
+
+endif
+
 $(eval $(call BuildPackage,dae))

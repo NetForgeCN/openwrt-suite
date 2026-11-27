@@ -99,7 +99,7 @@ make defconfig && make menuconfig
 
 | 菜单路径 | 包 |
 |---|---|
-| LuCI → 3. Applications | luci-app-airplay2、luci-app-argon-config、luci-app-atomdns、luci-app-dae、luci-app-ddns-go、luci-app-diskman、luci-app-hevsocks5、luci-app-honk、luci-app-kixdns、luci-app-lucky、luci-app-mosdns、luci-app-nikki、luci-app-oaf、luci-app-open_nexttrace、luci-app-oxidns、luci-app-photondns、luci-app-photondns-compat、luci-app-pulse、luci-app-temp-status |
+| LuCI → 3. Applications | luci-app-airplay2、luci-app-argon-config、luci-app-atomdns、luci-app-daeuniverse、luci-app-ddns-go、luci-app-diskman、luci-app-hevsocks5、luci-app-kixdns、luci-app-lucky、luci-app-mosdns、luci-app-nikki、luci-app-oaf、luci-app-open_nexttrace、luci-app-oxidns、luci-app-photondns、luci-app-photondns-compat、luci-app-pulse、luci-app-temp-status |
 | LuCI → 4. Themes | luci-theme-argon |
 | Network → IP Addresses and Names | ddns-go、kixdns、mosdns（Go DNS 转发器）、photondns（Rust DNS 转发器）、v2ray-geodata（虚包，实际产出 v2ray-geoip / v2ray-geosite） |
 | Network → Web Servers/Proxies | dae、honk（eBPF 核心，仅 x86_64 / aarch64_generic） |
@@ -210,16 +210,21 @@ OpenWrt 的 `feeds install -a` 对同名包按 feeds.conf 中的**出现顺序**
 
 该包目录只有 Makefile（头部为 GPL-3.0 声明），`PKG_LICENSE_FILES:=LICENSE` 是上游写法。`PKG_VERSION` 跟随 `SOURCE_DATE_EPOCH`（UTC），同一 suite 提交得到同一版本。
 
-### honk
+### daeuniverse（原 honk）
 
-上游 [QiuSimons/luci-app-honk](https://github.com/QiuSimons/luci-app-honk) 是**一个仓库两个包**：
+上游 [QiuSimons/luci-app-daeuniverse](https://github.com/QiuSimons/luci-app-daeuniverse) 是**一个仓库三个包**（2026-11-27 由 `luci-app-honk` 原地改名并整合 dae 而来，feed slug 仍叫 `honk` 以保持工具链路径不变）：
 
 | 目录 | 包 | 内容 |
 |---|---|---|
-| `honk/` | honk | 从 `daeuniverse/honk` 指定 commit 编译出的 `honk-core`、init.d、默认配置 |
-| `luci-app-honk/` | luci-app-honk | LuCI 页面、rpcd ucode 后端、Doona 静态资源（`root/etc/honk/doona`） |
+| `honk/` | honk | 从 `daeuniverse/honk` 指定 commit 编译出的 `honk-core` |
+| `dae/` | dae | 从 `olicesx/dae` 的 kdae 分支指定 commit 编译（不再用 AF_XDP） |
+| `luci-app-daeuniverse/` | luci-app-daeuniverse | 共享的 `init.d/daeuniverse`、UCI `/etc/config/daeuniverse`、LuCI 页面、rpcd ucode 后端、Doona 面板 |
 
-仓库根目录还有 `scripts/`、`PIC/`、`.github/`，这些不参与构建；**根目录没有 Makefile**，所以按 `mode=pkg` 只拷这两个目录。两个目录内部没有任何 `../` 跨目录引用，可以独立编译。
+两个核心共用一套 UCI 与服务脚本，由 `option core honk|dae` 选择启动哪个；menuconfig 的 `DAEU_WITH_HONK` / `DAEU_WITH_DAE` 决定编译期打包哪些核心（默认都开）。旧的 `luci-app-honk` 与独立的 `luci-app-dae`（kix 分支，仓库已归档）均已移除，避免同名 `dae` 包冲突。
+
+仓库根目录还有 `scripts/`、`PIC/`、`.github/`，这些不参与构建；**根目录没有 Makefile**，所以按 `mode=pkg` 只拷这三个目录。三个目录内部没有任何 `../` 跨目录引用，可以独立编译。
+
+> 升级提示：新包不再读取 `/etc/config/honk` 与 `/etc/dae/`。旧配置需手工迁移——UCI section `honk`/`dae` 合并为 `daeuniverse` 并设 `option core`，配置文件分别搬到 `/etc/daeuniverse/honk/` 与 `/etc/daeuniverse/dae/config.d/`（新版 dae 是 6+1 文件结构，与旧 kix 的 3 文件不同，不能直接照搬）。
 
 `honk-core` 不是在 OpenWrt 里交叉编译的：`honk/build_honk_core.sh` 调用宿主机上的 **Rust / cargo / Zig / bpf-linker**（版本由上游 `.github/ci/pins.env` 与 release.yml 钉住），产物写到 `honk/files/honk-core.bin`；该文件被上游 `.gitignore` 忽略，快照里不带它。两条路：
 
@@ -232,7 +237,7 @@ OpenWrt 的 `feeds install -a` 对同名包按 feeds.conf 中的**出现顺序**
 
 ##### 动态解析（默认）
 
-权威解析器是仓库本地的 `scripts/honk_toolchain.sh`（**不要放到 `packages/honk/`**：daily-sync 会用上游文件覆盖该目录）。它按当前 `HONK_SRC_VERSION`（取自 `packages/honk/Makefile` 的 `HONK_SRC_URL` / `HONK_SRC_VERSION`）从该 commit 的 `.github/ci/pins.env` 读取 `BPF_LINKER_VERSION` / `BPF_LINKER_SHA256`，从该 commit 的 `.github/workflows/release.yml` 读取 setup-zig 的 `version`；zig 资产 hash 再按版本从 `https://ziglang.org/download/index.json` 的 `x86_64-linux` / `aarch64-linux` 条目读取。`build/compile.sh` 调用的就是这份本地脚本，**上游升级 honk commit 后不需要手改本仓库的版本常量或 4 个 hash**，daily-sync 覆盖 `packages/honk/honk_toolchain.sh` 也不影响。解析成功时日志会打印来源（`upstream` / `zig-index`）和版本。
+权威解析器是仓库本地的 `scripts/honk_toolchain.sh`（**不要放到 `packages/honk/`**：daily-sync 会用上游文件覆盖该目录）。它按当前 `HONK_SRC_VERSION`（取自 `packages/honk/Makefile` 的 `HONK_SRC_URL` / `HONK_SRC_VERSION`）从该 commit 的 `.github/ci/pins.env` 读取 `BPF_LINKER_VERSION` / `BPF_LINKER_SHA256`，并从该 commit 的 `.github/workflows/release.yml` 读取 setup-zig 的 `version`；zig 资产 hash 再按版本从 `https://ziglang.org/download/index.json` 的 `x86_64-linux` / `aarch64-linux` 条目读取。上游自 2026-11 起把 zig 改为 latest（release.yml 里已无 setup-zig pin），此时 bpf-linker 仍从上游 `pins.env` 取、zig 版本回落到本仓库的本地 pin（0.14.1）；日志会明确提示。`build/compile.sh` 调用的就是这份本地脚本，**上游升级 honk commit 后不需要手改本仓库的版本常量或 4 个 hash**，daily-sync 覆盖 `packages/honk/honk_toolchain.sh` 也不影响。解析成功时日志会打印来源（`upstream` / `zig-index`）和版本。
 
 优先级：**显式环境变量 > 上游动态解析 > 本地回退 pin**。显式设置时以下变量直接生效：
 
