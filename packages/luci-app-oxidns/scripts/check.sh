@@ -2,7 +2,7 @@
 
 set -eu
 
-node -e "for (const f of ['htdocs/luci-static/resources/view/oxidns/overview.js','htdocs/luci-static/resources/view/oxidns/core.js','htdocs/luci-static/resources/view/oxidns/config.js','htdocs/luci-static/resources/view/oxidns/logs.js','htdocs/luci-static/resources/view/oxidns/settings.js','htdocs/luci-static/resources/view/oxidns/rules.js','htdocs/luci-static/resources/view/oxidns/prewarm.js','htdocs/luci-static/resources/view/oxidns/hijack.js','htdocs/luci-static/resources/view/oxidns/geo.js','htdocs/luci-static/resources/view/oxidns/cmeditor.js']) new Function(require('fs').readFileSync(f,'utf8'));"
+node -e "const fs=require('fs'),d='htdocs/luci-static/resources/view/oxidns'; for (const f of fs.readdirSync(d).filter(x=>x.endsWith('.js')).map(x=>d+'/'+x).concat(fs.readdirSync(d+'/parts').filter(x=>x.endsWith('.js')).map(x=>d+'/parts/'+x))) new Function(fs.readFileSync(f,'utf8'));"
 node -e "for (const f of ['root/usr/share/luci/menu.d/luci-app-oxidns.json','root/usr/share/rpcd/acl.d/luci-app-oxidns.json','root/usr/share/oxidns/targets.json']) JSON.parse(require('fs').readFileSync(f,'utf8'));"
 node <<'NODE'
 const fs = require('fs');
@@ -10,14 +10,17 @@ const fs = require('fs');
 const required = new Set();
 for (const file of [
 	'htdocs/luci-static/resources/view/oxidns/overview.js',
-	'htdocs/luci-static/resources/view/oxidns/core.js',
 	'htdocs/luci-static/resources/view/oxidns/config.js',
+	'htdocs/luci-static/resources/view/oxidns/data.js',
 	'htdocs/luci-static/resources/view/oxidns/logs.js',
-	'htdocs/luci-static/resources/view/oxidns/settings.js',
-	'htdocs/luci-static/resources/view/oxidns/rules.js',
-	'htdocs/luci-static/resources/view/oxidns/prewarm.js',
-	'htdocs/luci-static/resources/view/oxidns/hijack.js',
-	'htdocs/luci-static/resources/view/oxidns/geo.js',
+	'htdocs/luci-static/resources/view/oxidns/parts/overview.js',
+	'htdocs/luci-static/resources/view/oxidns/parts/core.js',
+	'htdocs/luci-static/resources/view/oxidns/parts/config.js',
+	'htdocs/luci-static/resources/view/oxidns/parts/settings.js',
+	'htdocs/luci-static/resources/view/oxidns/parts/rules.js',
+	'htdocs/luci-static/resources/view/oxidns/parts/prewarm.js',
+	'htdocs/luci-static/resources/view/oxidns/parts/hijack.js',
+	'htdocs/luci-static/resources/view/oxidns/parts/geo.js',
 ]) {
 	const source = fs.readFileSync(file, 'utf8');
 	const re = /_\(\s*(['"])((?:\\.|[^\\])*?)\1\s*\)/g;
@@ -33,6 +36,9 @@ for (const entry of Object.values(menu)) {
 	if (entry.title)
 		required.add(entry.title);
 }
+const viewPaths = Object.keys(menu).filter(k => k !== 'admin/services/oxidns');
+if (viewPaths.length !== 4)
+	throw new Error(`expected 4 consolidated views, found ${viewPaths.length}: ${viewPaths.join(', ')}`);
 
 function poIds(file) {
 	const ids = new Set();
@@ -76,26 +82,47 @@ if command -v msgfmt >/dev/null 2>&1; then
 fi
 sh -n root/usr/libexec/rpcd/luci.oxidns
 sh -n root/etc/init.d/oxidns
-# [CodeMirror] config.js must use the cmeditor wrapper and the assets must ship.
-grep -q 'view.oxidns.cmeditor' htdocs/luci-static/resources/view/oxidns/config.js
-grep -q 'cmeditor.defer' htdocs/luci-static/resources/view/oxidns/config.js
+# [CodeMirror] the YAML config panel must use the cmeditor wrapper and the
+# assets must ship. The panel now lives under parts/ so the consolidated
+# Configuration tab can embed it.
+grep -q 'view.oxidns.cmeditor' htdocs/luci-static/resources/view/oxidns/parts/config.js
+grep -q 'cmeditor.defer' htdocs/luci-static/resources/view/oxidns/parts/config.js
 test -s htdocs/luci-static/resources/view/oxidns/cmeditor.js
 test -s htdocs/luci-static/resources/oxidns-codemirror/codemirror.min.js
 test -s htdocs/luci-static/resources/oxidns-codemirror/yaml.min.js
 test -s htdocs/luci-static/resources/oxidns-codemirror/codemirror.min.css
 test -s htdocs/luci-static/resources/oxidns-codemirror/cmtheme.css
 
-# [API password] Both callers of `oxidns check/start` must inject OXIDNS_API_PASS:
-# init.d covers the procd service, rpcd covers config validate/save and core
-# install. A gap here makes any ${OXIDNS_API_PASS} config fail only in the UI.
+# [API credentials] UCI only keeps the legacy fallback; the root-only file is
+# the source of truth. Both callers of `oxidns check/start` must export the
+# credentials: init.d for procd, rpcd for config validate/save and core install.
 grep -q "option api_pass" root/etc/config/oxidns
-grep -q 'config_get API_PASS main api_pass' root/etc/init.d/oxidns
+test -s root/usr/libexec/oxidns-auth
+sh -n root/usr/libexec/oxidns-auth
+grep -q 'load_api_credentials' root/etc/init.d/oxidns
+grep -q 'load_api_credentials' root/usr/libexec/rpcd/luci.oxidns
+grep -q 'procd_set_param env OXIDNS_API_USER=' root/etc/init.d/oxidns
 grep -q 'procd_set_param env OXIDNS_API_PASS=' root/etc/init.d/oxidns
-grep -q 'uci_get api_pass' root/usr/libexec/rpcd/luci.oxidns
+grep -q 'export OXIDNS_API_USER' root/usr/libexec/rpcd/luci.oxidns
 grep -q 'export OXIDNS_API_PASS' root/usr/libexec/rpcd/luci.oxidns
-# [prewarm] Keep the LuCI page, ACL endpoint, helper script and default list
-# wired together. A missing piece makes the tab render but every action fail.
-grep -q 'oxidns/prewarm' root/usr/share/luci/menu.d/luci-app-oxidns.json
+grep -q 'uci -q delete "$UCI_PACKAGE.$UCI_SECTION.api_pass"' root/usr/libexec/rpcd/luci.oxidns
+grep -q 'api-credentials' htdocs/luci-static/resources/view/oxidns/parts/settings.js
+grep -q '"credentials_status"' root/usr/share/rpcd/acl.d/luci-app-oxidns.json
+grep -q '"credentials_set"' root/usr/share/rpcd/acl.d/luci-app-oxidns.json
+# [Upstream probe] keep parser, RPC, ACL and both UI entry points wired.
+grep -q 'config_upstreams' root/usr/libexec/rpcd/luci.oxidns
+grep -q ',"ttl":' root/usr/libexec/rpcd/luci.oxidns
+grep -q '"upstream_probe"' root/usr/share/rpcd/acl.d/luci-app-oxidns.json
+grep -q 'upstream-probe' htdocs/luci-static/resources/view/oxidns/logs.js
+grep -q 'upstream-probe' htdocs/luci-static/resources/view/oxidns/parts/overview.js
+if grep -q 'credentials_set.*api_pass' root/usr/libexec/rpcd/luci.oxidns; then
+	echo "credentials_set must never write the password back into UCI" >&2
+	exit 1
+fi
+# [prewarm] Keep the LuCI panel, ACL endpoint, helper script and default list
+# wired together. The panel is now the third tab of the Configuration view.
+grep -q 'parts.prewarm' htdocs/luci-static/resources/view/oxidns/config.js
+test -s htdocs/luci-static/resources/view/oxidns/parts/prewarm.js
 grep -q '"prewarm_read"' root/usr/share/rpcd/acl.d/luci-app-oxidns.json
 grep -q '"prewarm_save"' root/usr/share/rpcd/acl.d/luci-app-oxidns.json
 grep -q '"prewarm_run"' root/usr/share/rpcd/acl.d/luci-app-oxidns.json
@@ -201,17 +228,19 @@ if grep -q './files/rules' oxidns-rules-baseline/Makefile; then
 	exit 1
 fi
 
-# [r17] DNS hijack, CodeMirror editor and Geo data page must stay wired:
-# menu entry + ACL methods + rpcd emitters + frontend view. A missing piece
-# leaves a dead tab or a page whose buttons all fail.
-grep -q 'oxidns/hijack' root/usr/share/luci/menu.d/luci-app-oxidns.json
-grep -q 'oxidns/geo' root/usr/share/luci/menu.d/luci-app-oxidns.json
+# [r17] DNS hijack, CodeMirror editor and Geo data must stay wired:
+# consolidated tabs + ACL methods + rpcd emitters + frontend panels. A missing
+# piece leaves a dead tab or a page whose buttons all fail.
+grep -q 'parts.hijack' htdocs/luci-static/resources/view/oxidns/overview.js
+grep -q 'parts.geo' htdocs/luci-static/resources/view/oxidns/data.js
+test -s htdocs/luci-static/resources/view/oxidns/parts/hijack.js
+test -s htdocs/luci-static/resources/view/oxidns/parts/geo.js
 for method in hijack_get hijack_save geo_get geo_save geo_reset geo_download geo_progress; do
 	grep -q "\"$method\"" root/usr/share/rpcd/acl.d/luci-app-oxidns.json
 	grep -q "$method)" root/usr/libexec/rpcd/luci.oxidns
 done
-for view in hijack geo; do
-	test -s "htdocs/luci-static/resources/view/oxidns/$view.js"
+for view in hijack geo core rules; do
+	test -s "htdocs/luci-static/resources/view/oxidns/parts/$view.js"
 done
 # Geo defaults must stay on the self-maintained rules source, not upstream's.
 grep -q 'NetForgeCN/v2ray-rules-dat' root/usr/libexec/rpcd/luci.oxidns
@@ -332,7 +361,7 @@ NODE
 # is ever inserted; registration must also wait for the post-mount setTimeout.
 node <<'NODE'
 const fs = require('fs');
-for (const name of ['logs', 'hijack', 'overview']) {
+for (const name of ['logs', 'parts/hijack', 'parts/overview']) {
 	const p = `htdocs/luci-static/resources/view/oxidns/${name}.js`;
 	const t = fs.readFileSync(p, 'utf8');
 	if (/if \(!isAttached\(viewRoot\)\) \{\s*\n\s*unregisterPoll\(\);/.test(t))

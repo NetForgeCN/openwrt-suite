@@ -1,7 +1,7 @@
 airplay2|5dc055cdcb7cedf4a4ceb27532180b7355b2f3e7|2026-11-25T09:27:09Z|https://github.com/NetForgeCN/luci-app-airplay2.git
 argon|5d6a6e8b86ea9aee0f3cbb9637f9140414153a45|2026-11-24T10:38:19Z|https://github.com/jerrykuku/luci-theme-argon.git
 atomdns|c0702068defe7ee9d959389f4e565a4f233e63b4|2026-11-27T01:02:28Z|https://github.com/NetForgeCN/luci-app-atomdns.git
-config|95dd22c95913a89e5410348a179966c5a9b94415|2026-11-26T04:08:34Z|https://github.com/NetForgeCN/OpenWRT.git
+config|8565d41189b7074c6254761f09e70d935508c099|2026-11-27T04:50:25Z|https://github.com/NetForgeCN/OpenWRT.git
 dae|4d33a0c69733436074d2f5f13267b09e8c4c6949|2026-11-08T04:32:51Z|https://github.com/QiuSimons/luci-app-dae.git
 ddnsgo|7092e6de6ad9fe3f7d327f70468dfd19e00d6f0e|2026-11-08T04:32:51Z|https://github.com/sirpdboy/luci-app-ddns-go.git
 diskman|be87fcb92c472821bcedbefbfc8b7e8d9e039449|2026-11-08T04:32:51Z|https://github.com/sbwml/luci-app-diskman.git
@@ -14,7 +14,7 @@ mosdns|a8a6caffe04167dbb17407a63463eb4ce7243873|2026-11-15T06:10:52Z|https://git
 nikki|aaf46bf02a9ab2b5a8ab3fcaa5f84c99e56585bf|2026-11-13T10:53:39Z|https://github.com/nikkinikki-org/OpenWrt-nikki.git
 openappfilter|0814b87f57181ef238b9a21604c999e98de73cf2|2026-11-16T15:06:30Z|https://github.com/destan19/OpenAppFilter.git
 opennexttrace|fcac844b466e22d94da3aef39049cb4ae5ee6f35|2026-11-08T04:32:51Z|https://github.com/haohaoget/luci-app-open_nexttrace.git
-oxidns|40a052a9485afa2465cf57fa80c84a975f56ce8e|2026-11-27T01:32:36Z|https://github.com/NetForgeCN/luci-app-oxidns.git
+oxidns|b52b6a2f9c246d09b3f86388384c4d90669d34bb|2026-11-27T04:50:25Z|https://github.com/NetForgeCN/luci-app-oxidns.git
 photondns|c53b3b75f0a00f68d75588cdd51529f22421e461|2026-11-11T07:09:16Z|https://github.com/c2h2/luci-app-photondns.git
 pulse|e8d2edf96c484fbf85c70957265538a769225a74|2026-11-22T15:04:42Z|https://github.com/w9315273/luci-app-pulse.git
 temp-status|6d127817d92d758e35617620f9567a1336f5f8a5|2026-11-08T04:32:51Z|https://github.com/gSpotx2f/luci-app-temp-status.git

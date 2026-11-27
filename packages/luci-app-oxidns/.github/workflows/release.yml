@@ -31,7 +31,12 @@ env:
   BUILD_PACKAGES: luci-app-oxidns
 
 jobs:
+  # Pre-release tags are used as rollback baselines (e.g. v0.2.0-r19-pre).
+  # They are not release versions and must not trigger a package build or
+  # publish a vX.Y.Z release; the version resolver below only accepts plain
+  # semantic versions matching PKG_VERSION.
   validate:
+    if: ${{ !endsWith(github.ref_name, '-pre') }}
     name: Validate and build quick packages
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -85,6 +90,7 @@ jobs:
           retention-days: 7
 
   build-sdk:
+    if: ${{ !endsWith(github.ref_name, '-pre') }}
     name: Build SDK packages
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -141,6 +147,7 @@ jobs:
           retention-days: 7
 
   publish:
+    if: ${{ !endsWith(github.ref_name, '-pre') }}
     name: Publish release
     needs:
       - validate
