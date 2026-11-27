@@ -40,11 +40,11 @@ endef
 
 # 不用 latest：latest 可能指向只含备份资产的 release导致 404；哈希也不再从同源现取
 # 以下五项由 patches/geodata.sh 从仓库根 geodata.pin 注入，请勿在此手动修改
-GEODATA_TAG:=202611250113
-GEOIP_SHA256:=d4ec4c5e5d5a38c1399964ea9fd8c94288426a3b31b483904b67819fc07f4466
-GEOSITE_SHA256:=67ccb3cda9fb1b118be77d4aeb954d16fe3a12c63a6006e72709ad12dee7aab2
-GEOIP_URL:=https://github.com/NetForgeCN/v2ray-rules-dat/releases/download/202611250113/geoip.dat
-GEOSITE_URL:=https://github.com/NetForgeCN/v2ray-rules-dat/releases/download/202611250113/geosite.dat
+GEODATA_TAG:=202611260355
+GEOIP_SHA256:=9dc8e7de8db8300ce27b606f4a30632265713d2f33bcc568c0d2c44c825c8687
+GEOSITE_SHA256:=5ea0a33bf9eb90fdb0945c80bbdde2a4843280308828fd4318a800c069aedf02
+GEOIP_URL:=https://github.com/NetForgeCN/v2ray-rules-dat/releases/download/202611260355/geoip.dat
+GEOSITE_URL:=https://github.com/NetForgeCN/v2ray-rules-dat/releases/download/202611260355/geosite.dat
 
 
 # 下载/校验逻辑已抽到 fetch-geodata.sh：Build/Compile 里的内联 shell 在
