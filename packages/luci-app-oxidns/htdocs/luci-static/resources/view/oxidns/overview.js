@@ -343,10 +343,11 @@ function blockedActionMessage(action, status) {
 }
 
 function refreshStatus() {
-	if (!isAttached(viewRoot)) {
-		unregisterPoll();
+	/* 不能在未挂载时自行 unregisterPoll：poll.add() 会立即 step 一次，
+	 * 而那时 render 还没返回、map 不在 DOM 里，会把轮询自我删除。
+	 * 卸载清理由 watchView → runCleanup → addCleanup 负责。 */
+	if (!isAttached(viewRoot))
 		return Promise.resolve();
-	}
 
 	/* 不用 L.resolveDefault：它吞掉错误，导致界面停留在旧状态且没有提示 */
 	return Promise.resolve(callStatus()).then(function(status) {
@@ -561,9 +562,15 @@ return view.extend({
 
 		watchView(map);
 
-		/* poll 是全局对象：必须保存函数引用并在视图卸载时 poll.remove */
-		pollFn = refreshStatus;
-		poll.add(pollFn, 5);
+		/* LuCI 在 render 返回后才插入 DOM，而 poll.add() 会立即 step 一次；
+		 * 注册轮询和首帧刷新都推迟到挂载之后。 */
+		window.setTimeout(function() {
+			if (!isAttached(viewRoot))
+				return;
+			pollFn = refreshStatus;
+			poll.add(pollFn, 5);
+			refreshStatus();
+		}, 0);
 
 		return map;
 	},

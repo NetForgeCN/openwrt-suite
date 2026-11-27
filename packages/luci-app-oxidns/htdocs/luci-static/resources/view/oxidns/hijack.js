@@ -331,10 +331,11 @@ function refreshStatus() {
 }
 
 function refreshAll() {
-	if (!isAttached(viewRoot)) {
-		unregisterPoll();
+	/* 不能在未挂载时自行 unregisterPoll：poll.add() 会立即 step 一次，
+	 * 而那时 render 还没返回、map 不在 DOM 里，会把轮询自我删除。
+	 * 卸载清理由 watchView → runCleanup → addCleanup 负责。 */
+	if (!isAttached(viewRoot))
 		return Promise.resolve();
-	}
 
 	return Promise.all([ refreshStatus(), refreshHijack() ]).then(function() {
 		cancelRetry();
@@ -557,14 +558,13 @@ return view.extend({
 
 		watchView(map);
 
-		/* poll 是全局对象：保存引用并在视图卸载时移除 */
-		pollFn = refreshAll;
-		poll.add(pollFn, 5);
-
-		/* LuCI 在 render 返回后才插入 DOM，首帧回填要等插入完成 */
+		/* LuCI 在 render 返回后才插入 DOM，而 poll.add() 会立即 step 一次；
+		 * 注册轮询和首帧回填都推迟到挂载之后。 */
 		window.setTimeout(function() {
 			if (!isAttached(viewRoot))
 				return;
+			pollFn = refreshAll;
+			poll.add(pollFn, 5);
 			updateHijackControls();
 			applyHijackState(hijackState, false);
 		}, 0);

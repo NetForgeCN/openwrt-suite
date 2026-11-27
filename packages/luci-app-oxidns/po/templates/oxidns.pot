@@ -110,6 +110,9 @@ msgstr ""
 msgid "Config path"
 msgstr ""
 
+msgid "Configuration"
+msgstr ""
+
 msgid "Configuration and working directory data are preserved unless selected below."
 msgstr ""
 
@@ -416,6 +419,9 @@ msgstr ""
 msgid "Local copy"
 msgstr ""
 
+msgid "Logs"
+msgstr ""
+
 msgid "LuCI backend"
 msgstr ""
 
@@ -632,6 +638,9 @@ msgstr ""
 msgid "Rule update available."
 msgstr ""
 
+msgid "Rules"
+msgstr ""
+
 msgid "Rules were written, but the firewall reload failed. The rules take effect on the next firewall reload or reboot."
 msgstr ""
 
@@ -684,6 +693,9 @@ msgid "Service action failed"
 msgstr ""
 
 msgid "Service status"
+msgstr ""
+
+msgid "Settings"
 msgstr ""
 
 msgid "Settings saved."

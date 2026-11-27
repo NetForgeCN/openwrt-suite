@@ -27,13 +27,11 @@ for (const file of [
 }
 
 const menu = JSON.parse(fs.readFileSync('root/usr/share/luci/menu.d/luci-app-oxidns.json', 'utf8'));
-// Menu titles are translatable but LuCI falls back to the English title when a
-// catalogue entry is absent. Keep them out of the hard "required" set so a
-// catalogue gap cannot block packaging; report it as a warning instead.
-const menuTitles = new Set();
+// LuCI looks menu titles up in the same catalogue. A gap silently falls back
+// to English in a Chinese UI, so titles are part of the hard requirement.
 for (const entry of Object.values(menu)) {
 	if (entry.title)
-		menuTitles.add(entry.title);
+		required.add(entry.title);
 }
 
 function poIds(file) {
@@ -51,7 +49,6 @@ function poIds(file) {
 
 const pot = poIds('po/templates/oxidns.pot');
 const zh = poIds('po/zh_Hans/oxidns.po');
-const translatable = new Set([...required, ...menuTitles]);
 const failures = [];
 for (const [label, ids] of [['POT', pot], ['zh_Hans PO', zh]]) {
 	for (const id of [...required].sort()) {
@@ -59,12 +56,8 @@ for (const [label, ids] of [['POT', pot], ['zh_Hans PO', zh]]) {
 			failures.push(`${label} missing msgid: ${id}`);
 	}
 }
-for (const id of [...menuTitles].sort()) {
-	if (!pot.has(id) || !zh.has(id))
-		console.warn(`translation catalogue does not cover menu title: ${id}`);
-}
 for (const id of [...pot].sort()) {
-	if (!translatable.has(id))
+	if (!required.has(id))
 		failures.push(`POT stale msgid: ${id}`);
 }
 if (failures.length) {
@@ -332,6 +325,23 @@ if (!guard || !/PKG_SOURCE_URL:=/.test(guard[1]))
 	throw new Error('PKG_SOURCE_URL must be inside the OXIDNS_PKG_HASH guard');
 if (/^PKG_SOURCE_URL:=/m.test(mk.replace(guard[0], '')))
 	throw new Error('PKG_SOURCE_URL must not be declared outside the OXIDNS_PKG_HASH guard');
+NODE
+
+# [poll] LuCI poll.start() runs step() immediately on add(). A refresh callback
+# that unregisters itself while detach-checking kills the loop before the view
+# is ever inserted; registration must also wait for the post-mount setTimeout.
+node <<'NODE'
+const fs = require('fs');
+for (const name of ['logs', 'hijack', 'overview']) {
+	const p = `htdocs/luci-static/resources/view/oxidns/${name}.js`;
+	const t = fs.readFileSync(p, 'utf8');
+	if (/if \(!isAttached\(viewRoot\)\) \{\s*\n\s*unregisterPoll\(\);/.test(t))
+		throw new Error(`${name}.js: refresh must not unregisterPoll() while detached`);
+	const addIdx = t.search(/^\s*poll\.add\(/m);
+	const timeoutIdx = t.lastIndexOf('window.setTimeout(function()', addIdx);
+	if (addIdx < 0 || timeoutIdx < 0 || !t.slice(timeoutIdx, addIdx).includes('isAttached(viewRoot)'))
+		throw new Error(`${name}.js: poll.add() must be inside the post-mount setTimeout`);
+}
 NODE
 
 # [build-rules] Negative fixtures for the validators. These must fail on

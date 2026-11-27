@@ -112,6 +112,9 @@ msgstr "命令输出"
 msgid "Config path"
 msgstr "配置路径"
 
+msgid "Configuration"
+msgstr "配置"
+
 msgid "Configuration and working directory data are preserved unless selected below."
 msgstr "除非勾选下面的选项，否则配置和工作目录数据会保留。"
 
@@ -418,6 +421,9 @@ msgstr "行数"
 msgid "Local copy"
 msgstr "本地副本"
 
+msgid "Logs"
+msgstr "日志"
+
 msgid "LuCI backend"
 msgstr "LuCI 后端"
 
@@ -634,6 +640,9 @@ msgstr "规则操作失败"
 msgid "Rule update available."
 msgstr "有可用的规则更新。"
 
+msgid "Rules"
+msgstr "规则"
+
 msgid "Rules were written, but the firewall reload failed. The rules take effect on the next firewall reload or reboot."
 msgstr "规则已写入，但防火墙重载失败。规则会在下次重载防火墙或重启后生效。"
 
@@ -687,6 +696,9 @@ msgstr "服务操作失败"
 
 msgid "Service status"
 msgstr "服务状态"
+
+msgid "Settings"
+msgstr "设置"
 
 msgid "Settings saved."
 msgstr "设置已保存。"

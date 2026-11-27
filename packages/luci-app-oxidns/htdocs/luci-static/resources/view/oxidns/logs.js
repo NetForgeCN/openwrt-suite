@@ -359,10 +359,12 @@ function updateFilterOptions() {
 }
 
 function refreshLogs() {
-	if (!isAttached(viewRoot)) {
-		unregisterPoll();
+	/* LuCI 的 poll.start() 会在 add() 时立即跑一次 step：那时 render 还没
+	 * 返回，map 尚未插入 DOM。若在这里 unregisterPoll() 会把自己从队列里
+	 * 删掉，导致轮询永久失效（手动刷新仍可用）。卸载清理由 watchView 的
+	 * MutationObserver → runCleanup → addCleanup(unregisterPoll) 负责。 */
+	if (!isAttached(viewRoot))
 		return Promise.resolve();
-	}
 
 	if (state.inFlight)
 		return Promise.resolve();
@@ -588,11 +590,14 @@ return view.extend({
 
 		watchView(map);
 
-		pollFn = refreshLogs;
-		poll.add(pollFn, 1);
+		/* LuCI 在 render 返回后才把 map 插入 DOM，而 poll.add() 会立即
+		 * step 一次；所以注册与首帧都推迟到挂载之后。 */
 		window.setTimeout(function() {
-			if (isAttached(viewRoot))
-				refreshLogs();
+			if (!isAttached(viewRoot))
+				return;
+			pollFn = refreshLogs;
+			poll.add(pollFn, 1);
+			refreshLogs();
 		}, 0);
 
 		return map;
