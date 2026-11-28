@@ -49,16 +49,29 @@ scripts/bump-version.py
 
 ## 在 OpenWrt 源码树里用
 
-本仓库是一个完整的 feed 包目录（根 `Makefile` = LuCI 包，`lucky/` = 核心子包），挂成 feed 即可：
+本仓库根目录就是包目录（根 `Makefile` = LuCI 包，`lucky/` = 核心子包）。**直接 clone 到 `package/`，不要挂成 feed**：
 
 ```bash
-echo "src-git lucky https://github.com/NetForgeCN/luci-app-lucky.git" >> feeds.conf
-./scripts/feeds update lucky
+# 官方 feed 照常准备：两条 Makefile 只依赖 rules.mk 与 feeds/luci/luci.mk，
+# 不要删 luci feed，也不需要为本包新增任何 src-git 条目
+./scripts/feeds update -a
 ./scripts/feeds install -a
+
+git clone https://github.com/NetForgeCN/luci-app-lucky.git package/luci-app-lucky
 make menuconfig   # 勾选 LuCI → Applications → luci-app-lucky
 ```
 
-`.config` 由使用者自己维护；建议 `CONFIG_PACKAGE_lucky=y`、`CONFIG_PACKAGE_luci-app-lucky=y`。
+后续更新本地检出：
+
+```bash
+git -C package/luci-app-lucky pull --ff-only
+```
+
+`.config` 由使用者自己维护；建议 `CONFIG_PACKAGE_lucky=y`、`CONFIG_PACKAGE_luci-app-lucky=y`（界面靠 `+lucky` 硬依赖自动带上核心）。也可单独编译：
+
+```bash
+make package/luci-app-lucky/compile V=s
+```
 
 预下载（可选，便于离线/国内网络）：
 
